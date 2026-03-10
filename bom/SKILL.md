@@ -1,373 +1,238 @@
 ---
 name: bom
-description: BOM (Bill of Materials) management for electronics projects — create, update, and maintain BOMs with part numbers, costs, quantities, descriptions stored as KiCad symbol properties. Integrates with KiCad, Interactive BOM (ibom), DigiKey, Mouser, LCSC, JLCPCB, PCBWay. Order parts, compare pricing, track sourcing across prototype and production phases. Use whenever the user wants to manage, create, export, compare, or price a bill of materials, even if they don't say "BOM" explicitly — phrases like "what parts do I need", "order components", "how much will this cost", "export for JLCPCB", "find parts for this board", or "cost estimate" should trigger this skill.
+description: "BOM (Bill of Materials) management for electronics projects — the primary orchestrator skill that coordinates DigiKey, Mouser, LCSC, element14, JLCPCB, PCBWay, and KiCad skills into a unified workflow. Create, update, and maintain BOMs with part numbers, costs, quantities stored as KiCad symbol properties. ALWAYS trigger this skill for any task involving component sourcing, pricing, ordering, distributor searches, BOM export, or fabrication preparation — even if the user names a specific distributor or fab house (e.g. \"search DigiKey for...\", \"generate JLCPCB BOM\", \"order from Mouser\"). This skill decides which distributor/fab skills to invoke and in what order. Also trigger on phrases like \"what parts do I need\", \"order components\", \"how much will this cost\", \"export for JLCPCB\", \"find parts for this board\", \"cost estimate\", \"compare pricing\", or \"check stock\"."
 ---
 
 # BOM Management
 
-You help users create, maintain, and manage Bills of Materials for electronics projects. BOM data lives in **KiCad schematic symbol properties** as the single source of truth. This skill covers the full lifecycle from prototype through production.
+BOM data lives in **KiCad schematic symbol properties** as the single source of truth. This skill orchestrates the full lifecycle: analyze the schematic, search distributors, validate parts, write properties back, export tracking CSVs, and generate order files.
 
 ## Related Skills
 
 | Skill | Purpose |
 |-------|---------|
-| `kicad` | Read/analyze KiCad project files (schematics, PCB, symbols, footprints) |
-| `digikey` | Search DigiKey (prototype sourcing, primary) |
-| `mouser` | Search Mouser (prototype sourcing, secondary) |
-| `lcsc` | Search LCSC (production sourcing, JLCPCB parts) |
+| `kicad` | Read/analyze schematics, PCB, footprints |
+| `digikey` | Search DigiKey, download datasheets (primary prototype source) |
+| `mouser` | Search Mouser (secondary prototype source) |
+| `lcsc` | Search LCSC (production/JLCPCB parts) |
+| `element14` | Search Newark/Farnell/element14 (international) |
 | `jlcpcb` | PCB fabrication & assembly ordering |
-| `pcbway` | Alternative PCB fabrication & assembly |
+| `pcbway` | Alternative PCB fab & assembly |
+
+## Scripts
+
+Use `<skill-path>` to reference the BOM skill directory.
+
+```bash
+# Analyze schematic (JSON output, recursive sub-sheets)
+python3 <skill-path>/scripts/bom_manager.py analyze path/to/schematic.kicad_sch --json --recursive
+
+# Export BOM tracking CSV (creates new or merges with existing)
+python3 <skill-path>/scripts/bom_manager.py export path/to/schematic.kicad_sch -o bom/bom.csv --recursive
+
+# Generate per-supplier order files (5 boards + 2 spares/line)
+python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --boards 5 --spares 2
+
+# Quick single-supplier order (bypasses Chosen_Supplier column)
+python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --supplier digikey
+
+# Write properties to schematic (dry-run first, then apply)
+echo '{"R1": {"MPN": "RC0805FR-0710KL", "Manufacturer": "Yageo"}}' \
+  | python3 <skill-path>/scripts/edit_properties.py path/to/schematic.kicad_sch --dry-run
+```
+
+## Workflow
+
+Skip steps that don't apply. Common shortcuts:
+- **"Add Mouser PNs"** — search Mouser by MPN for each part → validate → write to schematic → update CSV
+- **"Fill in the gaps"** — run analyzer with `--gaps-only`, address each missing field
+- **"Download datasheets"** — jump to Step 2
+- **"Prepare for production"** — ensure every part has an LCSC number, check stock, set Chosen_Supplier to LCSC
+
+### Step 1: Understand the Project
+
+**Ask how many boards** are being built — this affects order quantities in Step 11.
+
+```bash
+python3 <skill-path>/scripts/bom_manager.py analyze path/to/schematic.kicad_sch --json --recursive
+```
+
+The output tells you the project's field naming convention, which distributors are populated, what's missing, and the preferred supplier. Also look for an existing BOM tracking CSV in the project directory or `bom/` folder.
+
+The script covers common patterns, but some projects use internal key systems or parametric fields. See `references/part-number-conventions.md` for the full catalog. Read the schematic if something seems off.
+
+### Step 2: Sync Datasheets
+
+**Do this immediately.** Datasheets are essential context for validation and part selection. Run the preferred distributor's sync first; if some fail, try others — they share the same `datasheets/` directory and skip already-downloaded parts.
+
+```bash
+python3 <digikey-skill-path>/scripts/sync_datasheets_digikey.py path/to/schematic.kicad_sch --recursive
+python3 <lcsc-skill-path>/scripts/sync_datasheets_lcsc.py path/to/schematic.kicad_sch --recursive
+python3 <element14-skill-path>/scripts/sync_datasheets_element14.py path/to/schematic.kicad_sch --recursive
+```
+
+DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LCSC works for LCSC-only parts. Mouser is a last resort (often blocks downloads).
+
+**Tell the user where datasheets are** (e.g., `hardware/sacmap-rev1/datasheets/`). They'll reference them often.
+
+**Cross-revision projects:** Use a single shared datasheets directory at the project level rather than per-revision. The same MPN's datasheet doesn't change between revisions.
+
+Re-sync after writing new MPNs (Step 5) — the scripts are idempotent.
+
+### Step 3: Gather Part Information
+
+**Watch for comma-separated MPNs.** Some symbols track multiple physical parts (e.g., battery holder + clip). Split on commas and search each MPN independently — searching the combined string matches the wrong product.
+
+Search strategy based on what's available:
+- Has MPN → search distributors by MPN to get their PNs and stock
+- Has distributor PN but no MPN → search that distributor, get MPN, then search others
+- Has only Value + Footprint → search by description (e.g., "100nF 0402 X7R 16V")
+
+Use the project's preferred supplier first, then alternates. Prototype: DigiKey primary, Mouser secondary. Production: LCSC.
+
+### Step 4: Validate Matches
+
+**Don't assume existing PNs are correct** — distributor PNs go stale (discontinued, renumbered). Verify existing PNs resolve against the API. If a PN returns 404, flag it for replacement.
+
+For every match, verify:
+1. **Package** matches the schematic footprint (see cross-reference table below)
+2. **Specs** match (capacitance, resistance, voltage, tolerance)
+3. **Description** makes sense (a resistor ref should get a resistor)
+4. **Lifecycle** — not obsolete or EOL
+5. **Datasheet URL** is a direct PDF link (not a product page)
+
+If ambiguous, ask the user. A wrong part is worse than a missing part.
+
+### Step 5: Update the Schematic
+
+**KiCad coexistence.** The script detects KiCad's lock file and warns but proceeds. KiCad doesn't auto-detect external changes — it keeps its in-memory copy. If KiCad is open, tell the user: *"Close and reopen the schematic (File → Open Recent) to see the changes. Don't save from KiCad first."*
+
+If unsaved KiCad work exists, ask them to save first (Ctrl+S), then run the script, then reopen.
+
+```bash
+echo '{"R1": {"MPN": "RC0805FR-0710KL", "Manufacturer": "Yageo", "DigiKey": "311-10.0KCRCT-ND"}}' \
+  | python3 <skill-path>/scripts/edit_properties.py path/to/schematic.kicad_sch
+```
+
+**Respect the project's convention.** Write to `"Digi-Key_PN"` if that's what exists, not `"DigiKey"`. Use canonical names only for new projects.
+
+**Always write Manufacturer alongside MPN** — every API returns it, it's free data.
+
+MPN should always be written — it's the universal cross-reference key.
+
+### Step 6: Update the BOM Tracking CSV
+
+```bash
+python3 <skill-path>/scripts/bom_manager.py export path/to/schematic.kicad_sch -o bom/bom.csv --recursive
+```
+
+CSV columns are dynamic — only suppliers the project uses get columns. Base columns: Reference, Qty, Value, Footprint, MPN, Manufacturer. Each active supplier gets a PN column + stock column. Tail columns: Chosen_Supplier, Datasheet, Validated, DNP, Notes.
+
+**Merge behavior:** Re-exporting preserves user-managed columns (stock, Chosen_Supplier, Validated, Notes) while updating schematic-derived columns.
+
+### Step 7: Check Stock
+
+For each part with a distributor PN, query current stock via the corresponding distributor skill. Update stock columns in the CSV. Stock data goes stale — note the date and re-check before ordering.
+
+If a chosen supplier is out of stock, flag it and suggest the alternate.
+
+### Step 8: Set Chosen Supplier
+
+Factors: stock availability, price at order qty, minimum order/multiples, lead time, shipping consolidation (fewer suppliers = fewer shipments).
+
+For prototypes, consolidate to 1-2 suppliers (DigiKey + Mouser). For production, LCSC/JLCPCB is cheapest.
+
+### Step 9: Re-Sync Datasheets
+
+Re-run Step 2 to pick up parts added in Steps 3-5. Fast — already-downloaded files are skipped.
+
+### Step 10: Validate Datasheets Against Design
+
+Read downloaded datasheets and verify parts are functionally correct for the circuit. This catches wrong-part-number errors that Step 4 might miss.
+
+**What to check by type:**
+- **Passives** — voltage rating vs rail voltage, temperature coefficient, power dissipation
+- **Regulators** — Vin range, Vout, max current, quiescent current
+- **MCUs/ICs** — supply voltage, I/O levels, peripherals, pinout
+- **Connectors** — pin count, pitch, current/voltage rating
+- **MOSFETs** — Vds, Rds(on), gate threshold, thermal dissipation
+- **Diodes** — Vf, Vr, current rating, recovery time
+
+For large BOMs (50+ parts), focus on power components, critical signal paths, and anything the user flagged. Commodity passives usually don't need deep review.
+
+### Step 11: Generate Order Files
+
+**Pre-flight:** verify no gaps, CSV is current, Chosen_Supplier is set (or use `--supplier` flag), stock is fresh.
+
+```bash
+# Using Chosen_Supplier column, 5 boards + 2 spares
+python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv -o bom/orders/ --boards 5 --spares 2
+
+# Or quick single-supplier order
+python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --supplier digikey
+```
+
+`--boards` multiplies all quantities. `--spares` adds a flat extra per line after multiplication. `--supplier` bypasses Chosen_Supplier — generates an order for all parts with that supplier's PN.
+
+Comma-separated PNs (accessories) are auto-split into separate order lines. DNP parts excluded. The script produces one file per supplier in the correct upload format (see `references/ordering-and-fabrication.md` for format details).
+
+Present the order summary and let the user review/edit before ordering.
+
+**Cost estimate:** After generating order files, query pricing from distributor APIs at the order quantity and present a total per supplier. See `references/ordering-and-fabrication.md` for the cost summary template.
 
 ## Package/Footprint Cross-Reference
 
-Common imperial-to-metric and KiCad footprint mapping:
+| Imperial | Metric | KiCad Footprint |
+|----------|--------|----------------|
+| 0201 | 0603 | `R_0201_0603Metric` |
+| 0402 | 1005 | `R_0402_1005Metric` |
+| 0603 | 1608 | `R_0603_1608Metric` |
+| 0805 | 2012 | `R_0805_2012Metric` |
+| 1206 | 3216 | `R_1206_3216Metric` |
 
-| Imperial | Metric | KiCad Footprint (typical) |
-|----------|--------|--------------------------|
-| 0201 | 0603 | `Resistor_SMD:R_0201_0603Metric` |
-| 0402 | 1005 | `Resistor_SMD:R_0402_1005Metric` |
-| 0603 | 1608 | `Resistor_SMD:R_0603_1608Metric` |
-| 0805 | 2012 | `Resistor_SMD:R_0805_2012Metric` |
-| 1206 | 3216 | `Resistor_SMD:R_1206_3216Metric` |
+Replace `R_` with `C_` or `L_` as appropriate. Prefix with `Resistor_SMD:`, `Capacitor_SMD:`, etc.
 
-Replace `Resistor_SMD:R_` with `Capacitor_SMD:C_` or `Inductor_SMD:L_` as appropriate.
+## BOM Diffing
 
-## Design-to-Production Workflow
+When the schematic changes between revisions, compare the old and new BOM to identify added, removed, and changed parts. Highlight which new parts need sourcing.
 
-### Phase 1: Prototype Design (Rev 1)
+## Interactive BOM (ibom)
 
-1. **Design schematic and layout** in KiCad
-2. **Populate BOM fields** in symbol properties — at minimum MPN and DigiKey part numbers
-3. **Order bare PCB + framed stencil** from JLCPCB (cheapest/fastest for prototype boards)
-4. **Order components** from DigiKey (primary) or Mouser (secondary/backup)
-   - Generate cart-upload CSV from BOM
-   - Typical lead time: ~1 week for everything to arrive
-5. **Hand-assemble prototype** in lab — apply solder paste with stencil, place components using ibom, reflow
-6. **Test and document issues** — note design changes needed
-
-### Phase 2: Iterate (Rev 2, 3, ...)
-
-1. **Update schematic** with fixes and improvements
-2. **Diff BOM** against previous revision — identify new/changed/removed parts
-3. **Source new parts** — search DigiKey/Mouser, update symbol properties
-4. **Re-order** bare PCB + framed stencil from JLCPCB + components from DigiKey/Mouser
-5. **Assemble, test, repeat** until design is solid
-
-### Phase 3: Production
-
-1. **Finalize BOM** — ensure all symbol properties are complete (MPN, LCSC, DigiKey, Mouser)
-2. **Find LCSC equivalents** for all parts (search by MPN on LCSC/jlcsearch)
-3. **Identify basic vs extended parts** for JLCPCB assembly cost estimation
-4. **Export production BOM** in JLCPCB or PCBWay format
-5. **Order assembled boards** (100s qty) from JLCPCB or PCBWay using LCSC parts
-6. **Keep DigiKey/Mouser PNs** in the schematic for future prototype runs or field repairs
-
-## Source of Truth: KiCad Symbol Properties
-
-All BOM data is stored as custom properties (fields) on schematic symbols in the `.kicad_sch` file. This keeps everything version-controlled with the project.
-
-### Standard KiCad Fields
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `Reference` | Designator (auto-assigned) | `C1`, `U3`, `R5` |
-| `Value` | Component value | `100nF`, `ESP32-S3-WROOM-1` |
-| `Footprint` | Library:footprint | `Capacitor_SMD:C_0402_1005Metric` |
-| `Datasheet` | URL to datasheet | `https://...` |
-| `Description` | Part description | `100nF 16V X7R 0402 MLCC` |
-
-### Custom BOM Fields
-
-Add these as custom symbol properties:
-
-| Field | Purpose | When Needed | Example |
-|-------|---------|-------------|---------|
-| `MPN` | Manufacturer Part Number — universal cross-reference key | Always | `GRM155R71C104KA88D` |
-| `Manufacturer` | Part manufacturer | Always | `Murata` |
-| `DigiKey` | DigiKey part number — primary prototype source | Prototype (Phase 1-2) | `490-10698-1-ND` |
-| `Mouser` | Mouser part number — secondary prototype source | Prototype (Phase 1-2) | `81-GRM155R71C104KA8D` |
-| `LCSC` | LCSC part number — production assembly source | Production (Phase 3) | `C14663` |
-
-Optional fields:
-
-| Field | Purpose | Example |
-|-------|---------|---------|
-| `AltMPN` | Alternate/second-source MPN | `CL05B104KO5NNNC` |
-| `Notes` | Sourcing or assembly notes | `Basic JLCPCB part` |
-
-### Adding Properties in KiCad
-
-**Single symbol**: Double-click or press E > click "+" to add a field > enter name and value.
-
-**Bulk editing**: Tools > Edit Symbol Fields opens a spreadsheet view. Add columns, edit values, export/import CSV.
-
-**Field Name Templates** (KiCad 9+): Schematic Setup > Field Name Templates. Pre-define MPN, Manufacturer, LCSC, DigiKey, Mouser so they appear on every new symbol automatically.
-
-### Symbol Properties in `.kicad_sch` Format
-
-Custom fields are stored as `(property ...)` entries, typically hidden:
-
-```
-(property "MPN" "GRM155R71C104KA88D"
-    (at 0 0 0)
-    (effects (font (size 1.27 1.27)) (hide yes))
-)
-```
-
-## Extracting and Presenting the BOM
-
-Read the `.kicad_sch` file and extract all component symbols with their properties. Group identical components (same Value + Footprint + MPN) and sum quantities.
-
-```
-| Ref | Qty | Value | Footprint | MPN | Manufacturer | DigiKey | Mouser | LCSC |
-|-----|-----|-------|-----------|-----|--------------|---------|--------|------|
-| C1,C2,C5 | 3 | 100nF | 0402 | GRM155R71C104KA88D | Murata | 490-10698-1-ND | 81-GRM... | C14663 |
-```
-
-## Enriching with Distributor Data
-
-For parts missing distributor info, search to fill gaps:
-
-**By MPN** (most reliable — cross-references across all distributors):
-- DigiKey: keyword search with MPN (see `digikey` skill)
-- Mouser: part number search with MPN (see `mouser` skill)
-- LCSC: jlcsearch with MPN (see `lcsc` skill)
-
-**By value + footprint** (when MPN unknown):
-- Search distributors with descriptive keywords (e.g., "100nF 0402 X7R 16V")
-- Select best match, record MPN
-
-**Priority during prototyping**: focus on DigiKey first (primary), Mouser second (backup). LCSC numbers can wait until production phase.
-
-**Priority for production**: ensure every part has an LCSC number. Search by MPN on jlcsearch or LCSC.
-
-**Datasheets**: When you need to fetch a datasheet for validation or analysis, use the DigiKey API first (see the `digikey` skill) — it returns direct PDF URLs via the `DatasheetUrl` field, which is faster and more reliable than web searching. Fall back to WebSearch only if the part isn't on DigiKey.
-
-After finding parts, **write the data back** into the schematic symbol properties.
-
-## Ordering Parts
-
-### Prototype Orders: DigiKey (Primary)
-
-**Bulk Add (preferred)** — paste directly into DigiKey's "Bulk Add to Cart" box. One product per line, comma-delimited: `quantity, DigiKey part number, customer reference`:
-```
-3, 490-10698-1-ND, C1/C2/C5
-1, ESP32-S3-WROOM-1-N16R8-ND, U1
-5, 311-10.0KCRCT-ND, R1/R2/R3/R4/R5
-```
-
-When generating a BOM for DigiKey ordering, output this bulk-add text so the user can copy-paste it directly.
-
-**CSV upload** — alternative for larger orders: My DigiKey > BOM Manager > Upload BOM.
-```csv
-Quantity,Part Number,Customer Reference
-3,490-10698-1-ND,C1/C2/C5
-```
-
-### Prototype Orders: Mouser (Secondary)
-
-Mouser cart upload CSV:
-```csv
-Mouser Part Number,Quantity,Customer Part Number
-81-GRM155R71C104KA8D,3,C1/C2/C5
-```
-Upload at Mouser: Order > Upload a Spreadsheet.
-
-### Production Orders: JLCPCB Assembly
-
-See the `jlcpcb` skill for BOM/CPL format, basic vs extended parts, and ordering workflow.
-
-### Production Orders: PCBWay Assembly
-
-See the `pcbway` skill for BOM format (MPN-based), turnkey vs consigned options, and ordering workflow.
-
-## Gerber & Stencil Export for PCB Fabrication
-
-### Required Gerber Layers
-
-Export from KiCad: Fabrication > Plot (format: Gerber, coordinate format: 4.6 mm).
-
-| KiCad Layer | Description |
-|-------------|-------------|
-| F.Cu / B.Cu | Front/back copper |
-| F.Paste / B.Paste | Solder paste (for stencil) |
-| F.SilkS / B.SilkS | Silkscreen |
-| F.Mask / B.Mask | Solder mask |
-| Edge.Cuts | Board outline |
-
-Also generate Excellon drill files (Fabrication > Generate Drill Files). Zip all gerber + drill files together for upload.
-
-### CPL (Component Placement List)
-
-Export from KiCad: Fabrication > Generate Placement Files (CSV format).
-
-| Column | Description |
-|--------|-------------|
-| `Designator` | Reference designator |
-| `Mid X` / `Mid Y` | Component center position (mm) |
-| `Rotation` | Rotation angle (degrees) |
-| `Layer` | `Top` or `Bottom` |
-
-Both JLCPCB and PCBWay use the same CPL format.
-
-### Stencil Ordering
-
-When ordering bare prototype PCBs, also order a **framed stencil** for solder paste application:
-- Framed stencil (~$7 from JLCPCB) — rigid frame for use with a stencil jig; recommended for lab hand assembly
-- Stencil is generated from the F.Paste (and optionally B.Paste) gerber layers
-- Order as a separate cart item alongside the PCB order
-
-## Price Comparison
-
-Compare across distributors at target quantity. Always query current pricing via the `digikey`, `mouser`, and `lcsc` skills — prices change frequently.
-
-```
-| Part | Qty | DigiKey | Mouser | LCSC |
-|------|-----|---------|--------|------|
-| 100nF 0402 (C1,C2,C5) | 3 | $0.010 | $0.009 | $0.002 |
-| ESP32-S3-WROOM-1 (U1) | 1 | $3.20 | $3.45 | $2.80 |
-```
-*(Prices are illustrative — always query current pricing.)*
-
-### Cost Summary
-
-```
-BOM Summary — Project: sacmap-rev1
-===================================
-Unique parts:     23
-Total components:  87
-DNP:               3
-
-Prototype (1 board, DigiKey):
-  Parts:       $45.23
-  PCB (JLC):   ~$7 (5 boards min, 2-layer)
-  Stencil:     ~$7 (framed, from JLC)
-  Shipping:    ~$5-12
-  Total:       ~$64-71
-
-Production (100 boards, JLCPCB assembled):
-  Parts/board:     $8.50
-  PCB fab/board:    $0.80
-  Assembly/board:   $2.50
-  Extended fees:    $0.09/board (3 extended x $3 / 100)
-  Per board:        ~$11.89
-  Total (100):      ~$1,189
-```
-
-## BOM Diffing Between Revisions
-
-When the schematic changes between revisions:
-
-```
-BOM Diff: Rev 1 -> Rev 2
-=========================
-Added:
-  + U3 (ESP32-S3-WROOM-1) — needs MPN, DigiKey
-  + C10,C11 (22uF 0805) — needs sourcing
-
-Removed:
-  - U2 (ESP-WROOM-02)
-  - C8 (10uF 0603)
-
-Changed:
-  ~ R5: 10k -> 4.7k (value change — check if same MPN family)
-  ~ C3: 0402 -> 0603 (footprint change — new part needed)
-
-Unchanged: 18 unique parts (72 components)
-New parts to source: 3
-```
-
-## Edit Symbol Fields — CSV Round-Trip
-
-The most powerful way to bulk-edit BOM data:
-
-1. **Export**: Tools > Edit Symbol Fields > Export to CSV
-2. **Edit**: open CSV in a spreadsheet or script, add/update MPN, DigiKey, Mouser, LCSC columns
-3. **Import**: Tools > Edit Symbol Fields > Import from CSV
-   - Reference designators must match exactly — mismatched references cause import failures
-   - New columns become new symbol properties
-   - Existing values are overwritten
-   - **Back up the `.kicad_sch` before importing** — the import overwrites in place with no undo
-
-Ideal for bulk-adding distributor part numbers found via API searches.
-
-## Interactive HTML BOM (ibom)
-
-Generates a visual HTML page showing component locations on the PCB — essential for hand-assembling prototypes in the lab.
-
-### Installation
+Generates an HTML page showing component locations on the PCB — essential for hand-assembly.
 
 ```bash
 pip install InteractiveHtmlBom
-```
-Or: KiCad Plugin and Content Manager > search "Interactive HTML BOM"
-
-### Recommended Command
-
-```bash
 generate_interactive_bom board.kicad_pcb \
-  --dest-dir bom/ \
-  --name-format "%f_ibom_%r" \
+  --dest-dir bom/ --name-format "%f_ibom_%r" \
   --extra-fields "MPN,Manufacturer,DigiKey,Mouser,LCSC" \
   --group-fields "Value,Footprint,MPN" \
-  --checkboxes "Sourced,Placed" \
-  --dnp-field "DNP" \
-  --sort-order "C,R,L,D,U,Y,X,F,SW,A,~,HS,CNN,J,P,NT,MH" \
-  --no-browser
+  --checkboxes "Sourced,Placed" --dnp-field "DNP" --no-browser
 ```
 
-This produces an HTML file with:
-- Visual PCB — click a BOM row to highlight components on the board
-- BOM table showing MPN and all distributor part numbers
-- Sourced/Placed checkboxes for tracking hand assembly progress
-- DNP components excluded
-- Grouped by Value + Footprint + MPN
+## Reference Files
 
-### Prototype Assembly Workflow
-
-1. Parts arrive from DigiKey/Mouser (~1 week after ordering)
-2. Bare PCBs + framed stencil arrive from JLCPCB (~1 week)
-3. Generate ibom with `--checkboxes "Sourced,Placed"`
-4. Open HTML in browser at the workbench
-5. Apply solder paste using the framed stencil
-6. Work through BOM groups — click each row in ibom to highlight placement on PCB
-7. Place components, check "Placed" as you go
-8. Reflow solder (hot plate, oven, or hot air)
-9. Hand-solder any through-hole components
-
-## DNP Handling
-
-Components marked Do Not Populate are handled consistently across the ecosystem:
-- KiCad: set the `DNP` attribute on the symbol (or use a custom `DNP` field)
-- ibom: use `--dnp-field "DNP"` to exclude from the visual BOM
-- JLCPCB BOM export: omit DNP components from the CSV entirely
-- PCBWay BOM export: omit DNP components or mark with a note
+Read these when you need detailed lookup data:
+- `references/kicad-fields.md` — field definitions, aliases, S-expression format, part number patterns
+- `references/ordering-and-fabrication.md` — distributor paste formats, gerber export, CPL, cost templates
+- `references/part-number-conventions.md` — detailed analysis of naming patterns across 56+ real projects
 
 ## Production Readiness Checklist
 
-Before ordering production assembled boards:
-
-- [ ] All parts have MPN populated
-- [ ] All parts have LCSC numbers (for JLCPCB) or MPN (for PCBWay turnkey)
-- [ ] No obsolete or end-of-life parts
-- [ ] Stock verified on LCSC for all parts (for JLCPCB)
-- [ ] Basic vs extended parts identified (JLCPCB cost impact)
-- [ ] BOM exported in correct format (JLCPCB or PCBWay)
-- [ ] CPL/centroid file exported and verified
+- [ ] All parts have MPN and LCSC numbers (for JLCPCB) or MPN (for PCBWay)
+- [ ] No obsolete or EOL parts
+- [ ] Stock verified, basic vs extended parts identified
+- [ ] BOM and CPL exported in correct format
 - [ ] Gerbers exported and verified
 - [ ] Design rules meet manufacturer minimums (see `jlcpcb` or `pcbway` skill)
-- [ ] Prototype fully tested — no more design changes expected
+- [ ] Prototype fully tested
 
 ## Tips
 
-- **MPN is the universal key** — always populate it first; enables cross-referencing all distributors
-- **Schematic is the source of truth** — all BOM data in symbol properties, exported as needed
-- **DigiKey first, Mouser second** — for prototyping, DigiKey is primary source, Mouser is backup
-- **LCSC numbers can wait** — don't need them until production phase; focus on DigiKey/Mouser for prototyping
-- **CSV round-trip** — use Edit Symbol Fields export/import for bulk updates
-- **Version in git** — the `.kicad_sch` file contains all BOM data; commit with meaningful messages per revision
-- **ibom per revision** — regenerate when the board changes; keep in project for lab reference
-- **Field Name Templates** — set up MPN, Manufacturer, LCSC, DigiKey, Mouser as templates in KiCad 9
-- **Second source** — use `AltMPN` field for critical parts in case primary goes out of stock
-- **Price at target qty** — unit prices vary dramatically; prototype qty pricing != production qty pricing
-- **Alternate footprints** — if a part is only available in a different package (e.g., 0402 needed but only 0603 in stock on LCSC), update the footprint in the schematic, re-run DRC on the PCB, and update the BOM. Don't just swap the LCSC number without verifying the footprint matches.
+- **MPN is the universal key** — populate it first, enables cross-referencing everything
+- **Schematic is source of truth** — all BOM data in symbol properties, exported as needed
+- **DigiKey first, Mouser second** for prototyping; LCSC for production
+- **CSV round-trip** — Edit Symbol Fields > Export/Import CSV for bulk updates
+- **Field Name Templates** (KiCad 9+) — pre-define MPN, Manufacturer, LCSC, DigiKey, Mouser
+- **DigiKey token reuse** — cached to temp file with 9-minute TTL; no need to re-auth per call
+- **Second source** — use `AltMPN` field for critical parts
+- **Price at target qty** — prototype pricing != production pricing

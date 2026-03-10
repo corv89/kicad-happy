@@ -506,9 +506,24 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
                or get_property(sym, "mpn") or "")
         manufacturer = (get_property(sym, "Manufacturer") or get_property(sym, "Mfr")
                         or get_property(sym, "MFR") or "")
-        digikey = get_property(sym, "DigiKey") or get_property(sym, "DigiKey Part") or get_property(sym, "Digi-Key_PN") or ""
-        mouser = get_property(sym, "Mouser") or get_property(sym, "Mouser Part") or get_property(sym, "Mouser_PN") or ""
-        lcsc = get_property(sym, "LCSC") or get_property(sym, "LCSC Part") or get_property(sym, "JLCPCB") or ""
+        digikey = (get_property(sym, "Digi-Key Part Number") or get_property(sym, "Digi-Key_PN")
+                   or get_property(sym, "DigiKey") or get_property(sym, "DigiKey Part")
+                   or get_property(sym, "Digikey Part Number") or get_property(sym, "Digi-Key PN")
+                   or get_property(sym, "DigiKey_Part_Number") or get_property(sym, "DigiKey Part Number")
+                   or get_property(sym, "DK") or "")
+        mouser = (get_property(sym, "Mouser") or get_property(sym, "Mouser Part Number")
+                  or get_property(sym, "Mouser Part") or get_property(sym, "Mouser_PN")
+                  or get_property(sym, "Mouser PN") or "")
+        lcsc = (get_property(sym, "LCSC") or get_property(sym, "LCSC Part #")
+                or get_property(sym, "LCSC Part Number") or get_property(sym, "LCSC Part")
+                or get_property(sym, "LCSCStockCode") or get_property(sym, "JLCPCB")
+                or get_property(sym, "JLCPCB Part") or get_property(sym, "JLC") or "")
+        element14 = (get_property(sym, "Newark") or get_property(sym, "Newark Part Number")
+                     or get_property(sym, "Newark_PN") or get_property(sym, "Newark PN")
+                     or get_property(sym, "Farnell") or get_property(sym, "Farnell Part Number")
+                     or get_property(sym, "Farnell_PN") or get_property(sym, "Farnell PN")
+                     or get_property(sym, "element14") or get_property(sym, "element14 Part Number")
+                     or get_property(sym, "element14_PN") or "")
 
         in_bom = get_value(sym, "in_bom") != "no"
         dnp = get_value(sym, "dnp") == "yes"
@@ -535,6 +550,7 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
             "digikey": digikey,
             "mouser": mouser,
             "lcsc": lcsc,
+            "element14": element14,
             "x": x,
             "y": y,
             "angle": angle,
@@ -3740,6 +3756,7 @@ def generate_bom(components: list[dict]) -> list[dict]:
                 "digikey": comp["digikey"],
                 "mouser": comp["mouser"],
                 "lcsc": comp["lcsc"],
+                "element14": comp["element14"],
                 "datasheet": comp["datasheet"],
                 "description": comp["description"],
                 "references": [],
@@ -4116,7 +4133,7 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
             comp = {
                 "reference": "", "value": "", "lib_id": "", "footprint": "",
                 "datasheet": "", "description": "", "mpn": "", "manufacturer": "",
-                "digikey": "", "mouser": "", "lcsc": "",
+                "digikey": "", "mouser": "", "lcsc": "", "element14": "",
                 "x": 0, "y": 0, "angle": 0,
                 "mirror_x": False, "mirror_y": False,
                 "uuid": "", "in_bom": True, "dnp": False, "on_board": True,
@@ -4178,12 +4195,24 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                                     comp["mpn"] = field_val
                                 elif fu in ("MANUFACTURER", "MFG", "MANF", "MFR"):
                                     comp["manufacturer"] = field_val
-                                elif fu in ("DIGIKEY", "DIGIKEY#", "DIGI-KEY"):
+                                elif fu in ("DIGIKEY", "DIGIKEY#", "DIGI-KEY",
+                                           "DIGI-KEY PART NUMBER", "DIGI-KEY_PN",
+                                           "DIGIKEY PART NUMBER", "DIGIKEY_PART_NUMBER",
+                                           "DIGI-KEY PN", "DIGIKEY PART", "DK"):
                                     comp["digikey"] = field_val
-                                elif fu in ("MOUSER", "MOUSER#"):
+                                elif fu in ("MOUSER", "MOUSER#", "MOUSER PART NUMBER",
+                                           "MOUSER PART", "MOUSER_PN", "MOUSER PN"):
                                     comp["mouser"] = field_val
-                                elif fu in ("LCSC", "LCSC#", "JLC#", "JLCPCB#"):
+                                elif fu in ("LCSC", "LCSC#", "JLC#", "JLCPCB#",
+                                           "LCSC PART #", "LCSC PART NUMBER",
+                                           "LCSC PART", "LCSCSTKCODE", "LCSCSTOCKCODE",
+                                           "JLCPCB", "JLCPCB PART", "JLC"):
                                     comp["lcsc"] = field_val
+                                elif fu in ("NEWARK", "NEWARK PART NUMBER", "NEWARK_PN",
+                                           "NEWARK PN", "FARNELL", "FARNELL PART NUMBER",
+                                           "FARNELL_PN", "FARNELL PN", "ELEMENT14",
+                                           "ELEMENT14 PART NUMBER", "ELEMENT14_PN"):
+                                    comp["element14"] = field_val
                                 elif fu == "DNP":
                                     comp["dnp"] = field_val.strip() not in ("", "0", "false")
 

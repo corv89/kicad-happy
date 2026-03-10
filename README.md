@@ -10,13 +10,14 @@ These skills turn Claude Code into a full-fledged electronics design assistant t
 
 | Skill       | What it does                                                                                                                                                 |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **kicad**   | 🔍 Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DRC/ERC verification. |
-| **digikey** | 📄 Search DigiKey for components, download datasheets via API, sync a local datasheets directory for your project.                                           |
-| **bom**     | 📋 BOM management — create, enrich, price, and export bills of materials across prototype and production phases.                                             |
-| **mouser**  | 🛒 Search Mouser for components (secondary prototype source, used when DigiKey is out of stock).                                                             |
-| **lcsc**    | 🔎 Search LCSC for components (production sourcing, JLCPCB parts library).                                                                                   |
-| **jlcpcb**  | 🏭 JLCPCB fabrication and assembly — design rules, BOM/CPL format, ordering workflow.                                                                        |
-| **pcbway**  | 🏭 PCBWay fabrication and assembly — turnkey assembly with MPN-based sourcing.                                                                               |
+| **kicad**     | 🔍 Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DRC/ERC verification. |
+| **bom**       | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files.                                                     |
+| **digikey**   | 📄 Search DigiKey for components, download datasheets via API, sync a local datasheets directory for your project.                                           |
+| **mouser**    | 🛒 Search Mouser for components (secondary prototype source, used when DigiKey is out of stock).                                                             |
+| **lcsc**      | 🔎 Search LCSC for components (production sourcing, JLCPCB parts library).                                                                                   |
+| **element14** | 🌍 Search Newark/Farnell/element14 for components (international sourcing, one API for three storefronts).                                                   |
+| **jlcpcb**    | 🏭 JLCPCB fabrication and assembly — design rules, BOM/CPL format, ordering workflow.                                                                        |
+| **pcbway**    | 🏭 PCBWay fabrication and assembly — turnkey assembly with MPN-based sourcing.                                                                               |
 
 ## 🚀 Install
 
@@ -28,7 +29,7 @@ cd kicad-happy
 
 # Install all skills (symlinks into ~/.claude/skills/)
 mkdir -p ~/.claude/skills
-for skill in kicad digikey bom lcsc jlcpcb mouser pcbway; do
+for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/$skill" ~/.claude/skills/$skill
 done
 ```
@@ -45,7 +46,16 @@ The analysis scripts are pure Python 3 with no required dependencies. Optional e
 - `playwright` — last-resort fallback for JS-heavy datasheet sites (Broadcom, Espressif)
 - `pdftotext` (poppler-utils) — better PDF text extraction for datasheet verification
 
-DigiKey API access requires `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET` environment variables ([get credentials here](https://developer.digikey.com/)). Datasheet downloads still work without credentials using fallback web search.
+### API keys (optional)
+
+The distributor skills work best with API credentials, but none are strictly required — Claude falls back to web search for component lookups and datasheet downloads.
+
+| Distributor | Env variables | How to get |
+|-------------|--------------|------------|
+| **DigiKey** | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | [DigiKey API Portal](https://developer.digikey.com/) — register an app, get OAuth 2.0 credentials |
+| **Mouser** | `MOUSER_SEARCH_API_KEY` | My Mouser → APIs → register for Search API key |
+| **element14** | `ELEMENT14_API_KEY` | [element14 API Portal](https://partner.element14.com/) — one key covers Newark, Farnell, and element14 |
+| **LCSC** | *none needed* | Uses the free [jlcsearch](https://jlcsearch.tscircuit.com/) community API |
 
 ## 🔬 What it looks like in practice
 
@@ -205,23 +215,38 @@ Claude combines the analyzer output with datasheet cross-referencing to produce 
 - Computes thermal budget for power components
 - Checks battery voltage range covers regulator input range (including UVLO)
 
-### 🛒 Search for components
+### 📋 BOM management — from schematic to order
+
+> "Source all the parts for my board, I'm building 5 prototypes"
+
+This is where things get *really* good. The BOM skill manages the entire lifecycle of your bill of materials — and it all lives in your KiCad schematic as the single source of truth. No separate spreadsheets to keep in sync, no copy-pasting between tabs.
+
+Claude analyzes your schematic to detect which distributor fields are populated (and which naming convention you're using — it handles dozens of variants like `Digi-Key_PN`, `DigiKey Part Number`, `DK`, etc.), identifies gaps, searches distributors to fill them, validates every match against the footprint and specs, and exports per-supplier order files in the exact upload format each distributor expects.
+
+**The workflow:**
+
+1. **Analyze** — scans your schematic for existing part numbers, detects the naming convention, identifies gaps
+2. **Sync datasheets** — downloads PDFs for every MPN into a local `datasheets/` directory (DigiKey, LCSC, element14, and Mouser all supported)
+3. **Source** — searches distributors by MPN, fills in missing part numbers, validates package/specs match
+4. **Export** — generates a tracking CSV and per-supplier order files with quantities computed for your board count + spares
 
 > "I need a 3.3V LDO that can do 500mA in SOT-223, under $1"
 
-Claude searches DigiKey, filters by specs, and returns pricing and stock:
+Claude searches DigiKey via API, filters by your specs, and returns pricing and stock:
 
 ```
-AZ1117CH-3.3TRG1 - Arizona Microdevices
+AZ1117CH-3.3TRG1 — Arizona Microdevices
   3.3V Fixed, 1A, SOT-223-3
   $0.45 @ qty 1, $0.32 @ qty 100
   In stock: 15,000+
 
-AP2114H-3.3TRG1 - Diodes Incorporated
+AP2114H-3.3TRG1 — Diodes Incorporated
   3.3V Fixed, 1A, SOT-223
   $0.38 @ qty 1, $0.28 @ qty 100
   In stock: 42,000+
 ```
+
+Pick one, and Claude searches Mouser and LCSC for the same MPN to fill in alternate suppliers. One prompt, all suppliers populated, ready for your tracking CSV.
 
 ### 🏭 Prepare for manufacturing
 
@@ -229,9 +254,13 @@ AP2114H-3.3TRG1 - Diodes Incorporated
 
 Claude extracts the BOM from your schematic, cross-references LCSC part numbers, formats the BOM and component placement list to JLCPCB's exact spec, flags basic vs extended parts, and warns about rotation offsets for common packages.
 
-## 🧪 The analysis scripts
+> "Generate order files for 10 boards with 2 spares per line"
 
-Three Python scripts extract structured JSON from KiCad files. They're the data layer — Claude reads the output and applies higher-level reasoning (datasheet validation, design pattern matching, error detection).
+Claude exports per-supplier upload files — DigiKey bulk-add CSV, Mouser cart format, LCSC BOM — with quantities already computed. It'll flag any parts where your chosen supplier is out of stock and suggest the alternate.
+
+## 🧪 The scripts
+
+Pure Python 3 scripts that parse KiCad files into structured data. They're the data layer — Claude reads the output and applies higher-level reasoning (datasheet validation, design pattern matching, error detection). Zero required dependencies.
 
 ```bash
 # Schematic analysis (supports .kicad_sch and legacy .sch)
@@ -242,9 +271,19 @@ python3 kicad/scripts/analyze_pcb.py hardware/board.kicad_pcb
 
 # Gerber/drill file verification
 python3 kicad/scripts/analyze_gerbers.py hardware/gerbers/
+
+# BOM analysis — detect field conventions, find gaps, export tracking CSV
+python3 bom/scripts/bom_manager.py analyze hardware/board.kicad_sch --recursive
+python3 bom/scripts/bom_manager.py export hardware/board.kicad_sch -o bom/bom.csv
+
+# Sync datasheets from any supported distributor
+python3 digikey/scripts/sync_datasheets_digikey.py hardware/board.kicad_sch
+python3 lcsc/scripts/sync_datasheets_lcsc.py hardware/board.kicad_sch
+python3 element14/scripts/sync_datasheets_element14.py hardware/board.kicad_sch
+python3 mouser/scripts/sync_datasheets_mouser.py hardware/board.kicad_sch
 ```
 
-All output JSON to stdout. Add `--output file.json` to write to a file, `--compact` for minified output.
+All analysis scripts output JSON to stdout. Add `--output file.json` to write to a file, `--compact` for minified output. Datasheet sync scripts share a common `datasheets/` directory and skip already-downloaded files.
 
 ### Schematic analyzer output
 
@@ -292,8 +331,8 @@ Layer completeness check, drill tool/hole summary, aperture counts, layer alignm
 2. **Sync datasheets** for all components — builds a local library Claude uses for validation
 3. **Analyze** the schematic and PCB with the analysis scripts
 4. **Review** the design — Claude cross-references the analysis with datasheets
-5. **Source components** via DigiKey (prototype) or LCSC (production)
-6. **Export** BOM + CPL formatted for your assembler
+5. **Source components** — search DigiKey/Mouser (prototype) or LCSC (production)
+6. **Export** BOM tracking CSV + per-supplier order files + CPL for your assembler
 7. **Order** boards from JLCPCB or PCBWay
 
 ## 🎨 Why KiCad?
