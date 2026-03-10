@@ -12,8 +12,8 @@ These skills turn Claude Code into a full-fledged electronics design assistant t
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **kicad**     | 🔍 Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DRC/ERC verification. |
 | **bom**       | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files.                                                     |
-| **digikey**   | 📄 Search DigiKey for components, download datasheets via API, sync a local datasheets directory for your project.                                           |
-| **mouser**    | 🛒 Search Mouser for components (secondary prototype source, used when DigiKey is out of stock).                                                             |
+| **digikey**   | 📄 Search DigiKey for components and download datasheets via API.                                                                                            |
+| **mouser**    | 🛒 Search Mouser for components and download datasheets.                                                                                                     |
 | **lcsc**      | 🔎 Search LCSC for components (production sourcing, JLCPCB parts library).                                                                                   |
 | **element14** | 🌍 Search Newark/Farnell/element14 for components (international sourcing, one API for three storefronts).                                                   |
 | **jlcpcb**    | 🏭 JLCPCB fabrication and assembly — design rules, BOM/CPL format, ordering workflow.                                                                        |
@@ -21,7 +21,11 @@ These skills turn Claude Code into a full-fledged electronics design assistant t
 
 ## 🚀 Install
 
-Clone the repo and symlink each skill into your Claude Code skills directory:
+The easiest way — just ask Claude Code:
+
+> Clone https://github.com/aklofas/kicad-happy and install all the skills
+
+Or do it manually:
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
@@ -34,7 +38,7 @@ for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway; do
 done
 ```
 
-Or install individually — copy or symlink any skill folder into `~/.claude/skills/`. For project-specific installs, use `.claude/skills/` in your project root instead.
+You can also install individually — symlink any skill folder into `~/.claude/skills/`. For project-specific installs, use `.claude/skills/` in your project root instead.
 
 The **kicad** skill is the core — the others enhance it with sourcing, datasheets, and manufacturing workflows.
 
@@ -196,24 +200,7 @@ Datasheet sync complete:
   Output: hardware/rev2/datasheets/
 ```
 
-Creates a `datasheets/` directory with human-readable filenames and an `index.json` manifest. Subsequent runs only download new or changed parts. Each downloaded PDF is verified against the expected MPN by extracting text and checking for matches.
-
-The datasheets are then automatically used during schematic analysis — Claude reads them to validate component values against manufacturer recommendations.
-
-### 🩺 Design review
-
-> "Review my schematic for bugs before I order boards"
-
-Claude combines the analyzer output with datasheet cross-referencing to produce a structured review:
-
-- Validates feedback resistor values against regulator Vref (catches wrong output voltage)
-- Checks all ICs have proper decoupling caps
-- Verifies crystal load cap values match the oscillator requirements
-- Flags floating inputs, missing pull-ups on I2C, unprotected external interfaces
-- Checks power sequencing across regulators
-- Validates signal level compatibility between 3.3V and 5V domains
-- Computes thermal budget for power components
-- Checks battery voltage range covers regulator input range (including UVLO)
+Creates a `datasheets/` directory with human-readable filenames and an `index.json` manifest. Subsequent runs only download new or changed parts. Each PDF is verified against the expected MPN. Claude then reads these datasheets during design review to validate component values against manufacturer recommendations.
 
 ### 📋 BOM management — from schematic to order
 
@@ -276,11 +263,8 @@ python3 kicad/scripts/analyze_gerbers.py hardware/gerbers/
 python3 bom/scripts/bom_manager.py analyze hardware/board.kicad_sch --recursive
 python3 bom/scripts/bom_manager.py export hardware/board.kicad_sch -o bom/bom.csv
 
-# Sync datasheets from any supported distributor
+# Sync datasheets (DigiKey, LCSC, element14, Mouser — all share one datasheets/ directory)
 python3 digikey/scripts/sync_datasheets_digikey.py hardware/board.kicad_sch
-python3 lcsc/scripts/sync_datasheets_lcsc.py hardware/board.kicad_sch
-python3 element14/scripts/sync_datasheets_element14.py hardware/board.kicad_sch
-python3 mouser/scripts/sync_datasheets_mouser.py hardware/board.kicad_sch
 ```
 
 All analysis scripts output JSON to stdout. Add `--output file.json` to write to a file, `--compact` for minified output. Datasheet sync scripts share a common `datasheets/` directory and skip already-downloaded files.
@@ -295,7 +279,7 @@ All analysis scripts output JSON to stdout. Add `--output file.json` to write to
 | `signal_analysis` | Detected subcircuits: regulators, voltage dividers, RC/LC filters, op-amps, transistor drivers, bridges, protection devices, feedback networks, decoupling |
 | `design_analysis` | Power domains, bus detection (I2C/SPI/UART/CAN), differential pairs, cross-domain signals, ERC warnings                                                    |
 
-Supports KiCad 5 through 9. Hierarchical designs are parsed recursively. Tested on 240+ components across multiple real projects.
+Supports KiCad 5 through 9. Hierarchical designs are parsed recursively. Tested across 1,000+ real KiCad projects.
 
 ### PCB analyzer output
 
@@ -307,26 +291,6 @@ Layer completeness check, drill tool/hole summary, aperture counts, layer alignm
 
 ## 🗺️ Workflow overview
 
-```
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   KiCad     │───▶│  Datasheet   │───▶│   Analyze   │
-│  Schematic  │    │    Sync      │    │  (scripts)  │
-└─────────────┘    └──────────────┘    └─────────────┘
-                                              │
-                   ┌──────────────┐    ┌──────┴──────┐
-                   │  Component   │◀───│   Review    │
-                   │   Sourcing   │    │ (datasheets)│
-                   └──────────────┘    └─────────────┘
-                          │
-               ┌──────────┴──────────┐
-               ▼                     ▼
-        ┌─────────────┐    ┌──────────────┐
-        │    BOM      │───▶│  Order PCBs  │
-        │  + Gerbers  │    │  (JLCPCB/    │
-        │  + CPL      │    │   PCBWay)    │
-        └─────────────┘    └──────────────┘
-```
-
 1. **Design** your board in KiCad
 2. **Sync datasheets** for all components — builds a local library Claude uses for validation
 3. **Analyze** the schematic and PCB with the analysis scripts
@@ -337,7 +301,7 @@ Layer completeness check, drill tool/hole summary, aperture counts, layer alignm
 
 ## 🎨 Why KiCad?
 
-This project exists because **KiCad is absolutely incredible** — and we're not being subtle about it. It is, hands down, the best EDA tool available today. Fully open-source, cross-platform, backed by CERN, with a community that ships features faster than most commercial tools. It's used everywhere from weekend hobby projects to production hardware at real companies. And it's *free*. In 2025. While Altium charges you $10K/year. Unreal. 🎉
+This project exists because **KiCad is absolutely incredible** — and we're not being subtle about it. It is, hands down, the best EDA tool available today. Fully open-source, cross-platform, backed by CERN, with a community that ships features faster than most commercial tools. It's used everywhere from weekend hobby projects to production hardware at real companies. And it's *free*. In 2026. While Altium charges you $10K/year. Unreal. 🎉
 
 But what makes KiCad truly special for AI-assisted design — and the entire reason this project can exist — is its **beautifully open file format**. Every schematic, PCB layout, symbol, and footprint is stored as clean, human-readable S-expressions. No proprietary binary blobs. No vendor lock-in. No reverse engineering. No $500 "export plugin" just to read your own data.
 
