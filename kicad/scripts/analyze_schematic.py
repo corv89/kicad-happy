@@ -5468,6 +5468,143 @@ def audit_sourcing_fields(components: list[dict]) -> dict:
     return result
 
 
+# Generic transistor symbol prefixes that encode assumed pin order
+_GENERIC_TRANSISTOR_PREFIXES = ("Q_NPN_", "Q_PNP_", "Q_NMOS_", "Q_PMOS_")
+
+# Map prefix to human-readable type
+_GENERIC_TYPE_LABELS = {
+    "Q_NPN_": "NPN",
+    "Q_PNP_": "PNP",
+    "Q_NMOS_": "NMOS",
+    "Q_PMOS_": "PMOS",
+}
+
+# Map single-letter pin abbreviations to full names
+_PIN_LETTER_NAMES = {
+    "B": "Base", "C": "Collector", "E": "Emitter",
+    "G": "Gate", "S": "Source", "D": "Drain",
+}
+
+
+def check_generic_transistor_symbols(components: list[dict],
+                                     schematic_path: str = "") -> list[dict]:
+    """Flag transistors using generic KiCad symbols instead of device-specific ones.
+
+    Generic symbols (Q_NPN_BCE, Q_NMOS_GSD, etc.) encode an assumed pin order
+    that may not match the actual part. SOT-23 pin mapping varies by manufacturer:
+    BCE vs BEC vs CBE for BJTs, GSD vs GDS vs SGD for MOSFETs. Using a generic
+    symbol with the wrong pin order produces a board that silently doesn't work.
+
+    Device-specific symbols (MMBT3904, AO3400A) encode the correct pinout for
+    that particular part and are always safer.
+
+    If a datasheets/index.json exists next to the schematic, the check also notes
+    whether a datasheet is available for manual pinout verification.
+    """
+    warnings = []
+
+    # Load datasheet index if available
+    ds_index: dict[str, dict] = {}
+    if schematic_path:
+        sch_dir = Path(schematic_path).parent
+        idx_path = sch_dir / "datasheets" / "index.json"
+        if idx_path.is_file():
+            try:
+                ds_index = json.loads(idx_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # Deduplicate by reference (multi-unit symbols)
+    seen: set[str] = set()
+
+    for c in components:
+        if c["type"] != "transistor":
+            continue
+        ref = c["reference"]
+        if ref in seen:
+            continue
+        seen.add(ref)
+
+        lib_id = c.get("lib_id", "")
+        # Extract symbol name (part after the colon)
+        sym_name = lib_id.split(":")[-1] if ":" in lib_id else lib_id
+
+        # Check if this is a generic transistor symbol
+        matched_prefix = None
+        for prefix in _GENERIC_TRANSISTOR_PREFIXES:
+            if sym_name.startswith(prefix):
+                matched_prefix = prefix
+                break
+
+        if matched_prefix is None:
+            continue
+
+        # Extract pin order suffix (e.g., "GSD" from "Q_NMOS_GSD")
+        pin_suffix = sym_name[len(matched_prefix):]
+        sym_type = _GENERIC_TYPE_LABELS.get(matched_prefix, "transistor")
+
+        # Expand pin abbreviations for the message
+        pin_names = "-".join(
+            _PIN_LETTER_NAMES.get(ch, ch) for ch in pin_suffix
+        ) if pin_suffix else pin_suffix
+
+        mpn = c.get("mpn", "")
+        value = c.get("value", "")
+        footprint = c.get("footprint", "")
+        fp_name = footprint.split(":")[-1] if ":" in footprint else footprint
+
+        # Check datasheet availability by MPN
+        has_datasheet = False
+        if mpn and ds_index:
+            # index.json keys may be MPN strings or nested under "components"
+            if isinstance(ds_index, dict):
+                if mpn in ds_index:
+                    has_datasheet = True
+                elif "components" in ds_index:
+                    comps = ds_index["components"]
+                    if isinstance(comps, dict) and mpn in comps:
+                        has_datasheet = True
+                    elif isinstance(comps, list):
+                        has_datasheet = any(
+                            e.get("mpn") == mpn for e in comps
+                            if isinstance(e, dict)
+                        )
+
+        # Build human-readable part identifier
+        part_id = mpn or value or "unknown part"
+
+        # Build message
+        if has_datasheet:
+            action = f"Verify pinout against the {part_id} datasheet (available in datasheets/) or switch to a device-specific symbol."
+        elif mpn:
+            action = f"Verify pinout against the {part_id} datasheet or switch to a device-specific symbol."
+        else:
+            action = "Add an MPN and verify pinout against the datasheet, or switch to a device-specific symbol."
+
+        msg = (
+            f"{ref}: Generic {sym_type} symbol ({sym_name}) used"
+            f"{' for ' + part_id if part_id != 'unknown part' else ''}"
+            f"{' in ' + fp_name if fp_name else ''}."
+            f" Pin order ({pin_names}) may not match the actual part."
+            f" {action}"
+        )
+
+        warnings.append({
+            "component": ref,
+            "lib_id": lib_id,
+            "value": value,
+            "mpn": mpn,
+            "footprint": footprint,
+            "symbol_pin_order": pin_suffix,
+            "symbol_type": sym_type,
+            "has_datasheet": has_datasheet,
+            "severity": "warning",
+            "message": msg,
+        })
+
+    return warnings
+
+
 def summarize_alternate_pins(lib_symbols: dict) -> list[dict]:
     """Summarize symbols that have alternate pin definitions (dual-function pins).
 
@@ -7639,6 +7776,7 @@ def analyze_schematic(path: str) -> dict:
     pin_coverage = verify_pin_coverage(all_components, all_lib_symbols)
     instance_issues = check_instance_consistency(all_components)
     hier_label_analysis = validate_hierarchical_labels(all_labels, nets)
+    generic_sym_warnings = check_generic_transistor_symbols(all_components, str(path))
 
     # ---- Tier 3: High-level design analyses ----
     pdn_analysis = analyze_pdn_impedance(all_components, nets, pin_net)
@@ -7710,6 +7848,8 @@ def analyze_schematic(path: str) -> dict:
         result["pin_coverage_warnings"] = pin_coverage
     if instance_issues:
         result["instance_consistency_warnings"] = instance_issues
+    if generic_sym_warnings:
+        result["generic_symbol_warnings"] = generic_sym_warnings
     if pdn_analysis:
         result["pdn_impedance"] = pdn_analysis
     if sleep_current:
