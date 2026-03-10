@@ -74,7 +74,7 @@ Generic numbered supplier slots where the supplier name is in one field and the 
 (property "Supplier 2 Part #" "81-GRM155R71C104KA8D" ...)
 ```
 
-Used by HydraMeter and some KiCad BOM export templates. The `bom_manager.py` script detects this pattern by reading the supplier name value and mapping it to a canonical distributor.
+Used by some projects and KiCad BOM export templates. The `bom_manager.py` script detects this pattern by reading the supplier name value and mapping it to a canonical distributor.
 
 Variants: `Vendor` / `Vendor Part Number`, `Source` / `Source Part Number`, `Distributor 1` / `Distributor 1 PN`.
 
@@ -88,7 +88,7 @@ A project-internal identifier (slug, database ID, or custom code) instead of or 
 (property "PartID" "P00123" ...)
 ```
 
-Used by bitmagic (`Key` field with slugs like `ic-cy7c68013a-56`), USBPDSINK01 (`UST_ID`), and company-internal projects. These IDs cross-reference to an external database or spreadsheet, not to a distributor.
+Some projects use `Key` fields with slugs like `ic-cy7c68013a-56`, or custom IDs like `UST_ID`. These IDs cross-reference to an external database or spreadsheet, not to a distributor.
 
 **What to do:** The internal key is NOT an MPN. Look for a separate MPN field (might be named `MFN`, `MFPN`, `Part Number`, etc.). If there's no MPN, the internal key might be the only identifier — ask the user how they want to proceed.
 
@@ -105,7 +105,7 @@ Component specifications stored as individual fields rather than relying on the 
 (property "Package" "0402" ...)
 ```
 
-Used by TR-9, open-covg-daq, DroneController. These are parametric search criteria, not part numbers. Useful for finding the right part when no MPN exists.
+These are parametric search criteria, not part numbers. Useful for finding the right part when no MPN exists.
 
 **What to do:** Use these parametric values to build a search query (e.g., "100nF 0402 X7R 16V ceramic capacitor") and search distributor APIs by keyword. Don't confuse parametric fields with part number fields.
 
@@ -239,100 +239,100 @@ Comprehensive list of every field name variant observed across 56 open-source Ki
 
 ### MPN (Manufacturer Part Number)
 
-| Field Name | Projects Using It |
+| Field Name | Notes |
 |---|---|
-| `MPN` | ecp5-mini, moteus, pico-ice, KiCad_Designs, TPS5430, Mitayi-Pico-D1, USBPDSINK01 |
-| `PartNumber` | bms-16s100-sc, diyBMSv4, pslab-hardware |
-| `Part Number` | hackrf, pslab-hardware |
-| `Manufacturer_Part_Number` | SmartPrintCoreH7x (SnapEDA) |
-| `Manufacturer Part Number` | stepper_driver |
-| `Manufacturer Part #` | HydraMeter |
-| `Manf#` / `manf#` | open-covg-daq, ecp5-mini (older KiCad convention) |
-| `Mfr No.` | pslab-hardware |
-| `MFN` | bitmagic |
-| `MFPN` | USBPDSINK01 |
-| `Partno` | TR-9 |
-| `PN` | TR-60-keyboard, rpi-managed-switch |
+| `MPN` | Most common, canonical name |
+| `PartNumber` | Common in older projects |
+| `Part Number` | Space-separated variant |
+| `Manufacturer_Part_Number` | SnapEDA imports |
+| `Manufacturer Part Number` | Verbose variant |
+| `Manufacturer Part #` | Hash-suffixed variant |
+| `Manf#` / `manf#` | Older KiCad convention |
+| `Mfr No.` | Abbreviated variant |
+| `MFN` | Rare abbreviation |
+| `MFPN` | Rare abbreviation |
+| `Partno` | Rare variant |
+| `PN` | Ambiguous — see note below |
 | `MP` | SnapEDA imports |
-| `Mfg Part` / `MfgPart` | various |
+| `Mfg Part` / `MfgPart` | Various |
 
 **Note:** `PN` is ambiguous — it could be MPN or a distributor PN. If a project uses `PN` alongside a separate `Manufacturer` field, it's likely an MPN. If used alone, check the values.
 
 ### Manufacturer
 
-| Field Name | Projects |
+| Field Name | Notes |
 |---|---|
-| `Manufacturer` | Most projects |
+| `Manufacturer` | Most common |
 | `Manufacturer_Name` | SnapEDA imports |
-| `MF` | moteus (abbreviated) |
-| `MFR` | Mitayi-Pico-D1 |
-| `Mfr` | various |
-| `Mfg` | various |
+| `MF` | Abbreviated |
+| `MFR` | Abbreviated |
+| `Mfr` | Abbreviated |
+| `Mfg` | Abbreviated |
 
 ### DigiKey
 
-| Field Name | Projects |
+| Field Name | Notes |
 |---|---|
-| `DigiKey` | sacmap-rev2, modular-psu, KiCad_Designs |
-| `Digi-Key Part Number` | pico-ice, DroneController |
-| `Digi-Key_PN` | KiCad_Designs |
-| `Digi-Key PN` | KiCad_Designs |
-| `DigiKey_Part_Number` | moteus |
-| `Digikey Part Number` | DroneController |
-| `DK` | various |
-| `Vendor Part Number` | stepper_driver (when `Vendor` = "Digi-Key") |
-| `Supplier 1 Part #` | HydraMeter (when `Supplier 1` = "Digikey") |
+| `DigiKey` | Common short form |
+| `Digi-Key Part Number` | Verbose variant |
+| `Digi-Key_PN` | Underscore variant |
+| `Digi-Key PN` | Space variant |
+| `DigiKey_Part_Number` | Underscore verbose |
+| `Digikey Part Number` | No hyphen variant |
+| `DK` | Short abbreviation |
+| `Vendor Part Number` | When `Vendor` = "Digi-Key" (slot pattern) |
+| `Supplier 1 Part #` | When `Supplier 1` = "Digikey" (slot pattern) |
 
 ### Mouser
 
-| Field Name | Projects |
+| Field Name | Notes |
 |---|---|
-| `Mouser` | modular-psu, ecp5-mini |
-| `Mouser Part Number` | SmartPrintCoreH7x |
-| `Mouser Part` | various |
-| `Mouser_PN` | various |
+| `Mouser` | Common short form |
+| `Mouser Part Number` | Verbose variant |
+| `Mouser Part` | Space variant |
+| `Mouser_PN` | Underscore variant |
 
 ### LCSC / JLCPCB
 
-| Field Name | Projects |
+| Field Name | Notes |
 |---|---|
-| `LCSC` | ecp5-mini, Voron-Hardware, many others |
-| `LCSCStockCode` | diyBMSv4 |
-| `LCSC Part #` | rpi-managed-switch, KiCad_Designs |
-| `LCSC Part Number` | DroneController |
-| `LCSC_PN` | KiCad_Designs |
-| `LCSC PN` | KiCad_Designs |
-| `JLCPCB` | various |
-| `JLCPCB Part` | various |
-| `JLC` | TPS5430 |
+| `LCSC` | Most common |
+| `LCSCStockCode` | Rare variant |
+| `LCSC Part #` | Hash-suffixed |
+| `LCSC Part Number` | Verbose variant |
+| `LCSC_PN` | Underscore variant |
+| `LCSC PN` | Space variant |
+| `JLCPCB` | Common for JLCPCB assembly |
+| `JLCPCB Part` | Verbose variant |
+| `JLC` | Short abbreviation |
 
 ### Newark / Farnell / element14
 
-| Field Name | Projects |
+| Field Name | Notes |
 |---|---|
-| `Newark` | — |
-| `Farnell` | KiCad_Designs |
-| `element14` | — |
-| Various `_PN` / `Part Number` suffixed variants | — |
+| `Newark` | Newark (US) |
+| `Farnell` | Farnell (UK/EU) |
+| `element14` | element14 (APAC) |
+| Various `_PN` / `Part Number` suffixed variants | Same pattern as other distributors |
 
 ### Other Distributors
 
-| Field Name | Distributor |
+| Field Name | Notes |
 |---|---|
-| `TME` | Transfer Multisort Elektronik (modular-psu, European) |
-| `Adafruit PN` | Adafruit (KiCad_Designs) |
-| `Arrow` | Arrow Electronics (not observed in practice) |
+| `TME` | Transfer Multisort Elektronik (European) |
+| `Adafruit PN` | Adafruit |
+| `Arrow` | Arrow Electronics (rare) |
 
 ### DNP (Do Not Populate)
 
-| Field Name | Meaning | Projects |
-|---|---|---|
-| `DNP` | KiCad 9 built-in attribute | ecp5-mini, moteus |
-| `(dnp yes)` | KiCad 9 S-expression flag | sacmap-rev2 |
-| `DONOTPLACE` | "TRUE" | diyBMSv4 |
-| `DNM` | Do Not Mount | bms-16s100-sc |
-| `POPULATE` | "0" = DNP, "1" = populate | moteus |
-| `Do Not Populate` | various | — |
+| Field Name | Meaning |
+|---|---|
+| `DNP` | KiCad 9 built-in attribute |
+| `(dnp yes)` | KiCad 9 S-expression flag |
+| `DONOTPLACE` | Boolean "TRUE" |
+| `DNM` | Do Not Mount |
+| `POPULATE` | "0" = DNP, "1" = populate |
+| `Do Not Populate` | Verbose variant |
 
 ---
 
@@ -358,7 +358,7 @@ These are heuristics, not guarantees. A Mouser-pattern string could be an MPN. A
 
 ### Typos in Field Names
 
-Real projects contain typos: `Manufactuer` (stepper_driver), `MAXIMUM_PACKAGE_HIEGHT` (TR-60-keyboard), `LCSC Parrt #` (Mixed-Signal-STM32). When you see a field name that's close to a known alias but not an exact match, it's probably a typo. Search by the value to verify, and consider mentioning the typo to the user.
+Real projects contain typos: `Manufactuer`, `MAXIMUM_PACKAGE_HIEGHT`, `LCSC Parrt #`. When you see a field name that's close to a known alias but not an exact match, it's probably a typo. Search by the value to verify, and consider mentioning the typo to the user.
 
 ### Multiple Fields for the Same Thing
 
@@ -370,7 +370,7 @@ Projects using KiCad's Field Name Templates often have empty fields on every sym
 
 ### Fields with Unexpected Content
 
-- `Digi-Key Part Number` containing "LCSC" as a value (pico-ice) — meaning "source this from LCSC instead"
+- `Digi-Key Part Number` containing "LCSC" as a value — meaning "source this from LCSC instead"
 - `LCSC link` containing full URLs instead of LCSC codes
 - `Mouser Price/Stock` containing a Mouser URL, not a price
 - `Source` = "ANY" meaning any distributor is acceptable

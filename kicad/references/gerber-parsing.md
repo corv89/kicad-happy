@@ -233,7 +233,7 @@ KiCad writes X2 attributes that identify the layer, but the **format differs by 
 ```gerber
 G04 #@! TF.GenerationSoftware,KiCad,Pcbnew,5.1.5-52549c5~84~ubuntu18.04.1*
 G04 #@! TF.CreationDate,2020-03-09T10:29:23-07:00*
-G04 #@! TF.ProjectId,wifistepper,77696669-7374-4657-9070-65722e6b6963,rev?*
+G04 #@! TF.ProjectId,myproject,6d797072-6f6a-4563-9400-000000000000,rev?*
 G04 #@! TF.SameCoordinates,Original*
 G04 #@! TF.FileFunction,Copper,L1,Top*
 G04 #@! TF.FilePolarity,Positive*

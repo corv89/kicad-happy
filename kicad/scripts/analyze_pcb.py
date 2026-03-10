@@ -55,6 +55,120 @@ def _shoelace_area(pts_node: list) -> float:
     return abs(area) / 2.0
 
 
+def _extract_polygon_coords(pts_node: list) -> list[tuple[float, float]]:
+    """Extract (x, y) coordinate tuples from a (pts (xy x y) ...) node."""
+    return [(float(xy[1]), float(xy[2])) for xy in find_all(pts_node, "xy")]
+
+
+def _shoelace_area_from_coords(coords: list[tuple[float, float]]) -> float:
+    """Compute polygon area from coordinate list using shoelace formula."""
+    n = len(coords)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        area += coords[i][0] * coords[j][1] - coords[j][0] * coords[i][1]
+    return abs(area) / 2.0
+
+
+def _point_in_polygon(px: float, py: float,
+                      polygon: list[tuple[float, float]]) -> bool:
+    """Ray-casting point-in-polygon test.
+
+    Returns True if point (px, py) is inside the polygon defined by
+    a list of (x, y) vertices.
+    """
+    n = len(polygon)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        if ((yi > py) != (yj > py)) and \
+                (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _polygon_bbox(
+    coords: list[tuple[float, float]],
+) -> tuple[float, float, float, float]:
+    """Compute bounding box of a polygon.
+
+    Returns (min_x, min_y, max_x, max_y).
+    """
+    xs = [p[0] for p in coords]
+    ys = [p[1] for p in coords]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+class ZoneFills:
+    """Spatial index for zone filled polygon data.
+
+    Stores filled polygon coordinates extracted during zone parsing.
+    Used for point-in-polygon queries to determine actual copper presence
+    at specific locations. Not included in JSON output (coordinates are
+    too large — often thousands of vertices per fill region).
+
+    Requires that zones have been filled in KiCad (Edit → Fill All Zones)
+    before the PCB file was saved. Stale fills will produce incorrect results.
+    """
+
+    def __init__(self) -> None:
+        self._fills: list[
+            tuple[int, str, list[tuple[float, float]],
+                  tuple[float, float, float, float]]
+        ] = []
+
+    def add(self, zone_idx: int, layer: str,
+            coords: list[tuple[float, float]]) -> None:
+        """Register a filled polygon region for spatial queries."""
+        bbox = _polygon_bbox(coords)
+        self._fills.append((zone_idx, layer, coords, bbox))
+
+    @property
+    def has_data(self) -> bool:
+        """True if any filled polygon data was loaded."""
+        return len(self._fills) > 0
+
+    def zones_at_point(self, x: float, y: float, layer: str,
+                       zones: list[dict]) -> list[dict]:
+        """Return zone dicts that have filled copper at (x, y) on layer."""
+        results = []
+        seen: set[int] = set()
+        for zone_idx, fill_layer, coords, bbox in self._fills:
+            if fill_layer != layer or zone_idx in seen:
+                continue
+            # Fast bounding box rejection
+            if x < bbox[0] or x > bbox[2] or y < bbox[1] or y > bbox[3]:
+                continue
+            if _point_in_polygon(x, y, coords):
+                results.append(zones[zone_idx])
+                seen.add(zone_idx)
+        return results
+
+    def has_copper_at(self, x: float, y: float, layer: str) -> bool:
+        """Check if any zone has filled copper at (x, y) on layer."""
+        for _zone_idx, fill_layer, coords, bbox in self._fills:
+            if fill_layer != layer:
+                continue
+            if x < bbox[0] or x > bbox[2] or y < bbox[1] or y > bbox[3]:
+                continue
+            if _point_in_polygon(x, y, coords):
+                return True
+        return False
+
+    def zone_nets_at_point(self, x: float, y: float, layer: str,
+                           zones: list[dict]) -> list[str]:
+        """Return net names of zones with filled copper at (x, y) on layer."""
+        return [z["net_name"] for z in self.zones_at_point(x, y, layer, zones)
+                if z.get("net_name")]
+
+
 def _arc_length_3pt(sx: float, sy: float, mx: float, my: float,
                     ex: float, ey: float) -> float:
     """Compute arc length from three points (start, mid, end) on a circle."""
@@ -562,17 +676,27 @@ def extract_vias(root: list) -> dict:
     }
 
 
-def extract_zones(root: list) -> list[dict]:
-    """Extract copper zones with outline and filled polygon area data.
+def extract_zones(root: list) -> tuple[list[dict], ZoneFills]:
+    """Extract copper zones with outline and filled polygon area/spatial data.
 
     Computes:
     - outline_area_mm2: area of the user-drawn zone boundary
+    - outline_bbox: bounding box of the zone outline [min_x, min_y, max_x, max_y]
     - filled_area_mm2: total copper fill area (sum of all filled_polygon regions)
+    - filled_bbox: bounding box of all filled polygons combined
+    - fill_ratio: filled_area / outline_area (1.0 = fully filled, <1.0 = has gaps)
     - filled_layers: per-layer filled area breakdown
     - is_filled: whether the zone has been filled (has filled_polygon data)
+
+    Returns:
+        (zones, zone_fills) — zone_fills is a spatial index for point-in-polygon
+        queries against the filled copper. The filled polygon coordinates are
+        kept in memory (not in the JSON output) because they can be very large.
+        Zone fills reflect the last time Fill All Zones was run in KiCad.
     """
     zones = []
-    for zone in find_all(root, "zone"):
+    zone_fills = ZoneFills()
+    for zone_idx, zone in enumerate(find_all(root, "zone")):
         net = get_value(zone, "net")
         net_name = get_value(zone, "net_name")
         layer = get_value(zone, "layer")
@@ -621,34 +745,63 @@ def extract_zones(root: list) -> list[dict]:
             # "yes" in fill node means the zone has been filled
             is_filled = "yes" in fill
 
-        # Zone outline area
+        # Zone outline area and bounding box
         outline_area = 0.0
         outline_point_count = 0
+        outline_bbox = None
         polygon = find_first(zone, "polygon")
         if polygon:
             pts = find_first(polygon, "pts")
             if pts:
-                outline_area = _shoelace_area(pts)
-                outline_point_count = len(find_all(pts, "xy"))
+                outline_coords = _extract_polygon_coords(pts)
+                outline_point_count = len(outline_coords)
+                outline_area = _shoelace_area_from_coords(outline_coords)
+                if outline_coords:
+                    outline_bbox = _polygon_bbox(outline_coords)
 
-        # Filled polygon areas — compute per-layer without storing coordinates
+        # Filled polygon areas + spatial data for point-in-polygon queries
         filled_layers: dict[str, float] = {}
         total_filled_area = 0.0
         fill_count = 0
+        filled_min_x = float('inf')
+        filled_min_y = float('inf')
+        filled_max_x = float('-inf')
+        filled_max_y = float('-inf')
         for fp_node in find_all(zone, "filled_polygon"):
             fp_layer = get_value(fp_node, "layer") or layer or ""
             fp_pts = find_first(fp_node, "pts")
             if fp_pts:
-                area = _shoelace_area(fp_pts)
+                coords = _extract_polygon_coords(fp_pts)
+                area = _shoelace_area_from_coords(coords)
                 filled_layers[fp_layer] = filled_layers.get(fp_layer, 0.0) + area
                 total_filled_area += area
                 fill_count += 1
+                # Store coordinates for spatial queries
+                zone_fills.add(zone_idx, fp_layer, coords)
+                # Track overall filled bounding box
+                for cx, cy in coords:
+                    if cx < filled_min_x:
+                        filled_min_x = cx
+                    if cy < filled_min_y:
+                        filled_min_y = cy
+                    if cx > filled_max_x:
+                        filled_max_x = cx
+                    if cy > filled_max_y:
+                        filled_max_y = cy
 
         zone_layers = []
         if layers_node and len(layers_node) > 1:
             zone_layers = [l for l in layers_node[1:] if isinstance(l, str)]
         elif layer:
             zone_layers = [layer]
+
+        # Compute filled bounding box (None if no fill data)
+        filled_bbox = None
+        if fill_count > 0 and filled_min_x != float('inf'):
+            filled_bbox = (
+                round(filled_min_x, 3), round(filled_min_y, 3),
+                round(filled_max_x, 3), round(filled_max_y, 3),
+            )
 
         zone_info: dict = {
             "net": int(net) if net else 0,
@@ -663,6 +816,9 @@ def extract_zones(root: list) -> list[dict]:
             "is_filled": is_filled or fill_count > 0,
         }
 
+        if outline_bbox:
+            zone_info["outline_bbox"] = [round(v, 3) for v in outline_bbox]
+
         if keepout_restrictions:
             zone_info["is_keepout"] = True
             zone_info["keepout"] = keepout_restrictions
@@ -676,6 +832,11 @@ def extract_zones(root: list) -> list[dict]:
         if fill_count > 0:
             zone_info["filled_area_mm2"] = round(total_filled_area, 2)
             zone_info["fill_region_count"] = fill_count
+            if filled_bbox:
+                zone_info["filled_bbox"] = list(filled_bbox)
+            if outline_area > 0:
+                zone_info["fill_ratio"] = round(
+                    total_filled_area / outline_area, 3)
             if len(filled_layers) > 1:
                 zone_info["filled_layers"] = {
                     k: round(v, 2) for k, v in sorted(filled_layers.items())
@@ -683,7 +844,7 @@ def extract_zones(root: list) -> list[dict]:
 
         zones.append(zone_info)
 
-    return zones
+    return zones, zone_fills
 
 
 def extract_board_outline(root: list) -> dict:
@@ -1037,10 +1198,13 @@ def analyze_connectivity_uf(footprints: list[dict], tracks: dict, vias: dict,
 
     # 4. Account for zone connectivity
     # Copper zones connect all pads on the same net within the zone area.
-    # Since we don't have filled polygon data in summary mode, approximate:
-    # if a net has a zone on a layer, register ALL pad locations on that
-    # net+layer and union them (assumes zone covers all pads — accurate for
-    # power/ground planes, may overcount for partial zones).
+    # Approximation: if a net has a zone on a layer, union ALL pads on that
+    # net+layer (assumes zone covers all pads — accurate for power/ground
+    # planes, may overcount for partial zones).
+    # NOTE: ZoneFills spatial data could improve this by checking if each
+    # pad is within the zone outline, but thermal relief clearances around
+    # pads mean point-in-fill tests would give false negatives. The zone
+    # outline polygon (not the fill polygon) would be the right test here.
     if zones:
         zone_nets: dict[int, set[str]] = {}  # net_num -> set of zone layers
         for z in zones:
@@ -3168,6 +3332,118 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
     return results
 
 
+def analyze_copper_presence(footprints: list[dict], zones: list[dict],
+                            zone_fills: ZoneFills) -> dict:
+    """Check zone copper presence at component pad locations.
+
+    Uses point-in-polygon tests against zone filled polygon data to determine
+    actual copper presence. Rather than listing every component with the common
+    pattern (e.g., GND pour under everything on a 2-layer board), this reports
+    a compact summary plus detailed exceptions:
+
+    - Summary: how many components have opposite-layer copper, grouped by net
+    - Exceptions: components WITHOUT opposite-layer copper when most others
+      have it (e.g., touch pads with clearance in the ground pour)
+    - Foreign zones: components with same-layer copper from a zone they're not
+      connected to
+
+    Requires filled zone data — run Fill All Zones in KiCad before analysis.
+    """
+    if not zone_fills.has_data:
+        return {
+            "warning": "No filled polygon data — zones may not have been "
+                       "filled. Run Edit → Fill All Zones (B) in KiCad and "
+                       "re-save before analysis.",
+        }
+
+    # Classify every component by opposite-layer copper status.
+    # Use the component center (first pad centroid) for the check.
+    opp_covered: dict[str, set[str]] = {}  # ref -> set of opp zone net names
+    opp_uncovered: list[str] = []  # refs with NO opposite-layer copper
+    foreign_zone_details: list[dict] = []  # same-layer foreign zone hits
+
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        fp_layer = fp.get("layer", "F.Cu")
+        opposite_layer = "B.Cu" if fp_layer == "F.Cu" else "F.Cu"
+        pads = fp.get("pads", [])
+        if not pads:
+            continue
+
+        # Check opposite-layer copper at each pad location
+        has_opp = False
+        opp_nets: set[str] = set()
+        foreign_pads: list[dict] = []
+
+        for pad in pads:
+            px = pad.get("abs_x", fp["x"])
+            py = pad.get("abs_y", fp["y"])
+            pad_net = pad.get("net_number", 0)
+
+            opp_zones = zone_fills.zones_at_point(
+                px, py, opposite_layer, zones)
+            if opp_zones:
+                has_opp = True
+                for z in opp_zones:
+                    nn = z.get("net_name", "")
+                    if nn:
+                        opp_nets.add(nn)
+
+            # Same-layer foreign zone check
+            same_other = [
+                z for z in zone_fills.zones_at_point(px, py, fp_layer, zones)
+                if z.get("net", 0) != pad_net and pad_net > 0
+            ]
+            if same_other:
+                foreign_pads.append({
+                    "pad": str(pad.get("number", "")),
+                    "position": [round(px, 3), round(py, 3)],
+                    "foreign_zones": [z["net_name"] for z in same_other],
+                })
+
+        if has_opp:
+            opp_covered[ref] = opp_nets
+        else:
+            opp_uncovered.append(ref)
+
+        if foreign_pads:
+            foreign_zone_details.append({
+                "component": ref,
+                "value": fp.get("value", ""),
+                "layer": fp_layer,
+                "pads": foreign_pads,
+            })
+
+    # Build compact summary
+    # Group covered components by which nets they sit over
+    net_groups: dict[str, list[str]] = {}  # "GND" -> [ref1, ref2, ...]
+    for ref, nets in opp_covered.items():
+        key = ", ".join(sorted(nets))
+        net_groups.setdefault(key, []).append(ref)
+
+    opp_summary: list[dict] = []
+    for nets_str, refs in sorted(net_groups.items(),
+                                 key=lambda x: -len(x[1])):
+        opp_summary.append({
+            "opposite_layer_nets": nets_str,
+            "component_count": len(refs),
+            "components": sorted(refs),
+        })
+
+    result: dict = {
+        "opposite_layer_summary": opp_summary,
+    }
+
+    # The interesting signal: components WITHOUT opposite-layer copper
+    if opp_uncovered:
+        result["no_opposite_layer_copper"] = sorted(opp_uncovered)
+
+    if foreign_zone_details:
+        result["same_layer_foreign_zones"] = foreign_zone_details
+
+    return result
+
+
 def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     """Main analysis function.
 
@@ -3185,7 +3461,7 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     footprints = extract_footprints(root)
     tracks = extract_tracks(root)
     vias = extract_vias(root)
-    zones = extract_zones(root)
+    zones, zone_fills = extract_zones(root)
     outline = extract_board_outline(root)
 
     # Connectivity analysis (zone-aware)
@@ -3250,6 +3526,9 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
 
     # Thermal pad via adequacy for QFN/BGA packages
     thermal_pad_vias = analyze_thermal_pad_vias(footprints, vias)
+
+    # Copper presence analysis (cross-layer zone fill at pad locations)
+    copper_presence = analyze_copper_presence(footprints, zones, zone_fills)
 
     # Compact footprint output (exclude raw pad data for summary, keep it in full output)
     footprint_summary = []
@@ -3329,6 +3608,8 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
         result["tombstoning_risk"] = tombstoning
     if thermal_pad_vias:
         result["thermal_pad_vias"] = thermal_pad_vias
+    if copper_presence:
+        result["copper_presence"] = copper_presence
 
     return result
 

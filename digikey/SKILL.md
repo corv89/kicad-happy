@@ -25,7 +25,10 @@ The DigiKey API requires OAuth 2.0 credentials. Here's how to set them up:
    export DIGIKEY_CLIENT_ID=your_client_id_here
    export DIGIKEY_CLIENT_SECRET=your_client_secret_here
    ```
-   To persist them, add to your shell profile, a `.env` file, or a secrets manager of your choice.
+   If credentials are stored in a central secrets file (e.g., `~/.config/secrets.env`), load them first:
+   ```bash
+   export $(grep -v '^#' ~/.config/secrets.env | grep -v '^$' | xargs)
+   ```
 
 The client credentials flow has no user interaction — once configured, API calls work automatically.
 

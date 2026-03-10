@@ -30,15 +30,18 @@ python3 <skill-path>/scripts/bom_manager.py analyze path/to/schematic.kicad_sch 
 # Export BOM tracking CSV (creates new or merges with existing)
 python3 <skill-path>/scripts/bom_manager.py export path/to/schematic.kicad_sch -o bom/bom.csv --recursive
 
-# Generate per-supplier order files (5 boards + 2 spares/line)
+# Generate per-distributor order files (5 boards + 2 spares/line)
 python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --boards 5 --spares 2
 
-# Quick single-supplier order (bypasses Chosen_Supplier column)
-python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --supplier digikey
+# Quick single-distributor order (bypasses Chosen_Distributor column)
+python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --distributor digikey
 
 # Write properties to schematic (dry-run first, then apply)
 echo '{"R1": {"MPN": "RC0805FR-0710KL", "Manufacturer": "Yageo"}}' \
   | python3 <skill-path>/scripts/edit_properties.py path/to/schematic.kicad_sch --dry-run
+
+# Sync datasheet URLs from index.json back into schematic Datasheet properties
+python3 <skill-path>/scripts/sync_datasheet_urls.py path/to/schematic.kicad_sch --recursive --dry-run
 ```
 
 ## Workflow
@@ -46,18 +49,16 @@ echo '{"R1": {"MPN": "RC0805FR-0710KL", "Manufacturer": "Yageo"}}' \
 Skip steps that don't apply. Common shortcuts:
 - **"Add Mouser PNs"** — search Mouser by MPN for each part → validate → write to schematic → update CSV
 - **"Fill in the gaps"** — run analyzer with `--gaps-only`, address each missing field
-- **"Download datasheets"** — jump to Step 2
-- **"Prepare for production"** — ensure every part has an LCSC number, check stock, set Chosen_Supplier to LCSC
+- **"Update datasheet URLs"** — run `sync_datasheet_urls.py` to backfill empty Datasheet fields from index.json
+- **"Prepare for production"** — ensure every part has an LCSC number, check stock, set Chosen_Distributor to LCSC
 
 ### Step 1: Understand the Project
-
-**Ask how many boards** are being built — this affects order quantities in Step 11.
 
 ```bash
 python3 <skill-path>/scripts/bom_manager.py analyze path/to/schematic.kicad_sch --json --recursive
 ```
 
-The output tells you the project's field naming convention, which distributors are populated, what's missing, and the preferred supplier. Also look for an existing BOM tracking CSV in the project directory or `bom/` folder.
+The output tells you the project's field naming convention, which distributors are populated, what's missing, and the preferred distributor. Also look for an existing BOM tracking CSV in the project directory or `bom/` folder.
 
 The script covers common patterns, but some projects use internal key systems or parametric fields. See `references/part-number-conventions.md` for the full catalog. Read the schematic if something seems off.
 
@@ -73,11 +74,17 @@ python3 <element14-skill-path>/scripts/sync_datasheets_element14.py path/to/sche
 
 DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LCSC works for LCSC-only parts. Mouser is a last resort (often blocks downloads).
 
-**Tell the user where datasheets are** (e.g., `hardware/sacmap-rev1/datasheets/`). They'll reference them often.
+**Tell the user where datasheets are** (e.g., `hardware/<project>/datasheets/`). They'll reference them often.
 
 **Cross-revision projects:** Use a single shared datasheets directory at the project level rather than per-revision. The same MPN's datasheet doesn't change between revisions.
 
-Re-sync after writing new MPNs (Step 5) — the scripts are idempotent.
+Re-sync after writing new MPNs (Step 5) — the scripts are idempotent. Then backfill Datasheet URLs into the schematic:
+
+```bash
+python3 <skill-path>/scripts/sync_datasheet_urls.py path/to/schematic.kicad_sch --recursive
+```
+
+This reads `datasheets/index.json` and writes discovered datasheet URLs into empty schematic `Datasheet` properties. Opportunistic — only fills blanks. If a schematic already has a different URL, it warns about the mismatch without overwriting (use `--overwrite` to replace). Run with `--dry-run` first to preview.
 
 ### Step 3: Gather Part Information
 
@@ -88,7 +95,7 @@ Search strategy based on what's available:
 - Has distributor PN but no MPN → search that distributor, get MPN, then search others
 - Has only Value + Footprint → search by description (e.g., "100nF 0402 X7R 16V")
 
-Use the project's preferred supplier first, then alternates. Prototype: DigiKey primary, Mouser secondary. Production: LCSC.
+Use the project's preferred distributor first, then alternates. Prototype: DigiKey primary, Mouser secondary. Production: LCSC.
 
 ### Step 4: Validate Matches
 
@@ -114,11 +121,11 @@ echo '{"R1": {"MPN": "RC0805FR-0710KL", "Manufacturer": "Yageo", "DigiKey": "311
   | python3 <skill-path>/scripts/edit_properties.py path/to/schematic.kicad_sch
 ```
 
+**Backups:** By default, no `.bak` file is created (git tracks changes). Pass `--backup` if the schematic is not in a git repo or has uncommitted changes the user wants to preserve.
+
 **Respect the project's convention.** Write to `"Digi-Key_PN"` if that's what exists, not `"DigiKey"`. Use canonical names only for new projects.
 
 **Always write Manufacturer alongside MPN** — every API returns it, it's free data.
-
-MPN should always be written — it's the universal cross-reference key.
 
 ### Step 6: Update the BOM Tracking CSV
 
@@ -126,25 +133,25 @@ MPN should always be written — it's the universal cross-reference key.
 python3 <skill-path>/scripts/bom_manager.py export path/to/schematic.kicad_sch -o bom/bom.csv --recursive
 ```
 
-CSV columns are dynamic — only suppliers the project uses get columns. Base columns: Reference, Qty, Value, Footprint, MPN, Manufacturer. Each active supplier gets a PN column + stock column. Tail columns: Chosen_Supplier, Datasheet, Validated, DNP, Notes.
+CSV columns are dynamic — only distributors the project uses get columns. Base columns: Reference, Qty, Value, Footprint, MPN, Manufacturer. Each active distributor gets a PN column + stock column. Tail columns: Chosen_Distributor, Datasheet, Validated, DNP, Notes.
 
-**Merge behavior:** Re-exporting preserves user-managed columns (stock, Chosen_Supplier, Validated, Notes) while updating schematic-derived columns.
+**Merge behavior:** Re-exporting preserves user-managed columns (stock, Chosen_Distributor, Validated, Notes) while updating schematic-derived columns.
 
 ### Step 7: Check Stock
 
 For each part with a distributor PN, query current stock via the corresponding distributor skill. Update stock columns in the CSV. Stock data goes stale — note the date and re-check before ordering.
 
-If a chosen supplier is out of stock, flag it and suggest the alternate.
+If the chosen distributor is out of stock, flag it and suggest the alternate.
 
-### Step 8: Set Chosen Supplier
+### Step 8: Set Chosen Distributor
 
-Factors: stock availability, price at order qty, minimum order/multiples, lead time, shipping consolidation (fewer suppliers = fewer shipments).
+Factors: stock availability, price at order qty, minimum order/multiples, lead time, shipping consolidation (fewer distributors = fewer shipments).
 
-For prototypes, consolidate to 1-2 suppliers (DigiKey + Mouser). For production, LCSC/JLCPCB is cheapest.
+For prototypes, consolidate to 1-2 distributors (DigiKey + Mouser). For production, LCSC/JLCPCB is cheapest.
 
-### Step 9: Re-Sync Datasheets
+### Step 9: Re-Sync Datasheets & URLs
 
-Re-run Step 2 to pick up parts added in Steps 3-5. Fast — already-downloaded files are skipped.
+Re-run Step 2 (download + URL backfill) to pick up parts added in Steps 3-5. Fast — already-downloaded files are skipped.
 
 ### Step 10: Validate Datasheets Against Design
 
@@ -162,23 +169,25 @@ For large BOMs (50+ parts), focus on power components, critical signal paths, an
 
 ### Step 11: Generate Order Files
 
-**Pre-flight:** verify no gaps, CSV is current, Chosen_Supplier is set (or use `--supplier` flag), stock is fresh.
+**Ask how many boards** if not already known — this sets the `--boards` multiplier.
+
+**Pre-flight:** verify no gaps, CSV is current, Chosen_Distributor is set (or use `--distributor` flag), stock is fresh.
 
 ```bash
-# Using Chosen_Supplier column, 5 boards + 2 spares
+# Using Chosen_Distributor column, 5 boards + 2 spares
 python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv -o bom/orders/ --boards 5 --spares 2
 
-# Or quick single-supplier order
-python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --supplier digikey
+# Or quick single-distributor order
+python3 <skill-path>/scripts/bom_manager.py order bom/bom.csv --distributor digikey
 ```
 
-`--boards` multiplies all quantities. `--spares` adds a flat extra per line after multiplication. `--supplier` bypasses Chosen_Supplier — generates an order for all parts with that supplier's PN.
+`--boards` multiplies all quantities. `--spares` adds a flat extra per line after multiplication. `--distributor` bypasses Chosen_Distributor — generates an order for all parts with that distributor's PN.
 
-Comma-separated PNs (accessories) are auto-split into separate order lines. DNP parts excluded. The script produces one file per supplier in the correct upload format (see `references/ordering-and-fabrication.md` for format details).
+Comma-separated PNs (accessories) are auto-split into separate order lines. DNP parts excluded. The script produces one file per distributor in the correct upload format (see `references/ordering-and-fabrication.md` for format details).
 
 Present the order summary and let the user review/edit before ordering.
 
-**Cost estimate:** After generating order files, query pricing from distributor APIs at the order quantity and present a total per supplier. See `references/ordering-and-fabrication.md` for the cost summary template.
+**Cost estimate:** After generating order files, query pricing from distributor APIs at the order quantity and present a total per distributor. See `references/ordering-and-fabrication.md` for the cost summary template.
 
 ## Package/Footprint Cross-Reference
 
@@ -225,6 +234,55 @@ Read these when you need detailed lookup data:
 - [ ] Gerbers exported and verified
 - [ ] Design rules meet manufacturer minimums (see `jlcpcb` or `pcbway` skill)
 - [ ] Prototype fully tested
+
+## Generated Files & Cleanup
+
+The BOM and distributor skills create files in the project tree. Know what they are so you can clean up or `.gitignore` them.
+
+### Files created in the project directory
+
+| File/Dir | Created By | Purpose | Keep in git? |
+|----------|-----------|---------|--------------|
+| `datasheets/` | DigiKey, LCSC, element14, Mouser sync scripts | Downloaded PDF datasheets | No — large binaries, re-downloadable |
+| `datasheets/index.json` | Datasheet sync scripts | Tracks download status per MPN | No — regenerated by sync |
+| `bom/bom.csv` | `bom_manager.py export` | BOM tracking spreadsheet | Yes — user-curated data |
+| `bom/orders/*.csv` | `bom_manager.py order` | Per-distributor order upload files | No — regenerated before each order |
+| `*.YYYYMMDD_HHMMSS.bak` | `edit_properties.py --backup` | Schematic backup before edits | No — use git instead |
+
+The `kicad` skill also creates analyzer JSON and design review markdown reports with user-chosen filenames — see its "Generated Files" section for tracking and cleanup guidance.
+
+### Temporary files (outside project)
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `digikey_token_cache.json` | System temp dir | OAuth token cache (9-min TTL, mode 0600) |
+| `index.tmp` | `datasheets/` | Atomic write staging — renamed to `index.json`, never persists |
+
+### Cleanup commands
+
+```bash
+# Remove downloaded datasheets (re-downloadable)
+rm -rf datasheets/
+
+# Remove order files (regenerate before ordering)
+rm -rf bom/orders/
+
+# Remove schematic backups
+rm -f *.bak
+
+# Remove KiCad analyzer/report files (filenames vary — check project CLAUDE.md)
+```
+
+### Suggested .gitignore additions
+
+```gitignore
+# BOM skill working files
+datasheets/
+bom/orders/
+*.bak
+```
+
+Keep `bom/bom.csv` tracked — it contains user-curated data (Chosen_Distributor, Validated, Notes) that can't be regenerated from the schematic alone.
 
 ## Tips
 

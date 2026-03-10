@@ -25,7 +25,10 @@ Set the environment variable before running the scripts:
 export MOUSER_SEARCH_API_KEY=your-search-api-key-uuid
 ```
 
-To persist it, add to your shell profile, a `.env` file, or a secrets manager of your choice.
+If credentials are stored in a central secrets file (e.g., `~/.config/secrets.env`), load them first:
+```bash
+export $(grep -v '^#' ~/.config/secrets.env | grep -v '^$' | xargs)
+```
 
 ## Mouser Search API Reference
 

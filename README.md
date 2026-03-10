@@ -54,6 +54,8 @@ The analysis scripts are pure Python 3 with no required dependencies. Optional e
 
 The distributor skills work best with API credentials, but none are strictly required — Claude falls back to web search for component lookups and datasheet downloads.
 
+> "Claude, help me set up API keys for the distributor skills"
+
 | Distributor | Env variables | How to get |
 |-------------|--------------|------------|
 | **DigiKey** | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | [DigiKey API Portal](https://developer.digikey.com/) — register an app, get OAuth 2.0 credentials |
@@ -63,112 +65,85 @@ The distributor skills work best with API credentials, but none are strictly req
 
 ## 🔬 What it looks like in practice
 
-### Analyze a schematic
-
 > "Analyze my KiCad project at `hardware/rev2/`"
 
-Claude runs the analysis scripts, reads datasheets, and produces a full design review report. Here's a condensed example from a 6-layer BLDC motor controller (STM32G474 + DRV8353 gate driver, 3-phase bridge, 187 components):
+Claude runs the analysis scripts, reads datasheets, and produces a full design review. Here's a condensed example from a real project — a 6-layer BLDC motor controller (187 components):
 
-#### ⚡ Power tree with computed regulator outputs
+**Power tree** — every regulator traced from input to output, feedback dividers identified, output voltage computed:
 
 ```
 V+ (10-54V motor bus, TVS protected)
-├── MAX17760 (switching buck) → +12V
-│   ├── R6/R7 feedback (226k/16.2k), Vref=1.0V → Vout=14.95V
-│   └── TPS629203 → +5V (CAN transceiver, gate driver logic)
-│       └── TPS629203 → +3.3V (MCU, encoder, RS-422)
+├── MAX17760 buck → +12V (feedback: 226k/16.2k, Vref=1.0V → Vout=14.95V)
+│   └── TPS629203 → +5V → TPS629203 → +3.3V
 ├── DRV8353 gate driver (PVDD = V+ direct)
 └── 3-Phase Bridge: 6x FDMT80080DC (80V/80A)
-    └── 36x 4.7uF 100V bulk caps = 169.2uF bus capacitance
+    └── 36x 4.7uF 100V bulk caps = 169.2uF
 ```
 
-Every regulator is traced from input to output. Feedback divider resistors are identified, Vref is looked up from a built-in table of ~60 regulator families, and output voltage is computed. When the computed Vout doesn't match the rail name, it's flagged.
+**Detected subcircuits** — found automatically from the schematic:
 
-#### 📊 Signal analysis — detected automatically from the schematic
+| | |
+|---|---|
+| Motor drive | 6 FETs, gate driver, per-phase current sense (0.5mΩ), 3x matched RC filters (22Ω + 1nF = 7.23 MHz) |
+| Buses | 2x SPI, CAN with 120Ω termination, RS-422 differential |
+| Protection | TVS on V+ input (51V standoff matches bus spec), ground domain separation with net ties |
+| Sensing | Battery voltage divider (100k/4.7k → 54V max reads as 2.43V), FET temp NTC |
 
-| What                  | Details                                                                                |
-| --------------------- | -------------------------------------------------------------------------------------- |
-| 3-phase bridge        | 6 FETs, DRV8353 gate driver, per-phase current sense (0.5mΩ shunts)                    |
-| Current sense filters | 3x matched RC: 22Ω + 1nF = 7.23 MHz cutoff (anti-aliasing for ADC)                     |
-| Voltage dividers      | Battery sense (100k/4.7k, ratio 0.045→ max 54V reads as 2.43V), FET temp NTC (47k/10k) |
-| Bus topology          | 2x SPI (gate driver + encoder), CAN with 120Ω termination, RS-422 differential         |
-| Ground domains        | GND (signal) / GNDPWR (power) separated, single-point net ties                         |
-| Decoupling            | 170µF on V+ bus (38 caps), multi-tier bypass on all rails                              |
-| Protection            | SMBJ51D TVS on V+ input, 51V standoff matches bus spec                                 |
-
-#### 🔧 PCB layout cross-reference
-
-The report doesn't stop at the schematic — it cross-references against the PCB layout:
+**PCB cross-reference** — the review covers layout too:
 
 ```
 Board: 56.0 x 56.0 mm, 6-layer, 1.55mm stackup
 Routing: 100% complete, 0 unrouted nets
-Components: 79 front / 108 back, 94% SMD
 
-Thermal pad via analysis:
-  Q1 (FDMT80080DC, phase A high): 67 vias under 36.1mm² pad — good
-  Q3 (FDMT80080DC, phase B high): 85 vias — good
-  Q6 (FDMT80080DC, phase C low):  21 vias — adequate but lowest
-  U4 (STM32G474, QFN-48):         14 vias — WARNING (recommended: 16)
-  L2 (100µH inductor):             4 vias — INSUFFICIENT (recommended: 9)
-
-Power planes:
-  +3.3V on In2.Cu: 1036mm² dedicated plane
-  +5V on In3.Cu:    896mm² dedicated plane
-  GND stitching:    98 vias across 2070mm²
-  V+ bus:          243 stitching vias
-
-DFM: JLCPCB standard tier compatible
-  Min trace: 0.152mm (6 mil)
-  Min drill: 0.254mm (10 mil)
-  Min annular ring: 0.153mm
+Thermal pad vias:
+  Phase FETs: 21-85 vias per pad — good
+  STM32 QFN-48: 14 vias — WARNING (recommended: 16)
+  Inductor L2:   4 vias — INSUFFICIENT (recommended: 9)
 ```
 
-#### 🐛 Issues found
+**Issues found:**
 
-| Severity   | Issue                                                                                                                 |
-| ---------- | --------------------------------------------------------------------------------------------------------------------- |
-| WARNING    | MAX17760 feedback divider computes to 14.95V, not 12V — Vref heuristic may be wrong, verify against datasheet Table 1 |
-| WARNING    | STM32 QFN-48 thermal pad has 14 vias (recommended minimum: 16) — may cause elevated die temperature under heavy load  |
-| WARNING    | Inductor L2 has only 3-4 thermal vias (recommended: 9) — this inductor carries the full +12V rail current             |
-| WARNING    | I2C pull-ups not detected on AUX expansion ports — external pull-ups required if I2C mode is used                     |
-| SUGGESTION | No test point on V+ motor bus — add for bring-up voltage/ripple measurements                                          |
-| SUGGESTION | 38 medium tombstoning-risk 0402 parts — consider thermal relief optimization on ground zones                          |
+| | |
+|---|---|
+| WARNING | Feedback divider computes to 14.95V, not 12V — Vref heuristic may be wrong, verify datasheet |
+| WARNING | STM32 thermal pad has 14 vias (need 16) — elevated die temp under load |
+| WARNING | Inductor L2 has 4 thermal vias (need 9) — carries the full +12V rail current |
+| SUGGESTION | No test point on V+ motor bus — add for bring-up measurements |
 
-#### ✅ Positive findings
+**What looks good:** 170µF bus capacitance across 38 caps, proper GND/GNDPWR separation, CAN termination verified, 100% MPN coverage, zero DFM violations, JLCPCB standard tier compatible.
 
-- Excellent bus capacitance — 170µF across 38 caps, all rated 100V
-- Proper ground domain separation (GND/GNDPWR) with single-point net ties — critical for motor noise isolation
-- MOSFET thermal design: 21-85 vias per FET pad with extensive copper fill on V+ and phase output zones
-- 100% MPN coverage, zero DFM violations, JLCPCB standard tier compatible
-- CAN bus properly terminated (120Ω), TVS on power input, all SPI buses verified
-- Dedicated +3.3V and +5V power planes on inner layers with good stitching density
+That's one example. Here's what the analysis automatically detects across any KiCad project:
 
----
+| Category | Examples |
+|---|---|
+| **Power** | Regulator Vout computed from feedback dividers, power sequencing, enable chains, inrush analysis |
+| **Analog** | Op-amp gain computation, voltage dividers with ratios, RC/LC filter cutoff frequencies |
+| **Protection** | TVS/ESD mapping per interface, MOSFET switch gate drive analysis, flyback diode checks |
+| **Digital** | I2C pull-up verification, SPI/UART/CAN bus detection, differential pairs, level crossing analysis |
+| **Motor/Power** | H-bridge and 3-phase bridge detection, current sense shunts, gate driver mapping |
+| **RF** | Signal chains, switch matrices, mixer/LNA/PA identification, balun detection |
+| **PCB** | Thermal via adequacy, zone stitching density, trace width vs current, DFM checks, tombstoning risk |
+| **Manufacturing** | BOM consolidation opportunities, MPN coverage audit, assembly complexity scoring |
 
-#### 🎯 What it detects across all designs
-
-The analysis isn't limited to motor controllers. Here's what it automatically identifies across any KiCad project:
-
-| Category          | Subcircuits                                                                                                                                                                     |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Power**         | LDO and switching regulators (Vout computed from feedback dividers), power sequencing, enable chains, power budget estimation, inrush analysis                                  |
-| **Analog**        | Op-amp circuits (inverting/non-inverting/transimpedance, gain computation), Howland current pumps, voltage dividers with ratio calculation, RC/LC filters with cutoff frequency |
-| **Protection**    | TVS/ESD mapping per external interface, MOSFET high-side/low-side switches with gate drive analysis, flyback diode checks                                                       |
-| **Digital**       | I2C buses with pull-up verification, SPI/UART/CAN bus detection, differential pairs, cross-domain signal analysis (3.3V↔5V level compatibility)                                 |
-| **Motor/Power**   | H-bridge and 3-phase bridge detection, current sense shunts with measurement range, gate driver mapping                                                                         |
-| **RF**            | RF signal chains, switch matrices, mixer/LNA/PA identification, balun detection                                                                                                 |
-| **Passives**      | Crystal circuits with load cap calculation, decoupling analysis per rail (bulk + bypass + HF tiers), LED current limiting verification                                          |
-| **PCB**           | Thermal pad via adequacy, zone stitching density, trace width vs current capacity, routing completeness, DFM checks, tombstoning risk                                           |
-| **Manufacturing** | BOM optimization (consolidation opportunities), MPN/distributor coverage audit, assembly complexity scoring                                                                     |
-
-Claude then cross-references all of this against datasheets to validate component values, check absolute maximum ratings, and verify the design matches the manufacturer's reference circuit. The report includes positive findings too — not just bugs, but confirmation that things are done right.
+Claude cross-references all of this against datasheets to validate component values, check absolute maximum ratings, and verify the design matches the manufacturer's reference circuit.
 
 ### 📄 [Full example report →](example-report.md)
 
-> "Analyze my KiCad project at `hardware/rev2/`. Give me a complete design review."
+A complete design review of an ESP32-S3 board — 52 components, 2-layer, dual boost converters, USB host, touch sensing. [One prompt, full report.](example-report.md)
 
-A complete design review of an ESP32-S3 battery-powered IoT board — 52 components, 2-layer, dual boost converters, USB host, touch sensing. Power tree, signal analysis, PCB cross-reference, DFM checks, issues, and positive findings. All from that one prompt.
+### 🖐️ Ask about specific circuits
+
+You don't have to ask for a full design review — just point Claude at whatever you're working on:
+
+> "Check the two capacitive touch buttons on my PCB for routing or placement issues"
+
+> "Is my boost converter loop area going to cause EMI problems?"
+
+> "Trace the enable chain for my power sequencing — is the order correct?"
+
+> "Are the differential pairs on my USB routed correctly?"
+
+Claude runs the analysis scripts, then autonomously digs deeper — tracing nets, analyzing zone fills, calculating clearances, reading datasheets.
 
 ### 📏 Standards compliance (IPC/IEC)
 

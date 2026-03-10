@@ -92,12 +92,17 @@ python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --proximity  # add 
 ```
 Outputs structured JSON (~50-300KB depending on board complexity) with:
 - **Core**: footprint inventory (pads, courtyards, net assignments, extended attrs, schematic cross-reference), track/via statistics, zone summaries, board outline/dimensions, routing completeness
+- **Zones & copper presence**: zone outline vs filled polygon bounding boxes, fill ratio, cross-layer copper presence at every pad (which components have zone copper on the opposite layer and which don't), same-layer foreign zone detection
 - **Via analysis**: type breakdown (through/blind/micro), annular ring checks, via-in-pad detection, BGA/QFN fanout patterns, current capacity, stitching via identification, tenting
 - **Signal integrity**: per-net trace length, layer transition tracking (ground return paths), trace proximity/crosstalk (with `--proximity`)
 - **Power & thermal**: current capacity per net, power net routing summary, ground domain identification (AGND/DGND), zone stitching via density, thermal pad detection and via counting
 - **Manufacturing**: placement analysis (courtyard overlaps, edge clearance), decoupling cap distances, DFM scoring (JLCPCB standard/advanced tier), tombstoning risk (0201/0402 thermal asymmetry), thermal pad via adequacy, silkscreen documentation audit
 
 Add `--full` to include individual track/via coordinates. Supports KiCad 5 legacy format.
+
+**Zone fills must be current.** The copper presence analysis uses KiCad's filled polygon data, which is computed when the user runs Edit → Fill All Zones (shortcut `B`) and stored in the `.kicad_pcb` file. If the board was modified after the last fill, the filled polygon data may be stale and the copper presence results will be inaccurate. When reviewing copper presence data, note whether the `fill_ratio` seems reasonable — a zone with 0 filled area or `is_filled: false` likely hasn't been filled.
+
+**Zone outline ≠ actual copper.** The zone `outline_bbox` is the user-drawn boundary; `filled_bbox` is where copper actually exists after clearances, keepouts, and priority cuts. The `copper_presence` section shows which components have zone copper on the opposite layer — use this for capacitive touch pad isolation, antenna keep-out, and thermal analysis instead of inferring copper presence from zone outlines.
 
 **Verify after every run:** Confirm footprint count and board outline dimensions against the raw `.kicad_pcb` file. Verify pad-to-net assignments for IC footprints against the schematic's pin-to-net mapping — this catches library footprint errors where pad numbering doesn't match the symbol pinout. If the script fails, see `references/manual-pcb-parsing.md` for the fallback methodology.
 
@@ -109,7 +114,24 @@ Outputs: layer identification (X2 attributes), component/net/pin mapping (KiCad 
 
 If the script fails or returns unexpected results, see `references/manual-gerber-parsing.md` for the complete fallback methodology for parsing raw Gerber/Excellon files directly.
 
-All scripts output JSON to stdout. Use `--output file.json` to write to a file, `--compact` for single-line JSON.
+All scripts output JSON to stdout by default. Use `--output file.json` to write to a file, `--compact` for single-line JSON.
+
+**Analyzer JSON is worth keeping** — these are expensive to regenerate (large schematics take time). Use `--output` to save them for multi-pass analysis. They're not worth committing to git, but don't delete them between analysis steps.
+
+### Generated Files
+
+The analysis workflow creates files in the project tree. Analyzer JSON and design review reports use user-chosen filenames, so track what you create:
+
+1. **Tell the user** what files were created and where
+2. **Record them** in the project's `CLAUDE.md` under a "Generated files" section (create one if needed) so future sessions can find or clean them up
+3. **When the user asks to clean up**, remove generated reports and analyzer JSON. Check `CLAUDE.md` for the file list — filenames vary per session.
+
+| File Type | Example | Regenerable? | Commit to git? |
+|-----------|---------|-------------|----------------|
+| Analyzer JSON (`--output`) | `schematic_analysis.json` | Yes (expensive) | No |
+| Design review report | `review.md`, `power_tree_review.md` | Yes | Optional — user may want to keep for reference |
+
+See also the `bom` skill's cleanup section for datasheets, order CSVs, and backups.
 
 ### Output JSON Schema Quick Reference
 
@@ -137,13 +159,13 @@ file, kicad_version, file_version, statistics, layers, setup, nets,
 board_outline, component_groups, footprints, tracks, vias, zones,
 connectivity, net_lengths
 ```
-Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `current_capacity`, `thermal_analysis`, `layer_transitions`, `placement_analysis`, `silkscreen`, `dfm`, `board_metadata`, `tombstoning_risk`, `thermal_pad_vias`
+Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `current_capacity`, `thermal_analysis`, `layer_transitions`, `placement_analysis`, `silkscreen`, `dfm`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `tombstoning_risk`, `thermal_pad_vias`, `copper_presence`, `trace_proximity`
 
 Key nested structures:
 - `net_lengths` is a **list** (not dict): `[{net, net_number, total_length_mm, segment_count, via_count, layers{}}, ...]` sorted by length descending
 - `power_net_routing` is a **list**: `[{net, track_count, total_length_mm, min_width_mm, max_width_mm, widths_used[]}, ...]`
 - `footprints[]`: `{reference, value, footprint, layer, pads[], sch_path, sch_sheetname, sch_sheetfile, connected_nets[], ...}`
-- `statistics`: `{copper_layers_used, total_footprints, smd_count, tht_count, ...}`
+- `statistics`: `{footprint_count, copper_layers_used, smd_count, tht_count, zone_count, via_count, routing_complete, ...}`
 
 **Gerber analyzer top-level keys:**
 ```
@@ -176,11 +198,16 @@ Default to thorough analysis unless the user asks for a quick review. The reason
 
 Datasheets are what separate a consistency check from a correctness check. Without them, you can confirm the design agrees with itself — but not that it matches the real-world parts. Obtain datasheets early in the workflow.
 
-**Automated sync (preferred):** If the `digikey` skill is installed, run `sync_datasheets.py` on the schematic early in the workflow. This downloads datasheets for all components with MPNs into a `datasheets/` directory with an `index.json` manifest. Run it in parallel with the analyzer scripts:
+**Automated sync (preferred):** Run datasheet sync scripts early in the workflow. They download datasheets for all components with MPNs into a shared `datasheets/` directory with an `index.json` manifest. Run the preferred source first; if some parts fail, try others — they share the same directory and skip already-downloaded files.
 
 ```bash
-python3 <digikey-skill-path>/scripts/sync_datasheets.py <file.kicad_sch>
+python3 <digikey-skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch>
+python3 <lcsc-skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch>
+python3 <element14-skill-path>/scripts/sync_datasheets_element14.py <file.kicad_sch>
+python3 <mouser-skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch>
 ```
+
+DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LCSC works for LCSC-only parts. Mouser is a last resort (often blocks downloads).
 
 **Check for existing datasheets:** Before downloading, look for:
 - `<project>/datasheets/` with `index.json` (from a previous sync)
@@ -228,8 +255,8 @@ Detailed methodology and format documentation lives in reference files. Read the
 
 | Reference | Lines | When to Read |
 |-----------|-------|-------------|
-| `schematic-analysis.md` | 1085 | Deep schematic review: datasheet validation, design patterns, error taxonomy, tolerance stacking, GPIO audit, motor control, battery life, supply chain |
-| `pcb-layout-analysis.md` | 393 | Advanced PCB: impedance calculations, differential pairs, return paths, copper balance, edge clearance, custom analysis scripts |
+| `schematic-analysis.md` | 1117 | Deep schematic review: datasheet validation, design patterns, error taxonomy, tolerance stacking, GPIO audit, motor control, battery life, supply chain |
+| `pcb-layout-analysis.md` | 414 | Advanced PCB: impedance calculations, differential pairs, return paths, copper balance, edge clearance, copper-sensitive components (capacitive touch, antennas), custom analysis scripts |
 | `file-formats.md` | 361 | Manual file inspection: S-expression structure, field-by-field docs for all KiCad file types, version detection |
 | `gerber-parsing.md` | 729 | Gerber/Excellon format details, X2 attributes, analysis techniques |
 | `pdf-schematic-extraction.md` | 315 | PDF schematic analysis: extraction workflow, notation conventions, KiCad translation |
@@ -238,8 +265,8 @@ Detailed methodology and format documentation lives in reference files. Read the
 | `manual-schematic-parsing.md` | 285 | Fallback when schematic script fails |
 | `manual-pcb-parsing.md` | 457 | Fallback when PCB script fails |
 | `manual-gerber-parsing.md` | 621 | Fallback when Gerber script fails |
-| `report-generation.md` | 450 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
-| `standards-compliance.md` | 600 | IPC/IEC standards tables: conductor spacing (IPC-2221A Table 6-1), current capacity (IPC-2221A/IPC-2152), annular rings, hole sizes, impedance, via protection (IPC-4761), creepage/clearance (ECMA-287/IEC 60664-1). Consider for all boards; auto-trigger for professional/industrial designs, high voltage, mains input, or safety isolation. |
+| `report-generation.md` | 479 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
+| `standards-compliance.md` | 597 | IPC/IEC standards tables: conductor spacing (IPC-2221A Table 6-1), current capacity (IPC-2221A/IPC-2152), annular rings, hole sizes, impedance, via protection (IPC-4761), creepage/clearance (ECMA-287/IEC 60664-1). Consider for all boards; auto-trigger for professional/industrial designs, high voltage, mains input, or safety isolation. |
 
 For script internals, data structures, signal analysis patterns, and batch test suite documentation, see `scripts/README.md`.
 

@@ -388,6 +388,27 @@ def point_in_bbox(x, y, cx, cy, half_w, half_h, angle_deg=0):
 1. **Confusing pad-relative and absolute coordinates** — pad `(at ...)` inside a footprint is relative; segment/via `(start/at ...)` is absolute. Always transform pads before comparing.
 2. **Ignoring footprint rotation** — a pad at `(at 3 0)` in a footprint rotated 90° is actually at a different absolute position. The transform is not optional.
 3. **Net name vs net ID** — segments reference nets by numeric ID, not name. Build the ID→name map from the `(net N "name")` declarations first.
-4. **Zone polygon vs filled polygon** — `(polygon ...)` is the user-drawn boundary; `(filled_polygon ...)` is the actual copper after DRC clearance carving. Always use filled polygons for containment tests.
+4. **Zone polygon vs filled polygon** — `(polygon ...)` is the user-drawn boundary; `(filled_polygon ...)` is the actual copper after DRC clearance carving. Always use filled polygons for containment tests. The PCB analyzer extracts both: `outline_bbox`/`outline_area_mm2` for the boundary, `filled_bbox`/`filled_area_mm2`/`fill_ratio` for actual copper. The `copper_presence` section reports which components have zone copper on the opposite layer — use this instead of inferring from zone outlines. Zone fills can go stale if the board was edited after the last Fill All Zones (shortcut `B`).
 5. **Assuming net function from name** — net names like VPH*, VSENSE*, etc. can look like power nets but may be sense lines. Always verify by checking connected component types.
 6. **Measuring decoupling distance to IC center** — large modules (ESP32, etc.) can be 18+ mm long with power pins at one edge. Always measure to the IC's actual power pin positions.
+
+### Copper-Sensitive Components
+
+Some components require careful copper management on both layers. Use the analyzer's `copper_presence` data to verify these — don't infer from zone outlines.
+
+**Capacitive touch pads** (TP prefix, or pad-only footprints on touch nets):
+- Need NO copper on the opposite layer — ground planes under touch pads drastically reduce sensitivity by adding parasitic capacitance
+- Need controlled clearance in same-layer ground pour (typically ≥1mm, check the controller's app note)
+- Trace to the controller should be thin (narrow reduces parasitic capacitance) and direct (no unnecessary length)
+- Hatched ground pour around the pad is sometimes used instead of solid clearance — check the fill type
+
+**Antennas** (ANT prefix, or antenna footprints):
+- PCB trace antennas need copper keep-out on the opposite layer for the antenna area
+- Ground plane should end at the antenna feed point, not extend under the radiating element
+- Check manufacturer's reference design for ground plane requirements — some antennas need a specific ground plane size/shape
+
+**RF components** (matching networks, baluns near antenna):
+- Controlled impedance traces need consistent ground reference
+- Ground plane voids under matching components can detune the network
+
+In all cases, the `copper_presence.no_opposite_layer_copper` list in the analyzer output identifies components without opposite-layer zone copper — these are the isolation points to verify against the design intent.

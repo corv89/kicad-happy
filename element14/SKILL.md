@@ -41,7 +41,10 @@ For BOM management and export workflows, see `bom`.
    ```bash
    export ELEMENT14_API_KEY=your_api_key_here
    ```
-   To persist it, add it to your shell profile, a `.env` file, or a secrets manager of your choice.
+   If credentials are stored in a central secrets file (e.g., `~/.config/secrets.env`), load them first:
+   ```bash
+   export $(grep -v '^#' ~/.config/secrets.env | grep -v '^$' | xargs)
+   ```
 
 ## Product Search API
 

@@ -2,7 +2,7 @@
 """BOM Manager — analyze KiCad schematic BOM properties and manage BOM files.
 
 Reads KiCad 6+ .kicad_sch files, detects the project's part number convention,
-classifies existing part numbers by supplier, identifies gaps, and outputs a
+classifies existing part numbers by distributor, identifies gaps, and outputs a
 structured report. Can also export/merge BOM tracking CSV files.
 
 Usage:
@@ -34,7 +34,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from kicad_sexp import find_matching_paren
+from kicad_sexp import find_matching_paren, find_sub_sheets
 
 
 # ---------------------------------------------------------------------------
@@ -192,24 +192,6 @@ def classify_reference(ref: str) -> str:
     return "other"
 
 
-def find_sub_sheets(text: str, base_dir: Path) -> list[Path]:
-    """Find hierarchical sub-sheet files referenced in a .kicad_sch."""
-    sheets = []
-    for match in re.finditer(r'\(sheet\b', text):
-        sheet_start = match.start()
-        sheet_end = find_matching_paren(text, sheet_start)
-        block = text[sheet_start:sheet_end + 1]
-        file_match = re.search(
-            r'\(property\s+"Sheetfile"\s+"((?:[^"\\]|\\.)*)"', block
-        )
-        if file_match:
-            filename = file_match.group(1)
-            filepath = base_dir / filename
-            if filepath.exists():
-                sheets.append(filepath)
-    return sheets
-
-
 # ---------------------------------------------------------------------------
 # Part number pattern detection
 # ---------------------------------------------------------------------------
@@ -245,14 +227,14 @@ def detect_convention(
     """Detect the project's BOM field naming convention.
 
     Returns a dict describing which field names are used, how they map to
-    canonical names, and which supplier appears to be preferred.
+    canonical names, and which distributor appears to be preferred.
     """
     # Count occurrences of each property name across all symbols
     field_counts: Counter[str] = Counter()
     populated_counts: dict[str, int] = {}  # canonical -> count of non-empty values
 
-    # Also detect "Supplier N" / "Supplier N Part #" pattern (e.g., HydraMeter)
-    # Maps supplier name values to canonical distributor names
+    # Also detect "Supplier N" / "Supplier N Part #" pattern (KiCad field names)
+    # Maps the value inside the Supplier field to canonical distributor names
     _SUPPLIER_NAME_MAP = {
         "digikey": "digikey", "digi-key": "digikey",
         "mouser": "mouser",
@@ -260,8 +242,8 @@ def detect_convention(
         "newark": "element14", "farnell": "element14", "element14": "element14",
         "arrow": "arrow",
     }
-    # Track supplier slot mappings: slot_number -> (name_field, pn_field, canonical)
-    supplier_slots: dict[int, dict] = {}
+    # Track KiCad "Supplier N" slot mappings: slot_number -> (name_field, pn_field, canonical)
+    supplier_slots: dict[int, dict] = {}  # "supplier" here refers to KiCad field names
 
     for sym in all_symbols:
         for name, value in sym["raw_properties"].items():
@@ -272,19 +254,19 @@ def detect_convention(
             if canonical and value.strip():
                 populated_counts[canonical] = populated_counts.get(canonical, 0) + 1
 
-            # Detect "Supplier N" pattern
+            # Detect KiCad "Supplier N" field pattern
             sup_match = re.match(r'^Supplier\s+(\d+)$', name, re.IGNORECASE)
             if sup_match and value.strip():
                 slot = int(sup_match.group(1))
-                supplier_name = value.strip().lower()
-                canonical_sup = _SUPPLIER_NAME_MAP.get(supplier_name)
+                dist_name = value.strip().lower()
+                canonical_sup = _SUPPLIER_NAME_MAP.get(dist_name)
                 if canonical_sup and slot not in supplier_slots:
                     supplier_slots[slot] = {
                         "name_field": name,
                         "canonical": canonical_sup,
                     }
 
-            # Detect "Supplier N Part #" or "Supplier N Part Number"
+            # Detect KiCad "Supplier N Part #" or "Supplier N Part Number" field
             sup_pn_match = re.match(
                 r'^Supplier\s+(\d+)\s+Part\s*(?:#|Number|No\.?)$', name, re.IGNORECASE
             )
@@ -306,20 +288,20 @@ def detect_convention(
             if canonical not in field_mapping or field_counts[name] > field_counts.get(field_mapping[canonical], 0):
                 field_mapping[canonical] = name
 
-    # Add supplier slot mappings (only if not already mapped by direct field names)
+    # Add KiCad supplier slot mappings (only if not already mapped by direct field names)
     for slot_info in supplier_slots.values():
         can = slot_info["canonical"]
         if can not in field_mapping and "pn_field" in slot_info:
             field_mapping[can] = slot_info["pn_field"]
 
-    # Determine preferred supplier by populated count
-    supplier_counts = {
+    # Determine preferred distributor by populated count
+    distributor_counts = {
         k: v for k, v in populated_counts.items()
         if k in ("digikey", "mouser", "lcsc", "element14")
     }
-    preferred_supplier = None
-    if supplier_counts:
-        preferred_supplier = max(supplier_counts, key=supplier_counts.get)
+    preferred_distributor = None
+    if distributor_counts:
+        preferred_distributor = max(distributor_counts, key=distributor_counts.get)
 
     # Check if field names are already canonical
     names_canonical = all(
@@ -334,14 +316,14 @@ def detect_convention(
     for dist in ("digikey", "mouser", "lcsc", "element14"):
         if dist in field_mapping:
             suggested.append(field_mapping[dist])
-        elif dist == preferred_supplier:
+        elif dist == preferred_distributor:
             suggested.append(CANONICAL_NAMES[dist])
 
     return {
         "field_mapping": field_mapping,         # canonical -> actual field name
         "field_counts": dict(field_counts),     # actual field name -> symbol count
         "populated_counts": populated_counts,   # canonical -> non-empty count
-        "preferred_supplier": preferred_supplier,
+        "preferred_distributor": preferred_distributor,
         "names_canonical": names_canonical,
         "suggested_fields": suggested,
     }
@@ -573,7 +555,7 @@ def analyze(
         "convention": {
             "field_mapping": convention["field_mapping"],
             "populated_counts": convention["populated_counts"],
-            "preferred_supplier": convention["preferred_supplier"],
+            "preferred_distributor": convention["preferred_distributor"],
             "names_canonical": convention["names_canonical"],
             "suggested_fields": convention["suggested_fields"],
         },
@@ -606,8 +588,8 @@ def format_human(report: dict, gaps_only: bool = False) -> str:
     else:
         lines.append("  No BOM fields detected — this project has no part number tracking yet.")
 
-    if conv["preferred_supplier"]:
-        lines.append(f"  Preferred supplier: {conv['preferred_supplier']}")
+    if conv["preferred_distributor"]:
+        lines.append(f"  Preferred distributor: {conv['preferred_distributor']}")
 
     # Stats
     lines.append(f"\nStats:")
@@ -657,17 +639,16 @@ def format_human(report: dict, gaps_only: bool = False) -> str:
 # ---------------------------------------------------------------------------
 
 import csv
-from io import StringIO
 
 # Base columns (always present) and distributor column pairs (conditional)
 _CSV_BASE_COLUMNS = [
     "Reference", "Qty", "Value", "Footprint", "MPN", "Manufacturer",
 ]
 _CSV_TAIL_COLUMNS = [
-    "Chosen_Supplier", "Datasheet", "Validated", "DNP", "Notes",
+    "Chosen_Distributor", "Datasheet", "Validated", "DNP", "Notes",
 ]
 
-# Map canonical supplier names to CSV column name pairs (PN, Stock)
+# Map canonical distributor names to CSV column name pairs (PN, Stock)
 _DIST_CSV_MAP = {
     "digikey": ("DigiKey", "DK_Stock"),
     "mouser": ("Mouser", "MO_Stock"),
@@ -679,23 +660,23 @@ _DIST_CSV_MAP = {
 _DIST_ORDER = ["digikey", "mouser", "lcsc", "element14"]
 
 
-def _build_csv_columns(active_suppliers: list[str]) -> list[str]:
-    """Build the CSV column list including only the suppliers the project uses."""
+def _build_csv_columns(active_distributors: list[str]) -> list[str]:
+    """Build the CSV column list including only the distributors the project uses."""
     cols = list(_CSV_BASE_COLUMNS)
     for dist in _DIST_ORDER:
-        if dist in active_suppliers:
+        if dist in active_distributors:
             pn_col, stock_col = _DIST_CSV_MAP[dist]
             cols.extend([pn_col, stock_col])
     cols.extend(_CSV_TAIL_COLUMNS)
     return cols
 
 
-def _detect_active_suppliers(report: dict) -> list[str]:
-    """Determine which suppliers are actively used in a project.
+def _detect_active_distributors(report: dict) -> list[str]:
+    """Determine which distributors are actively used in a project.
 
-    A supplier is active if:
-    - The schematic has any parts with that supplier's PN populated, OR
-    - The convention detected a field mapping for that supplier
+    A distributor is active if:
+    - The schematic has any parts with that distributor's PN populated, OR
+    - The convention detected a field mapping for that distributor
     """
     active = []
     convention = report.get("convention", {})
@@ -749,42 +730,42 @@ def load_existing_csv(csv_path: Path) -> dict[str, dict]:
     return rows
 
 
-def export_csv(report: dict, output_path: Path, extra_suppliers: list[str] | None = None) -> dict:
+def export_csv(report: dict, output_path: Path, extra_distributors: list[str] | None = None) -> dict:
     """Export BOM to a tracking CSV, merging with existing data if present.
 
-    Preserves user-edited columns (Chosen_Supplier, Validated, Notes, stock
+    Preserves user-edited columns (Chosen_Distributor, Validated, Notes, stock
     counts) from an existing CSV while updating schematic-derived columns.
-    Only includes supplier columns for distributors the project actually uses,
-    plus any explicitly requested via extra_suppliers.
+    Only includes distributor columns for distributors the project actually uses,
+    plus any explicitly requested via extra_distributors.
     """
     bom = report["bom"]
 
     # Determine which suppliers this project uses
-    active_suppliers = _detect_active_suppliers(report)
+    active_distributors = _detect_active_distributors(report)
     # Add explicitly requested suppliers
-    if extra_suppliers:
-        for s in extra_suppliers:
-            if s in _DIST_CSV_MAP and s not in active_suppliers:
-                active_suppliers.append(s)
-    csv_columns = _build_csv_columns(active_suppliers)
+    if extra_distributors:
+        for s in extra_distributors:
+            if s in _DIST_CSV_MAP and s not in active_distributors:
+                active_distributors.append(s)
+    csv_columns = _build_csv_columns(active_distributors)
 
     # Load existing CSV data to preserve user edits
     existing = load_existing_csv(output_path)
 
-    # If an existing CSV has extra supplier columns (user added one manually),
+    # If an existing CSV has extra distributor columns (user added one manually),
     # include those too so we don't drop data
     if existing:
         sample = next(iter(existing.values()), {})
         for dist in _DIST_ORDER:
-            if dist not in active_suppliers:
+            if dist not in active_distributors:
                 pn_col, stock_col = _DIST_CSV_MAP[dist]
                 if sample.get(pn_col) or sample.get(stock_col):
-                    active_suppliers.append(dist)
-        csv_columns = _build_csv_columns(active_suppliers)
+                    active_distributors.append(dist)
+        csv_columns = _build_csv_columns(active_distributors)
 
     # User-managed columns (preserved from existing CSV)
-    user_columns = {"Chosen_Supplier", "Validated", "Notes"}
-    for dist in active_suppliers:
+    user_columns = {"Chosen_Distributor", "Validated", "Notes"}
+    for dist in active_distributors:
         user_columns.add(_DIST_CSV_MAP[dist][1])  # stock columns
 
     rows = []
@@ -808,8 +789,8 @@ def export_csv(report: dict, output_path: Path, extra_suppliers: list[str] | Non
             "DNP": "yes" if entry["dnp"] else "",
         }
 
-        # Only add distributor PN columns for active suppliers
-        for dist in active_suppliers:
+        # Only add distributor PN columns for active distributors
+        for dist in active_distributors:
             pn_col = _DIST_CSV_MAP[dist][0]
             row[pn_col] = entry.get(dist, "")
 
@@ -828,7 +809,7 @@ def export_csv(report: dict, output_path: Path, extra_suppliers: list[str] | Non
                 if col in existing_row and existing_row[col]:
                     row[col] = existing_row[col]
             # Also preserve distributor PNs from CSV if schematic has none
-            for dist in active_suppliers:
+            for dist in active_distributors:
                 dist_col = _DIST_CSV_MAP[dist][0]
                 if not row.get(dist_col) and existing_row.get(dist_col):
                     row[dist_col] = existing_row[dist_col]
@@ -851,7 +832,7 @@ def export_csv(report: dict, output_path: Path, extra_suppliers: list[str] | Non
         "output": str(output_path),
         "total_lines": len(rows),
         "active_lines": len(active_rows),
-        "active_suppliers": active_suppliers,
+        "active_distributors": active_distributors,
         "merged_from_existing": sum(1 for _ in existing) if existing else 0,
     }
 
@@ -860,8 +841,8 @@ def export_csv(report: dict, output_path: Path, extra_suppliers: list[str] | Non
 # Order file generation
 # ---------------------------------------------------------------------------
 
-# Supplier name normalization — map user-entered Chosen_Supplier values to canonical names
-_SUPPLIER_NORMALIZE = {
+# Distributor name normalization — map user-entered Chosen_Distributor values to canonical names
+_DISTRIBUTOR_NORMALIZE = {
     "digikey": "digikey", "digi-key": "digikey", "dk": "digikey",
     "mouser": "mouser", "mo": "mouser",
     "lcsc": "lcsc", "jlcpcb": "lcsc", "jlc": "lcsc",
@@ -869,9 +850,9 @@ _SUPPLIER_NORMALIZE = {
 }
 
 
-def _normalize_supplier(name: str) -> str:
-    """Normalize a supplier name to canonical form."""
-    return _SUPPLIER_NORMALIZE.get(name.strip().lower(), name.strip().lower())
+def _normalize_distributor(name: str) -> str:
+    """Normalize a distributor name to canonical form."""
+    return _DISTRIBUTOR_NORMALIZE.get(name.strip().lower(), name.strip().lower())
 
 
 def _split_comma_field(value: str) -> list[str]:
@@ -921,19 +902,19 @@ def generate_order_files(
     output_dir: Path,
     boards: int = 1,
     spares: int = 0,
-    supplier_filter: str | None = None,
+    distributor_filter: str | None = None,
 ) -> dict:
-    """Read a BOM tracking CSV and generate per-supplier order files.
+    """Read a BOM tracking CSV and generate per-distributor order files.
 
     Args:
         csv_path: Path to BOM tracking CSV
         output_dir: Directory for output order files
         boards: Number of boards being assembled (multiplies all quantities)
         spares: Extra components per line (added after board multiplication)
-        supplier_filter: If set, auto-assign this supplier for all parts that
-                        have a PN for it, ignoring the Chosen_Supplier column.
+        distributor_filter: If set, auto-assign this distributor for all parts that
+                        have a PN for it, ignoring the Chosen_Distributor column.
 
-    Returns a summary dict with per-supplier stats and any errors.
+    Returns a summary dict with per-distributor stats and any errors.
     """
     if not csv_path.exists():
         return {"error": f"BOM CSV not found: {csv_path}"}
@@ -943,19 +924,19 @@ def generate_order_files(
         reader = csv.DictReader(f)
         rows = list(reader)
 
-    # Supplier PN column mapping: canonical supplier -> CSV column name
-    supplier_pn_col = {
+    # Distributor PN column mapping: canonical name -> CSV column name
+    distributor_pn_col = {
         "digikey": "DigiKey",
         "mouser": "Mouser",
         "lcsc": "LCSC",
         "element14": "element14",
     }
 
-    # Collect order lines per supplier
-    orders: dict[str, list[dict]] = {}  # supplier -> [order_line, ...]
+    # Collect order lines per distributor
+    orders: dict[str, list[dict]] = {}  # distributor -> [order_line, ...]
     errors = []
     skipped_dnp = []
-    skipped_no_supplier = []
+    skipped_no_distributor = []
 
     for row in rows:
         refs = row.get("Reference", "").strip()
@@ -968,27 +949,27 @@ def generate_order_files(
             skipped_dnp.append(refs)
             continue
 
-        # Determine supplier: use filter override if set, else Chosen_Supplier
-        if supplier_filter:
-            supplier = _normalize_supplier(supplier_filter)
-            pn_col = supplier_pn_col.get(supplier)
+        # Determine distributor: use filter override if set, else Chosen_Distributor
+        if distributor_filter:
+            distributor = _normalize_distributor(distributor_filter)
+            pn_col = distributor_pn_col.get(distributor)
             if not pn_col:
-                errors.append(f"Unknown supplier filter: '{supplier_filter}'")
+                errors.append(f"Unknown distributor filter: '{distributor_filter}'")
                 break
             pn_raw = row.get(pn_col, "").strip()
             if not pn_raw:
-                skipped_no_supplier.append(refs)
+                skipped_no_distributor.append(refs)
                 continue
         else:
-            chosen = row.get("Chosen_Supplier", "").strip()
+            chosen = row.get("Chosen_Distributor", "").strip()
             if not chosen:
-                skipped_no_supplier.append(refs)
+                skipped_no_distributor.append(refs)
                 continue
 
-            supplier = _normalize_supplier(chosen)
-            pn_col = supplier_pn_col.get(supplier)
+            distributor = _normalize_distributor(chosen)
+            pn_col = distributor_pn_col.get(distributor)
             if not pn_col:
-                errors.append(f"{refs}: unknown supplier '{chosen}'")
+                errors.append(f"{refs}: unknown distributor '{chosen}'")
                 continue
 
             pn_raw = row.get(pn_col, "").strip()
@@ -1001,7 +982,8 @@ def generate_order_files(
         mpns = _split_comma_field(mpn)
 
         if not pns:
-            errors.append(f"{refs}: Chosen_Supplier is '{chosen}' but {pn_col} column is empty")
+            label = distributor_filter if distributor_filter else row.get("Chosen_Distributor", "").strip()
+            errors.append(f"{refs}: distributor is '{label}' but {pn_col} column is empty")
             continue
 
         for i, pn in enumerate(pns):
@@ -1015,31 +997,34 @@ def generate_order_files(
                 "mpn": line_mpn,
                 "split": len(pns) > 1,
             }
-            orders.setdefault(supplier, []).append(order_line)
+            orders.setdefault(distributor, []).append(order_line)
 
     # Generate output files
     output_dir.mkdir(parents=True, exist_ok=True)
     files_written = {}
     split_log = []
 
-    for supplier, lines in orders.items():
-        filename = f"order_{supplier}.csv"
+    _distributor_writers = {
+        "digikey": _write_digikey_order,
+        "mouser": _write_mouser_order,
+        "lcsc": _write_lcsc_order,
+        "element14": _write_element14_order,
+    }
+
+    for distributor, lines in orders.items():
+        writer_fn = _distributor_writers.get(distributor)
+        if not writer_fn:
+            errors.append(f"No order format defined for distributor '{distributor}', skipping")
+            continue
+
+        filename = f"order_{distributor}.csv"
         filepath = output_dir / filename
 
-        _supplier_writers = {
-            "digikey": _write_digikey_order,
-            "mouser": _write_mouser_order,
-            "lcsc": _write_lcsc_order,
-            "element14": _write_element14_order,
-        }
-
         with open(filepath, "w", newline="", encoding="utf-8") as f:
-            writer_fn = _supplier_writers.get(supplier)
-            if writer_fn:
-                writer_fn(f, lines, split_log)
+            writer_fn(f, lines, split_log)
 
         total_components = sum(l["qty"] for l in lines)
-        files_written[supplier] = {
+        files_written[distributor] = {
             "file": str(filepath),
             "lines": len(lines),
             "components": total_components,
@@ -1049,11 +1034,11 @@ def generate_order_files(
         "orders": files_written,
         "errors": errors,
         "skipped_dnp": skipped_dnp,
-        "skipped_no_supplier": skipped_no_supplier,
+        "skipped_no_distributor": skipped_no_distributor,
         "split_log": split_log,
         "boards": boards,
         "spares": spares,
-        "supplier_filter": supplier_filter,
+        "distributor_filter": distributor_filter,
     }
 
 
@@ -1073,15 +1058,15 @@ def format_order_summary(result: dict) -> str:
         lines.append(f"Quantity: {qty_desc}")
         lines.append("")
 
-    if result.get("supplier_filter"):
-        lines.append(f"Supplier filter: {result['supplier_filter']} (auto-selected from PN columns)")
+    if result.get("distributor_filter"):
+        lines.append(f"Distributor filter: {result['distributor_filter']} (auto-selected from PN columns)")
         lines.append("")
 
     orders = result.get("orders", {})
     if orders:
         lines.append("Order files generated:")
-        for supplier, info in orders.items():
-            label = {"digikey": "DigiKey", "mouser": "Mouser", "lcsc": "LCSC", "element14": "Newark/element14"}.get(supplier, supplier)
+        for dist, info in orders.items():
+            label = {"digikey": "DigiKey", "mouser": "Mouser", "lcsc": "LCSC", "element14": "Newark/element14"}.get(dist, dist)
             lines.append(f"  {label:<20} {info['lines']:>3} lines, {info['components']:>4} components  → {info['file']}")
     else:
         lines.append("No order files generated.")
@@ -1093,8 +1078,8 @@ def format_order_summary(result: dict) -> str:
     if result.get("skipped_dnp"):
         lines.append(f"\nDNP (excluded): {', '.join(result['skipped_dnp'])}")
 
-    if result.get("skipped_no_supplier"):
-        lines.append(f"\nNo Chosen_Supplier set: {', '.join(result['skipped_no_supplier'])}")
+    if result.get("skipped_no_distributor"):
+        lines.append(f"\nNo distributor chosen: {', '.join(result['skipped_no_distributor'])}")
 
     if result.get("errors"):
         lines.append("\nErrors:")
@@ -1126,11 +1111,11 @@ def main():
     p_export.add_argument("schematic", type=Path, help="Path to .kicad_sch file")
     p_export.add_argument("-o", "--output", type=Path, required=True, help="Output CSV path")
     p_export.add_argument("--recursive", action="store_true", help="Include hierarchical sub-sheets")
-    p_export.add_argument("--add-supplier", action="append", default=[],
-                         help="Add supplier columns even if not detected (e.g., --add-supplier mouser)")
+    p_export.add_argument("--add-distributor", action="append", default=[],
+                         help="Add distributor columns even if not detected (e.g., --add-distributor mouser)")
 
     # order subcommand
-    p_order = subparsers.add_parser("order", help="Generate per-supplier order files from BOM CSV")
+    p_order = subparsers.add_parser("order", help="Generate per-distributor order files from BOM CSV")
     p_order.add_argument("csv", type=Path, help="Path to BOM tracking CSV")
     p_order.add_argument("-o", "--output-dir", type=Path, default=None,
                          help="Output directory for order files (default: orders/ next to CSV)")
@@ -1138,8 +1123,8 @@ def main():
                          help="Number of boards (multiplies all quantities, default: 1)")
     p_order.add_argument("--spares", type=int, default=0,
                          help="Extra components per line (added after board multiplication, default: 0)")
-    p_order.add_argument("--supplier", type=str, default=None,
-                         help="Auto-select supplier for all parts that have its PN (bypasses Chosen_Supplier)")
+    p_order.add_argument("--distributor", type=str, default=None,
+                         help="Auto-select distributor for all parts that have its PN (bypasses Chosen_Distributor)")
     p_order.add_argument("--json", action="store_true", help="Output result as JSON")
 
     # Backwards compat: if first arg is a .kicad_sch file with no subcommand, assume "analyze"
@@ -1162,7 +1147,7 @@ def main():
             args.csv, output_dir,
             boards=args.boards,
             spares=args.spares,
-            supplier_filter=args.supplier,
+            distributor_filter=args.distributor,
         )
         if args.json:
             json.dump(result, sys.stdout, indent=2)
@@ -1188,14 +1173,14 @@ def main():
 
         elif args.command == "export":
             report = analyze(args.schematic, recursive=args.recursive)
-            extra_suppliers = [_normalize_supplier(s) for s in args.add_supplier]
-            result = export_csv(report, args.output, extra_suppliers=extra_suppliers)
+            extra_distributors = [_normalize_distributor(s) for s in args.add_distributor]
+            result = export_csv(report, args.output, extra_distributors=extra_distributors)
             print(f"Exported {result['total_lines']} BOM lines to {result['output']}", file=sys.stderr)
-            supplier_names = [_DIST_CSV_MAP[s][0] for s in result.get("active_suppliers", []) if s in _DIST_CSV_MAP]
-            if supplier_names:
-                print(f"  Suppliers: {', '.join(supplier_names)}", file=sys.stderr)
+            dist_names = [_DIST_CSV_MAP[s][0] for s in result.get("active_distributors", []) if s in _DIST_CSV_MAP]
+            if dist_names:
+                print(f"  Distributors: {', '.join(dist_names)}", file=sys.stderr)
             if result["merged_from_existing"]:
-                print(f"  Merged with {result['merged_from_existing']} existing rows (preserved stock/supplier/notes)", file=sys.stderr)
+                print(f"  Merged with {result['merged_from_existing']} existing rows (preserved stock/distributor/notes)", file=sys.stderr)
             print(f"  Active: {result['active_lines']}, DNP: {result['total_lines'] - result['active_lines']}", file=sys.stderr)
 
 

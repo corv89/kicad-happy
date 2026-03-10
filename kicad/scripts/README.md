@@ -211,11 +211,11 @@ Not supported (binary and XML formats). Returns 0 components gracefully.
 
 **Solution**: Every element (component, wire, label, junction) is tagged with `_sheet` index. All coordinate-based keys in `build_net_map()` include the sheet index: `(x, y, sheet)` not `(x, y)`.
 
-**Pitfall**: If you add new coordinate-based lookups, always include `_sheet` in the key. Forgetting this causes silent cross-sheet net merges that are extremely hard to debug (e.g., hackrf XTAL2 bug).
+**Pitfall**: If you add new coordinate-based lookups, always include `_sheet` in the key. Forgetting this causes silent cross-sheet net merges that are extremely hard to debug.
 
 ### Multi-Instance Hierarchical Sheets
 
-**Problem**: A parent sheet can reference the same sub-sheet file multiple times (e.g., moteus has 3 instances of `h_bridge.kicad_sch` for 3 motor phases). Each instance has different component references (Q1/Q2, Q3/Q4, Q5/Q6).
+**Problem**: A parent sheet can reference the same sub-sheet file multiple times (e.g., 3 instances of `h_bridge.kicad_sch` for 3 motor phases). Each instance has different component references (Q1/Q2, Q3/Q4, Q5/Q6).
 
 **How it works**:
 1. `parse_single_sheet()` returns sub-sheet entries as `(path, uuid)` tuples

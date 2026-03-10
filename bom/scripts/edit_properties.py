@@ -2,8 +2,7 @@
 """Edit KiCad schematic symbol properties — add or update BOM fields.
 
 Reads a .kicad_sch file, applies property updates to symbols identified by
-reference designator, and writes the modified file back. Creates a backup
-before making changes.
+reference designator, and writes the modified file back.
 
 Updates are provided as JSON, either from a file or stdin.
 
@@ -14,8 +13,8 @@ Usage:
     # Pipe updates from stdin
     echo '{"R1": {"MPN": "RC0805FR-0710KL"}}' | python3 edit_properties.py schematic.kicad_sch
 
-    # Skip backup creation
-    python3 edit_properties.py schematic.kicad_sch --updates updates.json --no-backup
+    # Create a backup before writing
+    python3 edit_properties.py schematic.kicad_sch --updates updates.json --backup
 
     # Dry run — show what would change without writing
     python3 edit_properties.py schematic.kicad_sch --updates updates.json --dry-run
@@ -125,9 +124,9 @@ def find_last_property_end(text: str, sym_start: int, sym_end: int) -> int:
     return last_prop_end
 
 
-def detect_indentation(text: str, sym_start: int) -> str:
+def detect_indentation(text: str, sym_start: int, sym_end: int) -> str:
     """Detect the indentation used for properties in this symbol."""
-    block = text[sym_start:sym_start + 2000]
+    block = text[sym_start:sym_end + 1]
     match = re.search(r'\n(\s+)\(property\s+"', block)
     if match:
         return match.group(1)
@@ -224,7 +223,7 @@ def apply_updates(
         # A reference can appear multiple times (multi-unit symbols).
         # Update all instances.
         for sym_start, sym_end in ref_to_symbols[ref]:
-            indent = detect_indentation(text, sym_start)
+            indent = detect_indentation(text, sym_start, sym_end)
 
             for prop_name, new_value in props.items():
                 existing = find_property_in_block(text, sym_start, sym_end, prop_name)
@@ -285,7 +284,12 @@ def apply_updates(
         return text, change_log
 
     # Apply edits in reverse position order so earlier edits don't
-    # invalidate later positions
+    # invalidate later positions. For multiple inserts in the same symbol,
+    # they all share the same insert_after position (end of last property),
+    # so reverse order stacks them correctly. Updates within the same symbol
+    # are safe because each update preserves the block length of other
+    # properties. Mixing updates + inserts in the same symbol works because
+    # inserts go after all properties (higher position) and are applied first.
     all_edits.sort(key=lambda e: e["position"], reverse=True)
 
     for edit in all_edits:
@@ -336,8 +340,8 @@ def main():
         help="Path to JSON file with updates (or pipe via stdin)",
     )
     parser.add_argument(
-        "--no-backup", action="store_true",
-        help="Skip creating a backup file",
+        "--backup", action="store_true",
+        help="Create a .bak backup file before writing changes",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -414,8 +418,8 @@ def main():
         print("No changes needed.", file=sys.stderr)
         return
 
-    # Create backup
-    if not args.no_backup:
+    # Create backup if requested
+    if args.backup:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = args.schematic.with_suffix(f".{timestamp}.bak")
         shutil.copy2(args.schematic, backup_path)

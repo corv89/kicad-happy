@@ -210,6 +210,9 @@ Use this template. Include sections that are relevant to the design — skip sec
 ### Thermal Analysis
 [Thermal pad detection, via counting and adequacy for QFN/DFN packages, zone stitching density, thermal relief settings, tombstoning risk assessment (0201/0402 thermal asymmetry)]
 
+### Copper Presence
+[Zone copper at component pad locations — from `copper_presence` section. Focus on `no_opposite_layer_copper` list: which components lack zone copper on the opposite layer? Verify this is intentional for capacitive touch pads and antennas (need isolation) vs unexpected for other components (might indicate a zone gap). Also note `same_layer_foreign_zones` — pads sitting on zones they're not connected to, which is normal for tightly-packed power island zones but worth flagging if unexpected.]
+
 ### Decoupling Placement
 [Cap-to-IC distances for critical components, flag caps too far from IC power pins]
 
@@ -356,7 +359,7 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `component_groups` | Footprint Placement | grouped by reference prefix |
 | `tracks` | Trace Routing | width/layer distribution |
 | `vias` | Via Analysis | size distribution, via_analysis (types, annular ring, via-in-pad, tenting) |
-| `zones` | Power & Ground | per-zone net, layers, fill area, thermal settings |
+| `zones` | Power & Ground | per-zone net, layers, outline/filled bbox, fill area, fill_ratio, thermal settings |
 | `connectivity` | Connectivity | routing completeness, unrouted list |
 | `net_lengths` | Signal Integrity | per-net trace length and layer transitions |
 | `power_net_routing` | Power & Ground | power net width/length/current capacity |
@@ -369,6 +372,8 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `layer_transitions` | Signal Integrity | per-net layer change tracking |
 | `silkscreen` | Silkscreen | ref visibility, documentation warnings |
 | `dfm` | DFM Assessment | tier, metrics, violations |
+| `tombstoning_risk` | Manufacturing | at-risk 0201/0402 components, thermal asymmetry reasons |
+| `copper_presence` | Copper Presence | opposite_layer_summary, no_opposite_layer_copper (components WITHOUT zone copper on opposite layer — check capacitive touch pads, antennas), same_layer_foreign_zones |
 
 ### Gerber Analyzer (`analyze_gerbers.py`)
 
