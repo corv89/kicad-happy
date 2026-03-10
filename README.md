@@ -156,6 +156,12 @@ Claude then cross-references all of this against datasheets to validate componen
 
 A complete design review of an ESP32-S3 battery-powered IoT board — 52 components, 2-layer, dual boost converters, USB host, touch sensing. Power tree, signal analysis, PCB cross-reference, DFM checks, issues, and positive findings. All from that one prompt.
 
+### 📏 Standards compliance (IPC/IEC)
+
+For designs with high voltage (>50V), high current (>1A power traces), mains input, or safety isolation barriers, reviews automatically check against IPC-2221A conductor spacing and current capacity, IPC-4761 via protection, and ECMA-287/IEC 60664-1 creepage/clearance tables. It won't bother you about creepage on a 3.3V hobby board — standards checks kick in when they actually matter.
+
+The reference tables are built from publicly available documents and secondary sources. Got official IPC/IEC PDFs collecting dust on a hard drive? Send them our way — safety standards shouldn't live behind a $200 paywall while engineers are out here trying to build things that don't catch fire.
+
 ### 📄 Sync datasheets for a project
 
 > "Sync the datasheets for my board at `hardware/rev2/`"

@@ -13,11 +13,11 @@ Guide for producing comprehensive design review reports from analyzer output + r
 | Handling Different Design Domains | ~391 | Domain-specific focus areas (IoT, motor, RF, analog, industrial) |
 | Cross-Referencing with Raw Schematic | ~408 | Mandatory verification steps |
 | Known Analyzer Limitations | ~418 | What the tool can and can't catch |
-| Report Length Guidelines | ~429 | Target report sizes by complexity |
+| Report Length Guidelines | ~445 | Target report sizes by complexity |
 
 ## Report Structure
 
-Use this template. Every section adds value — don't skip sections, but note "N/A" or "None" if a section genuinely has no content for a particular design.
+Use this template. Include sections that are relevant to the design — skip sections that genuinely don't apply (a battery-powered sensor board doesn't need an isolation barrier section). For sections where the analyzer returned empty data, briefly assess whether that's expected ("no mains input, creepage N/A") or a gap worth noting ("no ESD protection detected on external USB connector").
 
 ```markdown
 # [Project Name] Design Review
@@ -53,6 +53,7 @@ Use this template. Every section adds value — don't skip sections, but note "N
 [Spot-checks proving the analyzer data is trustworthy]
 ### Component Count — [N/N match status]
 ### Component Pinout Verification — [Table: ALL components verified against raw schematic + datasheets: Ref | Value | lib_id | Footprint | Pin Count | All Pins Verified | Datasheet Cross-checked | Match. Every component must be checked — not just ICs. Include connectors, transistors, diodes, and critical passives.]
+### Pinout Ambiguity & Plausibility — [Components where the symbol's pin assignment depends on the specific MPN. Table: Ref | lib_id | Footprint | MPN | Assumed Pinout | Datasheet Pinout | Plausibility | Status. When verification is possible (MPN + datasheet), verify directly. When it isn't, assess plausibility: does the assumed pinout match the dominant convention for this device type and package? Report confidence: "matches most common convention," "plausible but multiple variants exist," or "unusual — most parts in this category use a different pinout." Flag CRITICAL when no MPN is specified AND the assumed pinout is uncommon or genuinely ambiguous.]
 ### Net Tracing — [All power rails + critical signal nets traced end-to-end: list all pins, verify connectivity, confirm correctness]
 ### PCB Verification — [If PCB analyzed: footprint count match, pad-net spot-check, board dimensions confirmed]
 ### Gerber Verification — [If gerbers analyzed: layer completeness, drill count, alignment check]
@@ -123,10 +124,38 @@ Use this template. Every section adds value — don't skip sections, but note "N
 [Per-rail estimated sleep current, dominant leakage paths (pull-up/pull-down resistors), regulator Iq estimates with EN pin detection. Note: worst-case model — real sleep current typically 5-20x lower.]
 
 ### Inrush Analysis
-[Per-regulator inrush estimates, input capacitance, soft-start adequacy]
+[Power-on current analysis — not limited to regulators. Consider ALL current paths at power-on:]
+- Per-regulator inrush (input capacitance, soft-start adequacy)
+- IC supply pin absolute maximum ratings vs capacitor charging current (e.g., 74HC-series ±50mA VCC/GND limit, small MCUs with low abs max supply current)
+- Bulk/decoupling capacitor charging through connectors (hot-plug scenarios produce fast voltage steps → high dI/dt)
+- Source impedance: connector resistance, wire gauge, trace resistance — these limit peak inrush naturally
+- Series resistance or soft-start mechanisms (or lack thereof)
+- Multiple rails energizing simultaneously (total system inrush vs supply capability)
+[Even designs with no regulators need this section — external supply rails still charge decoupling caps through IC supply pins at power-on. Check each IC's datasheet for absolute maximum continuous current through VCC/GND pins.]
 
 ### Voltage Derating
 [Component voltage ratings vs applied voltages, capacitor derating at operating voltage]
+
+## Standards Compliance
+[Include when applicable — see `references/standards-compliance.md` for auto-trigger conditions and tables. Consider for all boards: even low-voltage designs benefit from a brief conductor spacing and current capacity check. For mains-connected or safety-isolated designs, this section is mandatory.]
+
+### Product Classification
+[Class 1/2/3 determination with rationale from BOM indicators]
+
+### Conductor Spacing (IPC-2221A Table 6-1)
+[High-voltage net pairs with required vs actual spacing. Skip for designs where all nets are ≤15V and traces meet minimums.]
+
+### Current Capacity (IPC-2221A / IPC-2152)
+[Power traces: expected current, trace width, copper weight, calculated capacity, margin. Flag <50% margin as WARNING, <20% as CRITICAL.]
+
+### Creepage/Clearance (ECMA-287 / IEC 60664-1)
+[Only for mains-connected or safety-isolated designs. Working voltage, OVC, pollution degree, material group, required vs actual distances.]
+
+### Annular Ring (IPC-2221A Table 9-2)
+[Via annular ring analysis, fab capability vs IPC minimums]
+
+### Via Protection (IPC-4761)
+[Only for via-in-pad designs: protection type, BGA/QFN thermal pad vias]
 
 ## Design Analysis
 
@@ -298,7 +327,7 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `power_budget` | Power Budget | load vs capacity |
 | `power_sequencing` | Power Sequencing | EN/PG chains |
 | `sleep_current_audit` | Sleep Current | per-rail with regulator Iq, EN detection |
-| `inrush_analysis` | Inrush Analysis | per-regulator inrush |
+| `inrush_analysis` | Inrush Analysis | per-regulator inrush (automated); also manually consider IC supply pin abs max ratings and capacitor charging through connectors |
 | `ground_domains` | Power & Ground | AGND/DGND/PGND separation |
 | `sourcing_audit` | Sourcing Audit | MPN and distributor PN coverage (report neutrally, no distributor preference) |
 | `bom_optimization` | BOM Optimization | value consolidation |
@@ -380,8 +409,11 @@ When the analyzer flags something that isn't actually a problem, explain why it'
 ### Validate calculations, don't just echo them
 When the analyzer reports a voltage divider ratio or filter cutoff, verify the calculation: check the formula, confirm the component values against the schematic, and validate the result against the datasheet's expected values (Vref, recommended output voltage, etc.).
 
-### Cross-check component pins against datasheets
-The highest-value findings come from verifying component connections against their datasheets. For key ICs, check that pin assignments match the datasheet pinout — wrong pin mapping in a library symbol is the most dangerous class of bug because it passes DRC/ERC but produces a non-functional board. For passives, verify that values are correct for the intended function: check feedback resistor dividers against the regulator's recommended values, verify capacitor selections against datasheet minimum/maximum requirements, confirm pull-up/pull-down values are within the acceptable range, and check LED current limiting resistors provide adequate margin given the LED's forward voltage tolerance range and supply voltage variation.
+### Cross-check against datasheets
+The highest-value findings come from verifying component connections and values against datasheets. Check IC pin assignments against the datasheet pinout, feedback divider values against regulator recommendations, capacitor selections against min/max requirements, and pull-up/pull-down values against acceptable ranges. These checks catch the bugs that internal consistency checks miss.
+
+### Assess plausibility when verification isn't possible
+When a component can't be fully verified (missing MPN, missing datasheet), don't just report "unverified" and move on — assess how likely the design choice is to be correct. Use domain knowledge: typical pinouts for that device/package combination, standard passive values for the application, common circuit topologies. Report the assessment alongside the ambiguity. "Q1 uses Q_NPN_BEC (SOT-23) with no MPN — BCE is the most common SOT-23 NPN pinout, so this is likely correct but should be confirmed" is far more useful than "Q1 pinout is unverified." The principle: ambiguity is not uniform risk. Some unverified choices align with strong conventions and are low risk; others are genuinely ambiguous or go against convention and deserve higher suspicion.
 
 ### Verify battery and power source configurations
 Don't assume a battery holder is a single cell. Check the footprint, part number, and trace connectivity to determine the actual battery configuration (series vs parallel, cell count). A 2×AA holder provides ~3V nominal, not 1.5V — getting this wrong invalidates the entire power tree analysis.
@@ -410,17 +442,18 @@ Focus on: RF chain path tracing through switches, LNA/mixer/filter identificatio
 Focus on: op-amp configurations and gain accuracy, reference voltage chain, input protection on measurement channels, ADC/DAC interface verification, PGA detection, bipolar supply generation, guard traces.
 
 ### Industrial / Multi-rail
-Focus on: power sequencing (EN/PG chains from analyzer), input protection (TVS, MOV, fuses), communication buses (CAN, RS485, Ethernet — check bus analysis), isolation barriers, creepage/clearance for high voltage.
+Focus on: power sequencing (EN/PG chains from analyzer), input protection (TVS, MOV, fuses), communication buses (CAN, RS485, Ethernet — check bus analysis), isolation barriers, creepage/clearance for high voltage. The Standards Compliance section in the report template is especially important here — fill in all subsections including creepage/clearance.
 
 ## Cross-Referencing with Raw Schematic
 
-The analyzer can silently produce wrong results that look plausible. In testing across 8 diverse boards, every single project had at least one analyzer output that was misleading or incorrect — wrong voltage estimates, false connectivity warnings, undetected MPNs, overestimated sleep currents. These errors don't cause script failures; they just quietly produce bad data that flows into your report. The verification steps below are not optional — they are what separates a trustworthy report from a dangerous one. Always cross-reference:
+The analyzer can silently produce plausible but incorrect results. Cross-reference against the raw `.kicad_sch` to catch these. The full verification procedure is in SKILL.md — the key checks are:
 
-1. **Component count**: Compare analyzer total vs grep for placed symbol instances in raw `.kicad_sch`. Use `grep -c '(lib_id' file.kicad_sch` (works for KiCad 6-9 regardless of newlines in symbol blocks). Subtract power symbols.
-2. **IC pinout verification**: For **every** IC and active component, verify lib_id, value, footprint, pin count, and complete pin-to-net mapping against the raw file. This is not a spot-check — verify all of them. Use grep to extract specific component blocks. Swapped pins are the most common cause of non-functional boards and are invisible to DRC/ERC.
-3. **Net connectivity**: Trace all power rails and critical signal nets end-to-end — verify every pin the analyzer reports is actually connected. For automated tracing, grep for label names and wire coordinates.
-4. **Signal analysis**: For each detected subcircuit, read the raw schematic around those components to confirm the topology
-5. **Hierarchical sheets**: Verify all sub-sheets were parsed (check `sheets` section in JSON vs actual `.kicad_sch` files on disk). Use `grep -c '(sheet ' file.kicad_sch` to count sub-sheet references.
+1. **Component count**: Analyzer total vs `grep -c '(lib_id' file.kicad_sch` (subtract power symbols)
+2. **Pin-to-net mapping**: Verify against raw schematic for each component. Cross-reference IC pin assignments against datasheets.
+3. **Physical correctness**: For components with package-dependent pinouts (transistors in SOT-23 etc.), verify symbol assumptions against the MPN's datasheet — consistency checks alone don't catch wrong pinout assumptions.
+4. **Net connectivity**: Trace power rails and critical signal nets end-to-end.
+5. **Signal analysis**: Confirm detected subcircuit topologies against the raw schematic.
+6. **Hierarchical sheets**: Verify all sub-sheets were parsed (`grep -c '(sheet ' file.kicad_sch`).
 
 ## Known Analyzer Limitations
 
