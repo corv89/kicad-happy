@@ -5,52 +5,35 @@ description: Search Mouser Electronics for electronic components — secondary s
 
 # Mouser Electronics Parts Search & Analysis
 
-You help users search for electronic components on Mouser, analyze specifications, compare parts, and find datasheets. Mouser is the **secondary source for prototype orders** — use when DigiKey is out of stock or has worse pricing. For production orders, see the `lcsc` and `jlcpcb` skills. For overall BOM management, package cross-reference, and export workflows, see the `bom` skill.
+Mouser is the **secondary source for prototype orders** — use when DigiKey is out of stock or has worse pricing. For production orders, see `lcsc`/`jlcpcb`. For BOM management and export workflows, see `bom`. For datasheets, prefer DigiKey's API (direct PDF links) — Mouser blocks automated PDF downloads.
 
-## Related Skills
+## API Credential Setup
 
-| Skill | Purpose |
-|-------|---------|
-| `kicad` | Read/analyze KiCad project files (schematics, PCB, symbols, footprints) |
-| `bom` | BOM management, ordering workflow, export formats |
-| `digikey` | Search DigiKey (prototype sourcing, primary — also preferred for datasheet downloads via API) |
-| `lcsc` | Search LCSC (production sourcing, JLCPCB parts) |
-| `jlcpcb` | PCB fabrication & assembly ordering |
-| `pcbway` | Alternative PCB fabrication & assembly |
+Mouser uses **simple API key authentication** — no OAuth, no tokens, no callback URLs. The Search API key is a UUID passed as a query parameter.
 
-## Web Search (No API Key Required)
+### Getting Your API Key
 
-The most common way to search Mouser — no credentials needed:
+1. Go to [mouser.com](https://www.mouser.com) → My Mouser → My Account
+2. Under "APIs" section, click "Manage"
+3. Register for **Search API** key — this is the one needed for part lookups and datasheet downloads
+4. Search API keys may require approval (status shows "pending authorization" initially)
 
-- Search URL: `https://www.mouser.com/c/?q=<query>`
-- Use WebFetch to retrieve search results
-- Filter panel on left for category, manufacturer, parameters
-- Product pages contain full specs, pricing tiers, stock, datasheets
+### Setting Credentials
 
-When searching, always include key parameters in the query:
-- **Passives**: value, package (0402/0603/0805), tolerance, voltage/power rating, dielectric (C0G/X7R)
-- **ICs**: part number or function, package (QFN/SOIC/TSSOP), key specs (voltage, current, interface)
-- **Connectors**: type (USB-C, JST-PH), pin count, pitch, mounting (SMD/THT), orientation
-
-## Mouser API Overview
-
-Mouser uses a **simple API key** authentication (no OAuth). Register at My Mouser account page > Personal Information > APIs > Manage.
-
-### Authentication
-
-All endpoints use `apiKey` as a **query parameter** (not a header):
+Set the environment variable before running the scripts:
+```bash
+export MOUSER_SEARCH_API_KEY=your-search-api-key-uuid
 ```
-POST https://api.mouser.com/api/v2/search/keywordandmanufacturer?apiKey=<YOUR_API_KEY>
-```
-- No OAuth, no tokens — just a UUID API key
-- Two separate keys: one for Search, one for Cart/Order
-- Content-Type: `application/json`
 
-Check `~/.config/secrets.env` for `MOUSER_PART_API_KEY` and `MOUSER_ORDER_API_KEY`. If not present, fall back to WebFetch (see Web Search section above).
+To persist it, add to your shell profile, a `.env` file, or a secrets manager of your choice.
 
-## Search API Endpoints
+## Mouser Search API Reference
 
-### Keyword Search (V1)
+All search endpoints use the Search API key as a query parameter: `?apiKey=<key>`. Content-Type is `application/json` for all POST requests.
+
+### V1 Endpoints
+
+#### Keyword Search
 ```
 POST /api/v1/search/keyword?apiKey=<key>
 ```
@@ -64,15 +47,11 @@ POST /api/v1/search/keyword?apiKey=<key>
   }
 }
 ```
-- `searchOptions`: `None` | `Rohs` | `InStock` | `RohsAndInStock`
+- `searchOptions`: `"None"` | `"Rohs"` | `"InStock"` | `"RohsAndInStock"`
+- `records`: max 50 per request
+- `startingRecord`: offset for pagination
 
-### Keyword + Manufacturer Search (V2)
-```
-POST /api/v2/search/keywordandmanufacturer?apiKey=<key>
-```
-Adds `manufacturerName` filter and `pageNumber` pagination.
-
-### Part Number Search (V1)
+#### Part Number Search
 ```
 POST /api/v1/search/partnumber?apiKey=<key>
 ```
@@ -84,77 +63,167 @@ POST /api/v1/search/partnumber?apiKey=<key>
   }
 }
 ```
-Up to 10 part numbers, pipe-separated (`|`).
+- Up to **10 part numbers**, pipe-separated (`|`)
+- Works with both Mouser part numbers AND manufacturer part numbers (MPNs)
+- `partSearchOptions`: `"Exact"` | `"BeginsWith"` | `"Contains"`
+
+### V2 Endpoints
+
+V2 adds manufacturer filtering and pagination by page number.
+
+#### Keyword + Manufacturer Search
+```
+POST /api/v2/search/keywordandmanufacturer?apiKey=<key>
+```
+```json
+{
+  "SearchByKeywordMfrNameRequest": {
+    "keyword": "LMR51450",
+    "manufacturerName": "Texas Instruments",
+    "records": 25,
+    "pageNumber": 1,
+    "searchOptions": "InStock"
+  }
+}
+```
+Note: the wrapper object name is `SearchByKeywordMfrNameRequest` (not `SearchByKeywordMfrRequest` — the V1 name is deprecated).
+
+#### Part Number + Manufacturer Search
+```
+POST /api/v2/search/partnumberandmanufacturer?apiKey=<key>
+```
+
+#### Manufacturer List
+```
+GET /api/v2/search/manufacturerlist?apiKey=<key>
+```
+Returns the full list of manufacturer names for use in filtered searches.
+
+### V1 Deprecated Endpoints
+
+These still work but V2 equivalents are preferred:
+- `POST /api/v1/search/keywordandmanufacturer` → use V2
+- `POST /api/v1/search/partnumberandmanufacturer` → use V2
+- `GET /api/v1/search/manufacturerlist` → use V2
 
 ## Search Response Structure
 
+All search endpoints return the same response format:
+
 ```json
 {
+  "Errors": [],
   "SearchResults": {
     "NumberOfResult": 142,
-    "Parts": [
-      {
-        "MouserPartNumber": "81-GRM155R71C104KA8D",
-        "ManufacturerPartNumber": "GRM155R71C104KA88D",
-        "Manufacturer": "Murata",
-        "Description": "Multilayer Ceramic Capacitors MLCC - SMD/SMT 100nF 16V X7R 0402",
-        "DataSheetUrl": "https://www.mouser.com/datasheet/...",
-        "Availability": "In Stock",
-        "AvailabilityInStock": "24000",
-        "PriceBreaks": [
-          {"Quantity": 1, "Price": "$0.010", "Currency": "USD"},
-          {"Quantity": 10, "Price": "$0.006", "Currency": "USD"}
-        ],
-        "ProductAttributes": [
-          {"AttributeName": "Capacitance", "AttributeValue": "100nF"},
-          {"AttributeName": "Package / Case", "AttributeValue": "0402 (1005 Metric)"}
-        ],
-        "ROHSStatus": "RoHS Compliant",
-        "IsDiscontinued": "false",
-        "Min": "1",
-        "Mult": "1"
-      }
-    ]
+    "Parts": [...]
   }
 }
 ```
 
-### Key Response Fields
+### Key Part Fields
 
-| Field | Description |
-|-------|-------------|
-| `MouserPartNumber` | Mouser's internal part number |
-| `ManufacturerPartNumber` | Manufacturer's part number (MPN) |
-| `DataSheetUrl` | Link to PDF datasheet |
-| `AvailabilityInStock` | Quantity in stock (string) |
-| `Min` / `Mult` | Minimum order quantity / order multiple |
-| `PriceBreaks[]` | Tiered pricing (Quantity, Price, Currency) |
-| `ProductAttributes[]` | Parametric specs (name/value pairs) |
-| `IsDiscontinued` | Discontinuation flag |
-| `SuggestedReplacement` | Replacement part if discontinued |
+| Field | Type | Description |
+|-------|------|-------------|
+| `MouserPartNumber` | string | Mouser's internal part number (prefixed, e.g., `81-GRM155R71C104KA88`) |
+| `ManufacturerPartNumber` | string | Manufacturer's part number (MPN) — use for cross-distributor matching |
+| `Manufacturer` | string | Manufacturer name |
+| `Description` | string | Product description |
+| `Category` | string | Product category |
+| `DataSheetUrl` | string | URL to datasheet PDF (Mouser-hosted — see Datasheet section) |
+| `ProductDetailUrl` | string | URL to Mouser product page |
+| `ImagePath` | string | Product image URL |
+| `Availability` | string | Human-readable stock text (e.g., "2648712 In Stock") |
+| `AvailabilityInStock` | string | Numeric stock quantity (as string) |
+| `AvailabilityOnOrder` | array | Incoming stock: `[{Quantity, Date}]` |
+| `LeadTime` | string | Factory lead time (e.g., "84 Days") |
+| `LifecycleStatus` | string\|null | "New Product", "End of Life", etc. |
+| `IsDiscontinued` | string | "true" or "false" (string, not boolean) |
+| `SuggestedReplacement` | string | Replacement MPN if discontinued |
+| `Min` | string | Minimum order quantity (as string) |
+| `Mult` | string | Order multiple (as string) |
+| `Reeling` | bool | Tape-and-reel packaging available |
+| `ROHSStatus` | string | RoHS compliance status |
+| `PriceBreaks` | array | Tiered pricing: `[{Quantity, Price, Currency}]` |
+| `ProductAttributes` | array | Parametric specs: `[{AttributeName, AttributeValue}]` |
+| `AlternatePackagings` | array\|null | Alternate packaging MPNs: `[{APMfrPN}]` |
+| `SurchargeMessages` | array | Tariff/surcharge info: `[{code, message}]` |
+| `ProductCompliance` | array | HTS codes, ECCN: `[{ComplianceName, ComplianceValue}]` |
+| `UnitWeightKg` | object | `{UnitWeight: <float>}` in kg |
 
-## Cart API
+### Quirks and Gotchas
 
-Uses a separate API key. Cart endpoints use version `v1.0`.
+- **Price is a string** with currency symbol: `"$0.10"`, not a float. Parse it before comparing.
+- **Stock is a string**: `AvailabilityInStock` returns `"2648712"` not `2648712`.
+- **IsDiscontinued is a string**: `"true"` or `"false"`, not boolean.
+- **Mouser part numbers have prefixes**: `81-GRM155R71C104KA88` — the prefix is Mouser-specific. Use `ManufacturerPartNumber` for cross-referencing.
+- **V2 wrapper names differ from V1**: V2 uses `SearchByKeywordMfrNameRequest`, not `SearchByKeywordMfrRequest`.
+- **Tariff info**: `SurchargeMessages` may contain US tariff percentages — useful for cost estimation.
+- **On-order data**: `AvailabilityOnOrder` shows incoming stock quantities and expected dates.
 
-```json
-{
-  "CartKey": "",
-  "CartItems": [
-    {"MouserPartNumber": "546-1590B", "Quantity": 1}
-  ]
-}
+## Datasheet Download & Sync
+
+Mouser's `DataSheetUrl` field points to Mouser-hosted URLs (`mouser.com/datasheet/...`). These URLs **block automated downloads** — they return an HTML "Access denied" page when fetched with Python/curl/wget, even with browser User-Agent headers. The download scripts handle this by trying alternative manufacturer sources.
+
+### Datasheet Directory Sync
+
+Use `sync_datasheets_mouser.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `index.json` format as the DigiKey skill.
+
+```bash
+# Sync datasheets for a KiCad project
+python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch>
+
+# Preview what would be downloaded
+python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> --dry-run
+
+# Retry previously failed downloads
+python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> --force
+
+# Custom output directory
+python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> -o ./my-datasheets
 ```
-- Leave `CartKey` empty to create new cart (key returned in response)
-- Max 100 items per request, 399 total cart items
-- Only Mouser part numbers accepted (not MPNs)
+
+### Single Datasheet Download
+
+Use `fetch_datasheet_mouser.py` for one-off downloads.
+
+```bash
+# Search by MPN (uses Mouser API)
+python3 <skill-path>/scripts/fetch_datasheet_mouser.py --search "TPS61023DRLR" -o datasheet.pdf
+
+# Direct URL download
+python3 <skill-path>/scripts/fetch_datasheet_mouser.py "https://example.com/datasheet.pdf" -o datasheet.pdf
+
+# JSON output
+python3 <skill-path>/scripts/fetch_datasheet_mouser.py --search "ADP1706" --json
+```
+
+### Download Strategy
+
+The scripts try multiple sources in order:
+1. **Schematic URL** — uses the datasheet URL embedded in the KiCad symbol (sync only)
+2. **Mouser API search** — gets the `DataSheetUrl` from the API response
+3. **Alternative manufacturer sources** — tries known URL patterns for major manufacturers (TI, Microchip, etc.) when the Mouser URL is blocked
+4. **Headless browser fallback** — if `playwright` is installed, uses headless Chromium as a last resort
+
+When all methods fail, provide the `ProductDetailUrl` to the user so they can download from the Mouser product page in their browser.
+
+## Web Search Fallback
+
+If no API key is available, search Mouser via WebFetch:
+
+- Search URL: `https://www.mouser.com/c/?q=<query>`
+- Product pages contain full specs, pricing tiers, stock, datasheets
+- WebFetch results from Mouser can be noisy (JS-heavy pages)
+
+Include key parameters in the query:
+- **Passives**: value, package (0402/0603/0805), tolerance, voltage/power rating, dielectric (C0G/X7R)
+- **ICs**: part number or function, package (QFN/SOIC/TSSOP), key specs (voltage, current, interface)
+- **Connectors**: type (USB-C, JST-PH), pin count, pitch, mounting (SMD/THT), orientation
 
 ## Tips
 
-- Mouser part numbers are prefixed (e.g., `81-GRM155R71C104KA8D`) — the prefix is Mouser-specific
-- Use `ManufacturerPartNumber` (MPN) for cross-referencing across distributors
-- Check `IsDiscontinued` and `LifecycleStatus` — avoid obsolete parts for new designs
-- `Min` and `Mult` fields matter: some parts have minimum order qty or must be ordered in multiples
-- `Reeling: true` means tape-and-reel packaging is available
-- Pipe-separate up to 10 part numbers in a single search for efficient batch lookups
-- The `searchOptions: "InStock"` filter is highly recommended
+- Pipe-separate up to 10 part numbers in a single PartNumber search for batch lookups
+- `Min` and `Mult` fields matter — some parts have minimum order qty or must be ordered in multiples
+- `SurchargeMessages` may include US tariff percentages — factor into cost estimates
+- `AvailabilityOnOrder` shows incoming stock with expected dates
+- Check `IsDiscontinued` and `LifecycleStatus` before selecting parts

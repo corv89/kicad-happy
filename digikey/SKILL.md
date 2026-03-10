@@ -5,18 +5,7 @@ description: Search DigiKey for electronic components and download datasheets �
 
 # DigiKey Parts Search & Analysis
 
-You help users search for electronic components on DigiKey, analyze specifications, compare parts, and find datasheets. DigiKey is the **primary source for prototype orders** (Mouser is secondary). For production orders, see the `lcsc` and `jlcpcb` skills. For overall BOM management, package cross-reference, and export workflows, see the `bom` skill.
-
-## Related Skills
-
-| Skill | Purpose |
-|-------|---------|
-| `kicad` | Read/analyze KiCad project files (schematics, PCB, symbols, footprints) |
-| `bom` | BOM management, ordering workflow, export formats |
-| `mouser` | Search Mouser (prototype sourcing, secondary) |
-| `lcsc` | Search LCSC (production sourcing, JLCPCB parts) |
-| `jlcpcb` | PCB fabrication & assembly ordering |
-| `pcbway` | Alternative PCB fabrication & assembly |
+DigiKey is the **primary source for prototype orders** (Mouser is secondary). Its API returns direct PDF datasheet links, making it the preferred datasheet source. For production orders, see `lcsc`/`jlcpcb`. For BOM management and export workflows, see `bom`.
 
 ## API Credential Setup
 
@@ -31,18 +20,12 @@ The DigiKey API requires OAuth 2.0 credentials. Here's how to set them up:
    - OAuth type: **Client Credentials** (2-legged, no user login needed)
    - Callback URL: `https://localhost` (not used for client credentials, but required)
    - After creation, note the **Client ID** and **Client Secret**
-3. **Store credentials** in `~/.config/secrets.env`:
+3. **Set the environment variables** before running the scripts:
    ```bash
-   # DigiKey API credentials
-   DIGIKEY_CLIENT_ID=your_client_id_here
-   DIGIKEY_CLIENT_SECRET=your_client_secret_here
+   export DIGIKEY_CLIENT_ID=your_client_id_here
+   export DIGIKEY_CLIENT_SECRET=your_client_secret_here
    ```
-   Set permissions: `chmod 600 ~/.config/secrets.env`
-
-4. **Load before use:**
-   ```bash
-   export $(grep -v '^#' ~/.config/secrets.env | grep -v '^$' | xargs)
-   ```
+   To persist them, add to your shell profile, a `.env` file, or a secrets manager of your choice.
 
 The client credentials flow has no user interaction — once configured, API calls work automatically.
 
@@ -213,23 +196,23 @@ DigiKey's API provides **direct PDF URLs** for datasheets — this is the prefer
 
 ### Datasheet Directory Sync (Primary Workflow)
 
-Use `sync_datasheets.py` to maintain a `datasheets/` directory alongside a KiCad project. It extracts components from the schematic, searches DigiKey for datasheet URLs, downloads missing PDFs, and writes an `index.json` manifest. Subsequent runs are incremental — only new or changed parts are fetched.
+Use `sync_datasheets_digikey.py` to maintain a `datasheets/` directory alongside a KiCad project. It extracts components from the schematic, searches DigiKey for datasheet URLs, downloads missing PDFs, and writes an `index.json` manifest. Subsequent runs are incremental — only new or changed parts are fetched.
 
 ```bash
 # Sync datasheets for a KiCad project (creates datasheets/ next to the schematic)
-python3 <skill-path>/scripts/sync_datasheets.py <file.kicad_sch>
+python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch>
 
 # Preview what would be downloaded
-python3 <skill-path>/scripts/sync_datasheets.py <file.kicad_sch> --dry-run
+python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch> --dry-run
 
 # Retry previously failed downloads
-python3 <skill-path>/scripts/sync_datasheets.py <file.kicad_sch> --force
+python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch> --force
 
 # Custom output directory
-python3 <skill-path>/scripts/sync_datasheets.py <file.kicad_sch> -o ./my-datasheets
+python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch> -o ./my-datasheets
 
 # Use pre-computed analyzer JSON instead of running the analyzer
-python3 <skill-path>/scripts/sync_datasheets.py analyzer_output.json
+python3 <skill-path>/scripts/sync_datasheets_digikey.py analyzer_output.json
 ```
 
 The script:
@@ -262,17 +245,17 @@ The `index.json` manifest structure:
 
 ### Single Datasheet Download
 
-Use `fetch_datasheet.py` for one-off datasheet downloads. It handles manufacturer-specific quirks automatically.
+Use `fetch_datasheet_digikey.py` for one-off datasheet downloads. It handles manufacturer-specific quirks automatically.
 
 ```bash
 # Search by MPN (uses DigiKey API, requires credentials)
-python3 <skill-path>/scripts/fetch_datasheet.py --search "TPS61023" -o datasheet.pdf
+python3 <skill-path>/scripts/fetch_datasheet_digikey.py --search "TPS61023" -o datasheet.pdf
 
 # Direct URL download
-python3 <skill-path>/scripts/fetch_datasheet.py "https://www.ti.com/lit/gpn/tps61023" -o datasheet.pdf
+python3 <skill-path>/scripts/fetch_datasheet_digikey.py "https://www.ti.com/lit/gpn/tps61023" -o datasheet.pdf
 
 # JSON output for script integration
-python3 <skill-path>/scripts/fetch_datasheet.py --search "ADP1706" --json
+python3 <skill-path>/scripts/fetch_datasheet_digikey.py --search "ADP1706" --json
 ```
 
 The script:
@@ -349,21 +332,9 @@ When analyzing a datasheet for a KiCad design review (see `kicad` skill):
 - **Thermal characteristics** — θJA, θJC for power dissipation calculations
 - **Electrical characteristics** — key parameters (Vout, Iq, PSRR, etc.)
 
-## Ordering: Bulk Add Format
-
-DigiKey's "Bulk Add to Cart" accepts one product per line, comma-delimited: `quantity, DigiKey part number, customer reference`. When generating order lists, output this format so the user can copy-paste directly:
-```
-3, 490-10698-1-ND, C1/C2/C5
-1, ESP32-S3-WROOM-1-N16R8-ND, U1
-```
-See the `bom` skill for the full ordering workflow.
-
 ## Tips
 
-- **Preferred datasheet source** — use the DigiKey API's `DatasheetUrl` field to download datasheets; this is faster and more reliable than web searching for PDFs
-- DigiKey part numbers ending in `-ND` are standard, `-1-ND` is cut tape, `-2-ND` is digi-reel, `-6-ND` is full reel
-- Use `ManufacturerProductNumber` (MPN) for cross-referencing across distributors
-- Check `ProductStatus` and `Discontinued`/`EndOfLife` — avoid obsolete parts for new designs
+- DigiKey PN suffixes: `-ND` standard, `-1-ND` cut tape, `-2-ND` digi-reel, `-6-ND` full reel
 - Use `ExcludeMarketPlace` filter to avoid third-party seller listings
-- Price breaks are in `ProductVariations[].StandardPricing[]` — check `BreakQuantity` thresholds
-- For JLCPCB assembly, cross-reference DigiKey MPNs with JLCPCB's parts library (LCSC part numbers)
+- Price breaks in `ProductVariations[].StandardPricing[]` — check `BreakQuantity` thresholds
+- Check `ProductStatus` and `Discontinued`/`EndOfLife` before selecting parts
