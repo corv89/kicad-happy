@@ -135,6 +135,8 @@ python3 <skill-path>/scripts/bom_manager.py export path/to/schematic.kicad_sch -
 
 CSV columns are dynamic — only distributors the project uses get columns. Base columns: Reference, Qty, Value, Footprint, MPN, Manufacturer. Each active distributor gets a PN column + stock column. Tail columns: Chosen_Distributor, Datasheet, Validated, DNP, Notes.
 
+The **Notes** column is seeded from schematic `BOM Comments` properties (or aliases like `Notes`, `Remarks`, `Ordering Notes`, etc.) on first export. On re-export, user edits in the CSV take priority — existing Notes values are preserved and schematic-sourced comments won't overwrite them.
+
 **Merge behavior:** Re-exporting preserves user-managed columns (stock, Chosen_Distributor, Validated, Notes) while updating schematic-derived columns.
 
 ### Step 7: Check Stock
@@ -188,6 +190,79 @@ Comma-separated PNs (accessories) are auto-split into separate order lines. DNP 
 Present the order summary and let the user review/edit before ordering.
 
 **Cost estimate:** After generating order files, query pricing from distributor APIs at the order quantity and present a total per distributor. See `references/ordering-and-fabrication.md` for the cost summary template.
+
+## BOM Corner Cases & Per-Component Notes
+
+Real projects have BOM quirks that don't fit neatly into standard fields. These are the things that get lost between design and ordering — a connector that's only for prototyping, a cable shared between two boards, a part that needs to be ordered from a specific vendor lot. **Actively look for these** during BOM analysis; don't wait for the user to mention them.
+
+### BOM Comments Field
+
+The `BOM Comments` symbol property (canonical name) captures per-component freeform notes. It flows into the `Notes` column in the exported CSV. The script recognizes many aliases: `BOM Notes`, `Ordering Notes`, `Assembly Notes`, `Notes`, `Remarks`, `Comment`, and underscore/space variants.
+
+**When to suggest adding BOM Comments:**
+- Component is prototype-only (DNP in production, or vice versa)
+- Component has ordering constraints (minimum order qty, long lead time, specific vendor lot)
+- Component is shared with another board (ribbon cables, mating connectors, shared harnesses)
+- Component has assembly notes (orientation matters, hand-solder only, apply after reflow)
+- Component has substitution rules (acceptable alternates, pin-compatible swaps)
+- Component has conditional population (different value for different product variants/SKUs)
+
+**Example values:**
+```
+"Proto only — DNP in production"
+"Shares ribbon cable with power board — don't double-order"
+"Must be Murata GRM series, no substitution (validated for EMI)"
+"Hand-solder after reflow — temperature sensitive"
+"Order 10% extra — fragile QFN rework difficult"
+"Use 10K for rev A, 4.7K for rev B"
+"Mating connector: Molex 39-01-2040 on cable side"
+```
+
+### Where Else to Look for BOM Quirks
+
+The schematic symbol property is the best place for per-component notes, but projects scatter this information everywhere. Check all of these:
+
+1. **Schematic text annotations** — free text placed on the schematic sheet. The `kicad` skill's analyzer extracts these as `text_annotations`. Look for notes near components about ordering, assembly, or variants.
+
+2. **Title block comments** — the title block has numbered comment fields. Sometimes used for board-level BOM notes ("All passives 0402 unless marked", "Order from DigiKey for proto").
+
+3. **Project README / docs** — look for `README.md`, `docs/`, `bom/README.md`, or any text file mentioning parts, ordering, or assembly. These often contain the highest-level BOM decisions.
+
+4. **Existing BOM CSV Notes column** — if a `bom.csv` already exists, read the Notes column. The user may have added notes there that aren't in the schematic.
+
+5. **CLAUDE.md or project-level config** — project instructions may specify BOM conventions, preferred distributors, or special ordering rules.
+
+6. **Schematic symbol Description field** — sometimes used for assembly notes rather than part description (e.g., "100nF bypass - place close to U3 pin 4").
+
+7. **KiCad custom fields with non-standard names** — fields like `Assembly`, `Order`, `Variant`, `Config`, `SKU` may contain BOM-relevant info. The analyzer flags these as `unrecognized_fields`.
+
+8. **DNP with context** — a DNP component may need a note about *why* it's DNP and *when* to populate it. KiCad's DNP flag is boolean — the reason belongs in BOM Comments.
+
+### Multi-Board / System-Level BOM Concerns
+
+When a project has multiple boards (e.g., main board + daughter board, or sender + receiver):
+
+- **Shared cables/connectors** — document on both boards which connector mates with which, and note "don't double-order" on cables shared between boards
+- **Shared power supplies** — if boards share a PSU, document which board's BOM includes it
+- **Common parts across boards** — when ordering, consolidate quantities across boards. Note in each board's BOM which parts are shared
+- **Board-specific variants** — if the same PCB is used with different stuffing options (e.g., different resistor values for different output voltages), use BOM Comments to document the variant rules
+
+### Non-BOM Items
+
+Some project-specific items aren't on the schematic but need ordering alongside the BOM. Commonly forgotten:
+
+- **Mating connectors & cables** — if the schematic has a connector, the other half needs ordering too (board-to-board, ribbon cables, wire harnesses)
+- **Stencil** — order a framed stencil with the PCBs (~$7 from JLCPCB/PCBWay)
+- **Programming/debug adapter** — Tag-Connect cable, SWD ribbon, specific USB cable for the board's debug connector
+- **Antenna cables** — U.FL to SMA pigtails if the board has an RF connector
+- **Mounting hardware** — standoffs, screws, nuts specific to the enclosure
+- **Thermal management** — heat sinks, thermal pads for specific components
+
+Track these as rows in the BOM CSV with `Reference` = `--` and a Note, or in a separate `bom/non-bom-items.csv`. Mention them separately in cost estimates.
+
+### Presenting BOM Comments
+
+When generating reports or order summaries, **always surface BOM comments prominently** — they're the designer's voice about exceptions and gotchas. Don't bury them. In the order summary, list any component with a BOM comment separately after the main table so the user sees them before clicking "order."
 
 ## Package/Footprint Cross-Reference
 
@@ -294,3 +369,4 @@ Keep `bom/bom.csv` tracked — it contains user-curated data (Chosen_Distributor
 - **DigiKey token reuse** — cached to temp file with 9-minute TTL; no need to re-auth per call
 - **Second source** — use `AltMPN` field for critical parts
 - **Price at target qty** — prototype pricing != production pricing
+- **BOM Comments** — use the `BOM Comments` symbol property for ordering/assembly quirks that don't fit in standard fields. Flows into CSV Notes column. Check schematic text annotations, README, and existing CSV notes for scattered BOM info too.
