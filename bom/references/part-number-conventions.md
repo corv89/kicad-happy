@@ -377,6 +377,9 @@ Projects using KiCad's Field Name Templates often have empty fields on every sym
 - `Alt MPN` or `Substitution` containing alternative parts, not the primary MPN
 - `Notes` containing distributor info in free text: "Digikey: USB4105-GF-A"
 - `Remarks` containing color info, mating connector references, or errata
+- `BOM Comments` / `Notes` / `Remarks` containing ordering/assembly quirks: "Proto only", "shares cable with board X", "hand-solder", "order 10% extra", variant-specific population rules
+- `Assembly` or `Assembly Notes` containing post-reflow instructions or orientation notes
+- `Variant` / `Config` / `SKU` containing conditional population rules for multi-variant designs
 
 ### Multi-Unit Symbols
 

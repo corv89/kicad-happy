@@ -20,6 +20,7 @@
 | `Mouser` | Mouser PN — secondary prototype source | Prototype | `81-GRM155R71C104KA8D` |
 | `LCSC` | LCSC PN — production assembly source | Production | `C14663` |
 | `AltMPN` | Alternate/second-source MPN | Optional | `CL05B104KO5NNNC` |
+| `BOM Comments` | Freeform per-component ordering/assembly notes (flows into CSV Notes column) | Optional | `Proto only — DNP in production` |
 
 ## Field Name Aliases
 
@@ -33,6 +34,7 @@ Projects use inconsistent field names. The analyzer recognizes all common varian
 | `Mouser` | `Mouser Part Number`, `Mouser Part`, `Mouser_PN`, `Mouser PN` |
 | `LCSC` | `LCSC Part #`, `LCSC Part Number`, `LCSCStockCode`, `JLCPCB`, `JLCPCB Part`, `JLC` |
 | `element14` | `Newark`, `Newark Part Number`, `Newark_PN`, `Farnell`, `Farnell_PN`, `element14_PN` |
+| `BOM Comments` | `BOM_Comments`, `BOM Comment`, `BOM_Comment`, `BOM Notes`, `BOM_Notes`, `BOM Note`, `Ordering Notes`, `Assembly Notes`, `Notes`, `Remarks`, `Comment` |
 
 When writing new fields, use the canonical names for consistency. When a project already has a convention (e.g., `Digi-Key_PN`), respect it.
 

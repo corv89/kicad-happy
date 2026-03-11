@@ -102,6 +102,17 @@ STANDARD_FIELDS = {
 # DNP field name variants
 DNP_FIELDS = {"DNP", "dnp", "DONOTPLACE", "DNM", "POPULATE", "Do Not Populate"}
 
+# BOM Comments field name variants — freeform per-component notes for ordering/assembly
+# Ordered list for extraction priority (first match wins); set for fast membership checks
+_BOM_COMMENT_NAMES = [
+    "BOM Comments", "BOM_Comments", "BOM Comment", "BOM_Comment",
+    "BOM Notes", "BOM_Notes", "BOM Note", "BOM_Note",
+    "Ordering Notes", "Ordering_Notes", "Order Notes",
+    "Assembly Notes", "Assembly_Notes",
+    "Notes", "Remarks", "Comment",
+]
+BOM_COMMENT_FIELDS = set(_BOM_COMMENT_NAMES)
+
 # Reference prefix patterns for component classification
 _REF_TYPE = {
     "C": "capacitor", "R": "resistor", "L": "inductor", "D": "diode",
@@ -376,6 +387,14 @@ def generate_bom(symbols: list[dict], convention: dict) -> list[dict]:
         value = props.get("Value", "").strip()
         footprint = props.get("Footprint", "").strip()
 
+        # Extract BOM comments — freeform per-component notes
+        bom_comment = ""
+        for field_name in _BOM_COMMENT_NAMES:
+            val = props.get(field_name, "").strip()
+            if val:
+                bom_comment = val
+                break
+
         group_key = (value, footprint, mpn)
 
         if group_key not in groups:
@@ -390,11 +409,14 @@ def generate_bom(symbols: list[dict], convention: dict) -> list[dict]:
                 "element14": element14,
                 "datasheet": datasheet,
                 "description": description,
+                "bom_comments": [],
                 "references": [],
                 "quantity": 0,
                 "dnp": sym["dnp"],
                 "type": comp_type,
             }
+        if bom_comment and bom_comment not in groups[group_key]["bom_comments"]:
+            groups[group_key]["bom_comments"].append(bom_comment)
 
         groups[group_key]["references"].append(ref)
         groups[group_key]["quantity"] += 1
@@ -540,7 +562,7 @@ def analyze(
     unrecognized_fields: dict[str, list[str]] = {}
     for sym in all_symbols:
         for name, value in sym["raw_properties"].items():
-            if name in STANDARD_FIELDS or name in DNP_FIELDS:
+            if name in STANDARD_FIELDS or name in DNP_FIELDS or name in BOM_COMMENT_FIELDS:
                 continue
             canonical = _ALIAS_LOOKUP.get(name) or _ALIAS_LOOKUP.get(name.upper())
             if not canonical and value.strip():
@@ -620,10 +642,14 @@ def format_human(report: dict, gaps_only: bool = False) -> str:
             gaps_str = ", ".join(entry.get("gaps", []))
             if entry["dnp"]:
                 gaps_str = "DNP"
-            lines.append(
+            line = (
                 f"  {refs:<12} {entry['quantity']:>3}  {entry['value']:<20} "
                 f"{entry['mpn'] or '(none)':<30} {gaps_str}"
             )
+            bom_comments = entry.get("bom_comments", [])
+            if bom_comments:
+                line += f"  [{'; '.join(bom_comments)}]"
+            lines.append(line)
 
     # Unrecognized fields
     if report.get("unrecognized_fields"):
@@ -778,6 +804,9 @@ def export_csv(report: dict, output_path: Path, extra_distributors: list[str] | 
         fp_short = _short_footprint(entry["footprint"])
         ds = entry["datasheet"] if entry["datasheet"] != "~" else ""
 
+        # Seed Notes from schematic BOM comments (user CSV edits take priority in merge below)
+        bom_comments = "; ".join(entry.get("bom_comments", []))
+
         row = {
             "Reference": refs,
             "Qty": str(entry["quantity"]),
@@ -787,6 +816,7 @@ def export_csv(report: dict, output_path: Path, extra_distributors: list[str] | 
             "Manufacturer": entry["manufacturer"],
             "Datasheet": ds,
             "DNP": "yes" if entry["dnp"] else "",
+            "Notes": bom_comments,
         }
 
         # Only add distributor PN columns for active distributors
