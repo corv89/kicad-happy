@@ -34,11 +34,11 @@ cd kicad-happy
 # Install all skills (symlinks into ~/.claude/skills/)
 mkdir -p ~/.claude/skills
 for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway; do
-  ln -sf "$(pwd)/$skill" ~/.claude/skills/$skill
+  ln -sf "$(pwd)/skills/$skill" ~/.claude/skills/$skill
 done
 ```
 
-You can also install individually — symlink any skill folder into `~/.claude/skills/`. For project-specific installs, use `.claude/skills/` in your project root instead.
+You can also install individually — symlink any skill folder from `skills/` into `~/.claude/skills/`. For project-specific installs, use `.claude/skills/` in your project root instead.
 
 The **kicad** skill is the core — the others enhance it with sourcing, datasheets, and manufacturing workflows.
 
@@ -219,50 +219,6 @@ Claude extracts the BOM from your schematic, cross-references LCSC part numbers,
 > "Generate order files for 10 boards with 2 spares per line"
 
 Claude exports per-supplier upload files — DigiKey bulk-add CSV, Mouser cart format, LCSC BOM — with quantities already computed. It'll flag any parts where your chosen supplier is out of stock and suggest the alternate.
-
-## 🧪 The scripts
-
-Pure Python 3 scripts that parse KiCad files into structured data. They're the data layer — Claude reads the output and applies higher-level reasoning (datasheet validation, design pattern matching, error detection). Zero required dependencies.
-
-```bash
-# Schematic analysis (supports .kicad_sch and legacy .sch)
-python3 kicad/scripts/analyze_schematic.py hardware/board.kicad_sch
-
-# PCB layout analysis
-python3 kicad/scripts/analyze_pcb.py hardware/board.kicad_pcb
-
-# Gerber/drill file verification
-python3 kicad/scripts/analyze_gerbers.py hardware/gerbers/
-
-# BOM analysis — detect field conventions, find gaps, export tracking CSV
-python3 bom/scripts/bom_manager.py analyze hardware/board.kicad_sch --recursive
-python3 bom/scripts/bom_manager.py export hardware/board.kicad_sch -o bom/bom.csv
-
-# Sync datasheets (DigiKey, LCSC, element14, Mouser — all share one datasheets/ directory)
-python3 digikey/scripts/sync_datasheets_digikey.py hardware/board.kicad_sch
-```
-
-All analysis scripts output JSON to stdout. Add `--output file.json` to write to a file, `--compact` for minified output. Datasheet sync scripts share a common `datasheets/` directory and skip already-downloaded files.
-
-### Schematic analyzer output
-
-| Section           | What's in it                                                                                                                                               |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `components`      | Every placed symbol — reference, value, footprint, MPN, position, type classification                                                                      |
-| `nets`            | Full connectivity map with pin-to-net assignments and wire counts                                                                                          |
-| `bom`             | Deduplicated bill of materials with quantities                                                                                                             |
-| `signal_analysis` | Detected subcircuits: regulators, voltage dividers, RC/LC filters, op-amps, transistor drivers, bridges, protection devices, feedback networks, decoupling |
-| `design_analysis` | Power domains, bus detection (I2C/SPI/UART/CAN), differential pairs, cross-domain signals, ERC warnings                                                    |
-
-Supports KiCad 5 through 9. Hierarchical designs are parsed recursively. Tested across 1,000+ real KiCad projects.
-
-### PCB analyzer output
-
-Footprint inventory with pad/net details, track/via statistics, zone summary, board outline/dimensions, routing completeness, unrouted nets. Add `--full` for individual track/via coordinates.
-
-### Gerber analyzer output
-
-Layer completeness check, drill tool/hole summary, aperture counts, layer alignment verification.
 
 ## 🗺️ Workflow overview
 
