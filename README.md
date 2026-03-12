@@ -2,22 +2,22 @@
 
 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills for electronics design with KiCad.** Analyze schematics, review PCB layouts, download datasheets, source components, and prepare boards for fabrication — all from your terminal.
 
-> 🛠️ **Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code)** — Anthropic's agentic coding tool that lives in your terminal. Skills like these let you extend it into entirely new domains beyond software.
+> 🛠️ **Requires Claude Code** — Anthropic's agentic coding tool that lives in your terminal. Skills like these let you extend it into entirely new domains beyond software.
 
-These skills turn Claude Code into a full-fledged electronics design assistant that understands your KiCad projects at a deep level: it parses schematics and PCB layouts into structured data, cross-references component values against datasheets, detects common design errors, and walks you through the full prototype-to-production workflow.
+These skills turn Claude Code into a full-fledged electronics design assistant that understands your KiCad projects at a deep level: parses schematics and PCB layouts into structured data, cross-references component values against datasheets, detects common design errors, and walks you through the full prototype-to-production workflow.
 
 ## 📦 What's included
 
-| Skill       | What it does                                                                                                                                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **kicad**     | 🔍 Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DRC/ERC verification. |
-| **bom**       | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files.                                                     |
-| **digikey**   | 📄 Search DigiKey for components and download datasheets via API.                                                                                            |
-| **mouser**    | 🛒 Search Mouser for components and download datasheets.                                                                                                     |
-| **lcsc**      | 🔎 Search LCSC for components (production sourcing, JLCPCB parts library).                                                                                   |
-| **element14** | 🌍 Search Newark/Farnell/element14 for components (international sourcing, one API for three storefronts).                                                   |
-| **jlcpcb**    | 🏭 JLCPCB fabrication and assembly — design rules, BOM/CPL format, ordering workflow.                                                                        |
-| **pcbway**    | 🏭 PCBWay fabrication and assembly — turnkey assembly with MPN-based sourcing.                                                                               |
+| Skill         | What it does                                                                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **kicad**     | ⚡ Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DRC/ERC verification. |
+| **bom**       | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files.                                                    |
+| **digikey**   | 🔎 Search DigiKey for components and download datasheets via API.                                                                                           |
+| **mouser**    | 🔎 Search Mouser for components and download datasheets.                                                                                                    |
+| **lcsc**      | 🔎 Search LCSC for components (production sourcing, JLCPCB parts library).                                                                                  |
+| **element14** | 🔎 Search Newark/Farnell/element14 for components (international sourcing, one API for three storefronts).                                                  |
+| **jlcpcb**    | 🏭 JLCPCB fabrication and assembly — design rules, BOM/CPL format, ordering workflow.                                                                       |
+| **pcbway**    | 🏭 PCBWay fabrication and assembly — turnkey assembly with MPN-based sourcing.                                                                              |
 
 ## 🚀 Install
 
@@ -56,12 +56,12 @@ The distributor skills work best with API credentials, but none are strictly req
 
 > "Claude, help me set up API keys for the distributor skills"
 
-| Distributor | Env variables | How to get |
-|-------------|--------------|------------|
-| **DigiKey** | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | [DigiKey API Portal](https://developer.digikey.com/) — register an app, get OAuth 2.0 credentials |
-| **Mouser** | `MOUSER_SEARCH_API_KEY` | My Mouser → APIs → register for Search API key |
-| **element14** | `ELEMENT14_API_KEY` | [element14 API Portal](https://partner.element14.com/) — one key covers Newark, Farnell, and element14 |
-| **LCSC** | *none needed* | Uses the free [jlcsearch](https://jlcsearch.tscircuit.com/) community API |
+| Distributor   | Env variables                                | How to get                                                                                             |
+| ------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **DigiKey**   | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | [DigiKey API Portal](https://developer.digikey.com/) — register an app, get OAuth 2.0 credentials      |
+| **Mouser**    | `MOUSER_SEARCH_API_KEY`                      | My Mouser → APIs → register for Search API key                                                         |
+| **element14** | `ELEMENT14_API_KEY`                          | [element14 API Portal](https://partner.element14.com/) — one key covers Newark, Farnell, and element14 |
+| **LCSC**      | *none needed*                                | Uses the free [jlcsearch](https://jlcsearch.tscircuit.com/) community API                              |
 
 ## 🔬 What it looks like in practice
 
@@ -82,12 +82,12 @@ V+ (10-54V motor bus, TVS protected)
 
 **Detected subcircuits** — found automatically from the schematic:
 
-| | |
-|---|---|
+| Subcircuit  | Details                                                                                            |
+| ----------- | -------------------------------------------------------------------------------------------------- |
 | Motor drive | 6 FETs, gate driver, per-phase current sense (0.5mΩ), 3x matched RC filters (22Ω + 1nF = 7.23 MHz) |
-| Buses | 2x SPI, CAN with 120Ω termination, RS-422 differential |
-| Protection | TVS on V+ input (51V standoff matches bus spec), ground domain separation with net ties |
-| Sensing | Battery voltage divider (100k/4.7k → 54V max reads as 2.43V), FET temp NTC |
+| Buses       | 2x SPI, CAN with 120Ω termination, RS-422 differential                                             |
+| Protection  | TVS on V+ input (51V standoff matches bus spec), ground domain separation with net ties            |
+| Sensing     | Battery voltage divider (100k/4.7k → 54V max reads as 2.43V), FET temp NTC                         |
 
 **PCB cross-reference** — the review covers layout too:
 
@@ -103,33 +103,38 @@ Thermal pad vias:
 
 **Issues found:**
 
-| | |
-|---|---|
-| WARNING | Feedback divider computes to 14.95V, not 12V — Vref heuristic may be wrong, verify datasheet |
-| WARNING | STM32 thermal pad has 14 vias (need 16) — elevated die temp under load |
-| WARNING | Inductor L2 has 4 thermal vias (need 9) — carries the full +12V rail current |
-| SUGGESTION | No test point on V+ motor bus — add for bring-up measurements |
+| Severity   | Issue                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| WARNING    | Feedback divider computes to 14.95V, not 12V — Vref heuristic may be wrong, verify datasheet |
+| WARNING    | STM32 thermal pad has 14 vias (need 16) — elevated die temp under load                       |
+| WARNING    | Inductor L2 has 4 thermal vias (need 9) — carries the full +12V rail current                 |
+| SUGGESTION | No test point on V+ motor bus — add for bring-up measurements                                |
 
-**What looks good:** 170µF bus capacitance across 38 caps, proper GND/GNDPWR separation, CAN termination verified, 100% MPN coverage, zero DFM violations, JLCPCB standard tier compatible.
+**What looks good:** 170µF bus capacitance across 38 caps, proper GND/GNDPWR domain separation, CAN bus termination verified, 100% MPN coverage across all components, zero DFM violations, JLCPCB standard tier compatible.
 
-That's one example. Here's what the analysis automatically detects across any KiCad project:
+For a complete example, see the [full design review](example-report.md) of an ESP32-S3 board — 52 components, 2-layer, dual boost converters, USB host, touch sensing.
 
-| Category | Examples |
-|---|---|
-| **Power** | Regulator Vout computed from feedback dividers, power sequencing, enable chains, inrush analysis |
-| **Analog** | Op-amp gain computation, voltage dividers with ratios, RC/LC filter cutoff frequencies |
-| **Protection** | TVS/ESD mapping per interface, MOSFET switch gate drive analysis, flyback diode checks |
-| **Digital** | I2C pull-up verification, SPI/UART/CAN bus detection, differential pairs, level crossing analysis |
-| **Motor/Power** | H-bridge and 3-phase bridge detection, current sense shunts, gate driver mapping |
-| **RF** | Signal chains, switch matrices, mixer/LNA/PA identification, balun detection |
-| **PCB** | Thermal via adequacy, zone stitching density, trace width vs current, DFM checks, tombstoning risk |
-| **Manufacturing** | BOM consolidation opportunities, MPN coverage audit, assembly complexity scoring |
+The analysis covers every domain in the design:
 
-Claude cross-references all of this against datasheets to validate component values, check absolute maximum ratings, and verify the design matches the manufacturer's reference circuit.
+| Category          | Examples                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------- |
+| **Power**         | Regulator Vout computed from feedback dividers, power sequencing, enable chains, inrush analysis   |
+| **Analog**        | Op-amp gain computation, voltage dividers with ratios, RC/LC filter cutoff frequencies             |
+| **Protection**    | TVS/ESD mapping per interface, MOSFET switch gate drive analysis, flyback diode checks             |
+| **Digital**       | I2C pull-up verification, SPI/UART/CAN bus detection, differential pairs, level crossing analysis  |
+| **Motor/Power**   | H-bridge and 3-phase bridge detection, current sense shunts, gate driver mapping                   |
+| **RF**            | Signal chains, switch matrices, mixer/LNA/PA identification, balun detection                       |
+| **PCB**           | Thermal via adequacy, zone stitching density, trace width vs current, DFM checks, tombstoning risk |
+| **Manufacturing** | BOM consolidation opportunities, MPN coverage audit, assembly complexity scoring                   |
 
-### 📄 [Full example report →](example-report.md)
+### 📚 How the analysis works
 
-A complete design review of an ESP32-S3 board — 52 components, 2-layer, dual boost converters, USB host, touch sensing. [One prompt, full report.](example-report.md)
+The analysis scripts parse KiCad's S-expression file format directly into structured JSON — component lists, net connectivity, detected subcircuits, board dimensions, DFM measurements. Claude then reads that JSON alongside your datasheets to cross-reference values, trace signal paths, and write a design review with every conclusion shown and verifiable. For the full end-to-end walkthrough from S-expression parsing through signal detection, datasheet cross-referencing, design review, and discussion of limitations — see **[How It Works](how-it-works.md)**. Detailed methodology documentation for each analyzer:
+
+- **[Schematic analysis methodology](skills/kicad/scripts/methodology_schematic.md)** — parsing pipeline, multi-sheet net building, component classification heuristics, and all 21 signal path detectors (voltage dividers, regulators, RC/LC filters, op-amp circuits, transistor switches, protection devices, bridge circuits, bus detection, and more)
+- **[PCB layout analysis methodology](skills/kicad/scripts/methodology_pcb.md)** — footprint extraction, union-find connectivity, DFM scoring, thermal/placement/signal integrity analysis
+- **[Gerber analysis methodology](skills/kicad/scripts/methodology_gerbers.md)** — RS-274X and Excellon parsing, X2 attribute extraction, layer identification, completeness and alignment checks, zip archive staleness detection
+
 
 ### 🖐️ Ask about specific circuits
 
@@ -212,9 +217,9 @@ Pick one, and Claude searches Mouser and LCSC for the same MPN to fill in altern
 
 ### 🏭 Prepare for manufacturing
 
-> "Generate the BOM and CPL for JLCPCB assembly"
+> "Generate the BOM for JLCPCB assembly"
 
-Claude extracts the BOM from your schematic, cross-references LCSC part numbers, formats the BOM and component placement list to JLCPCB's exact spec, flags basic vs extended parts, and warns about rotation offsets for common packages.
+Claude extracts the BOM from your schematic, cross-references LCSC part numbers, formats it to JLCPCB's exact spec, and flags basic vs extended parts. CPL files are exported from KiCad directly — Claude handles the BOM side.
 
 > "Generate order files for 10 boards with 2 spares per line"
 

@@ -1,0 +1,211 @@
+# How It Works
+
+This document explains the full design review workflow — what happens when you ask Claude to analyze your KiCad project, how the analysis scripts work, where the data comes from, what Claude actually does with it, and where the limitations are.
+
+## The core idea
+
+The analysis scripts are **data extraction tools**, not AI. They're deterministic Python that parses KiCad's S-expression file format into structured JSON — component lists, net connectivity, detected subcircuits, board dimensions, DFM measurements. No machine learning, no heuristics that change between runs, no cloud calls. You can run them yourself and read the output.
+
+Claude reads that JSON, reads your datasheets, and writes a design review. The AI part is the *reasoning about* the data — not the data itself.
+
+This separation matters because it means:
+
+- **The data is auditable.** Run the script, read the JSON, verify any claim.
+- **The reasoning is transparent.** Claude shows its work — calculations, pin traces, datasheet references. You can check every conclusion.
+- **Nothing is hidden.** There's no model making invisible decisions about your design. The analysis scripts are open source, the methodology is documented, and the JSON output is "human-readable."
+
+## What happens when you say "analyze my board"
+
+### Step 1: Parse the files
+
+The schematic analyzer (`analyze_schematic.py`) reads your `.kicad_sch` file and:
+
+1. **Parses the S-expression format** into a generic tree. No KiCad-version-specific logic — the parser handles KiCad 5 through 9 because it operates on structure, not schema.
+
+2. **Walks hierarchical sheets.** If your design has sub-sheets (including multi-instance sheets where the same sub-sheet is placed multiple times with different reference designators), the analyzer traverses them breadth-first, remapping references per instance.
+
+3. **Extracts every component** with all its properties: reference designator, value, footprint, lib_id, MPN, datasheet URL, pin positions (after applying rotation/mirror transforms).
+
+4. **Builds the net graph** using union-find on pin coordinates. Every wire endpoint, label, power symbol, and component pin gets a coordinate key. Points within 0.01mm are merged. Wires union their endpoints. Labels union their position with any wire they touch. The result: for every net, a complete list of which component pins are connected.
+
+5. **Runs 21 signal path detectors.** Each is a pure function that looks for specific circuit patterns in the connectivity graph:
+
+   | Detector | What it finds |
+   |----------|--------------|
+   | Voltage dividers | Two resistors sharing a node, one side to power/ground. Computes ratio and output voltage. |
+   | RC/LC filters | Resistor-capacitor or inductor-capacitor pairs. Computes cutoff frequency. |
+   | Power regulators | ICs with feedback divider networks. Computes Vout from Vref (datasheet lookup for ~150 part families, heuristic fallback). |
+   | Transistor circuits | MOSFETs and BJTs with gate/base biasing, load classification, flyback diode detection. |
+   | Op-amp circuits | Inverting/non-inverting/buffer/differential configurations. Gain computation from feedback resistors. |
+   | Current sense | Shunt resistors with differential measurement. Power dissipation calculation. |
+   | Protection devices | TVS, ESD, varistors mapped to the interfaces they protect. |
+   | Crystal circuits | Crystals with load capacitor verification. |
+   | Bridge circuits | H-bridge and 3-phase motor drive topologies. |
+   | Bus detection | I2C (with pull-up resistance check), SPI, UART, CAN (with termination check). |
+   | + 11 more | Decoupling analysis, LED drivers, key matrices, RF chains, Ethernet, memory interfaces, isolation barriers, BMS systems, buzzer/speaker drivers, and design-level observations. |
+
+   Detectors run in dependency order — voltage dividers are found first, then regulators reference those dividers for feedback network analysis. Each detector is documented in [methodology_schematic.md](skills/kicad/scripts/methodology_schematic.md).
+
+6. **Outputs structured JSON.** Typically 60–220KB depending on board complexity. Every section is self-contained and machine-readable.
+
+The PCB analyzer (`analyze_pcb.py`) and Gerber analyzer (`analyze_gerbers.py`) follow the same pattern for layout and fabrication files. Full methodology docs: [PCB](skills/kicad/scripts/methodology_pcb.md), [Gerbers](skills/kicad/scripts/methodology_gerbers.md).
+
+### Step 2: Gather datasheets
+
+Claude downloads datasheets for every component with an MPN, using the distributor API skills (DigiKey, Mouser, LCSC, element14). PDFs are stored locally in a `datasheets/` directory with an index manifest.
+
+This step is critical. Without datasheets, a review can only check that a design is *self-consistent* (the schematic agrees with itself). With datasheets, it can check that the design is *correct* (component values match manufacturer recommendations, absolute maximum ratings aren't exceeded, reference circuits are followed).
+
+### Step 3: Cross-reference and review
+
+Claude reads the analysis JSON and datasheets together, then:
+
+- **Verifies the analysis data.** Spot-checks component counts against the raw schematic, traces critical nets pin-by-pin, confirms the analyzer's pin-to-net mapping for ICs.
+- **Validates against datasheets.** Checks feedback divider Vout against the regulator's actual Vref. Verifies filter cutoff frequencies match the application note. Confirms current sense resistor power dissipation is within rating.
+- **Cross-references schematic to PCB.** Component counts match? All nets routed? Thermal vias adequate for power components? Decoupling caps placed close to IC supply pins?
+- **Checks fabrication files.** Gerber layers complete? Drill files present? Coordinate alignment consistent? Zip archives up-to-date?
+- **Writes the review.** Structured report with findings categorized by severity (CRITICAL / WARNING / SUGGESTION), power tree visualization, signal analysis walkthrough, and DFM assessment.
+
+### Step 4: You review the review
+
+This is the most important step. The output is a starting point for engineering judgment, not a replacement for it. Every calculation is shown. Every datasheet reference is cited. Every finding includes enough context to verify or dismiss it.
+
+## What the analysis catches
+
+Real examples from production design reviews:
+
+| Category | Example finding |
+|----------|----------------|
+| **Power** | Feedback divider computes to 14.95V on a rail named +12V — Vref lookup says 1.0V for MAX17760, but verify against your specific variant's datasheet |
+| **Thermal** | QFN exposed pad has 14 thermal vias (IPC-7093 recommends 16 for this pad area). Will run hot under sustained load. |
+| **Protection** | USB connector has no ESD protection. VBUS has TVS but D+/D- are unprotected. |
+| **Digital** | I2C pull-ups are 10kΩ to 3.3V. At 400kHz with 20pF bus capacitance, rise time is ~200ns — marginal for Fast-mode (spec: 300ns max). At higher capacitance, this fails. |
+| **Analog** | Op-amp configured as non-inverting with gain of 11x (100k/10k). But output drives a 1kΩ load — output current is 3.3mA at full scale. Check datasheet for output drive capability. |
+| **Manufacturing** | 0402 resistors on opposite sides of the same pad have unequal thermal relief — tombstoning risk during reflow. |
+| **Gerbers** | Zip archive is 3 days older than loose gerber files — the zip doesn't reflect your latest design changes. |
+
+## What it doesn't catch
+
+Being honest about limitations is more useful than pretending they don't exist.
+
+**Things the analyzer cannot detect:**
+
+- **Wrong component choice.** If you picked an LDO that can't handle the dropout voltage in your application, or a MOSFET with insufficient Vgs threshold for your gate drive — the analyzer sees the circuit topology but doesn't know your operating conditions. Claude will flag when datasheet parameters look marginal, but it requires the right datasheet and explicit operating specs.
+
+- **Timing and dynamic behavior.** The analysis is static — it sees component values and connectivity, not waveforms. It can compute filter cutoff frequencies and time constants, and it traces enable chains and power_good sequencing dependencies, but it can't simulate transient response or oscillation stability.
+
+- **Layout parasitics.** The PCB analyzer measures trace widths and via counts, and the `--proximity` flag does spatial analysis to flag signal nets running close together (crosstalk risk). But it doesn't extract parasitic inductance or capacitance, and full impedance matching and return path analysis require dedicated SI tools.
+
+- **EMC compliance.** The review can flag obvious issues (missing bypass caps, long power loops, unshielded switching regulators near sensitive analog), but it can't predict radiated emissions or susceptibility.
+
+- **Mechanical fit.** Board outline dimensions are extracted, but interference with enclosures, connector mating height, thermal clearance to adjacent boards — these require 3D mechanical context the analyzer doesn't have.
+
+**Things the analyzer might get wrong:**
+
+- **Regulator Vout estimates.** The Vref lookup table covers ~150 part families, each verified against the manufacturer's datasheet. If your regulator isn't in it, the analyzer falls back to a heuristic sweep that's right most of the time but not always. The `vref_source` field in the output tells you which method was used — `"lookup"` means datasheet-verified, `"heuristic"` means check it yourself.
+
+- **Legacy KiCad 5 designs.** The legacy `.sch` format doesn't encode pin positions in the schematic file — they're in separate `.lib` files that the analyzer doesn't parse. Signal analysis is limited for these designs. The `.net` netlist file (if available) closes the gap.
+
+- **Unusual symbol conventions.** If a symbol uses non-standard pin names or a reference designator prefix the classifier doesn't recognize, the component may be misclassified. The classifier handles hundreds of conventions, but edge cases exist.
+
+- **Pin-to-net mapping near sheet borders.** Hierarchical sheet pins can be tricky when labels don't quite align with wire endpoints. The analyzer uses tolerance-based matching that works for 99%+ of real designs, but complex hierarchical routing occasionally produces a missed connection. The review process includes explicit net tracing to catch these.
+
+## Addressing common concerns
+
+### "AI hallucinates. Why would I trust it with my PCB?"
+
+Valid concern. Here's how this system is different from "paste your schematic into ChatGPT":
+
+1. **The analysis data is deterministic.** The Python scripts produce the same JSON output every time for the same input. There's no model in the extraction loop. You can run the scripts, read the JSON, and verify any fact independently.
+
+2. **Claude's reasoning is grounded in data.** It's not generating circuit analysis from training data — it's reading your specific component list, your specific net connections, your specific trace widths, and cross-referencing against your specific datasheets. When it says "R3 and R4 form a voltage divider with ratio 0.234," that came from parsing the actual resistor values on the actual net.
+
+3. **The review is verifiable.** Every finding includes the path to verify it — which components, which nets, which datasheet page. If Claude says your thermal vias are insufficient, it tells you the via count, the pad area, and the IPC recommendation. You can check.
+
+4. **Hallucination risk is bounded by the data.** Claude can misinterpret analyzer data or draw wrong conclusions from datasheets — the same mistakes a human reviewer can make. But it can't invent components that aren't in your schematic or fabricate net connections that don't exist, because the analysis JSON constrains what it's working with.
+
+Is it perfect? No. That's why step 4 is "you review the review." But it's a lot better than skipping the review entirely — which is what happens on most projects when time runs out before tapeout.
+
+### "This replaces engineers with AI"
+
+No. This replaces *not doing a design review* with doing one.
+
+Most hardware teams don't have a formal peer review process for every board revision. The senior engineer is busy, the deadline is Thursday, and the board goes to fab with a quick eyeball check. Two weeks later it comes back and the regulator output is wrong because nobody noticed the feedback resistor values were swapped during a late-night edit.
+
+This tool does the tedious, systematic part — trace every net, check every value, verify every pin mapping, cross-reference every datasheet. It produces a structured report that a human engineer reviews. The human makes the engineering decisions. The tool just makes sure nothing gets missed.
+
+If you're a senior EE who already does thorough design reviews, this saves you time. If you're a solo engineer or a small team without a dedicated reviewer, this gives you a second pair of eyes you didn't have before.
+
+### "I don't want AI touching my design files"
+
+It doesn't. The analysis scripts *read* your KiCad files — they never modify them. The BOM management scripts can write symbol properties back (distributor part numbers, MPNs), but only with explicit `--write` flags and they support `--dry-run` to preview changes. Claude itself has no ability to modify your KiCad files directly.
+
+Your design files, your git repo, your control.
+
+### "How do I know the analysis is correct?"
+
+Run it yourself and check:
+
+```bash
+# Run the analyzer
+python3 skills/kicad/scripts/analyze_schematic.py your_board.kicad_sch --output analysis.json
+
+# Check component count
+python3 -c "import json; d=json.load(open('analysis.json')); print(f'Components: {d[\"statistics\"][\"total_components\"]}')"
+
+# Look at detected voltage dividers
+python3 -c "import json; d=json.load(open('analysis.json')); [print(f'{vd[\"r_top\"][\"ref\"]} + {vd[\"r_bottom\"][\"ref\"]}: ratio={vd[\"ratio\"]:.3f}') for vd in d.get('signal_analysis',{}).get('voltage_dividers',[])]"
+
+# Trace a specific net
+python3 -c "import json; d=json.load(open('analysis.json')); net=d['nets'].get('+3V3',{}); print(f'Pins on +3V3: {len(net.get(\"pins\",[]))}'); [print(f'  {p[\"component\"]}.{p[\"pin_number\"]} ({p[\"pin_name\"]})') for p in net.get('pins',[])]"
+```
+
+The JSON is the truth. Everything Claude says should trace back to it. If it doesn't, that's a Claude reasoning error — flag it.
+
+### "Open source analysis scripts are a liability — what if they have bugs?"
+
+The scripts are tested against 1,053 schematics from 167 open-source KiCad projects on GitHub, spanning KiCad versions 4 through 9. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists.
+
+More importantly, the scripts are designed so that bugs produce *missing data*, not *wrong data*. If a detector fails to recognize a circuit pattern, you get a gap in the analysis (the reviewer's blind spot). If a detector misidentifies a circuit, it reports incorrect facts (the reviewer is misled). The detection logic is tuned to avoid the second failure mode — it's better to miss a voltage divider than to report one that doesn't exist.
+
+Every detector output includes the raw component values, net names, and pin connections so you can verify the conclusion independently. The scripts don't just say "there's a problem" — they show you exactly what they found and how they interpreted it.
+
+The methodology documentation ([schematic](skills/kicad/scripts/methodology_schematic.md), [PCB](skills/kicad/scripts/methodology_pcb.md), [gerbers](skills/kicad/scripts/methodology_gerbers.md)) explains every algorithm, heuristic, and trade-off in detail. If you find a bug, you can trace it to the exact detector function and fix it.
+
+## The full workflow
+
+```
+1. PARSE                    2. EXTRACT                  3. DETECT
+┌──────────────┐           ┌──────────────┐           ┌──────────────┐
+│ .kicad_sch   │──parse──▶ │ Components   │──analyze─▶│ Regulators   │
+│ .kicad_pcb   │           │ Nets         │           │ Filters      │
+│ gerbers/     │           │ Footprints   │           │ Protection   │
+│              │           │ Tracks/Vias  │           │ Bus topology │
+│              │           │ Zones        │           │ DFM scores   │
+│              │           │ Layers       │           │ Thermal      │
+└──────────────┘           └──────────────┘           └──────┬───────┘
+                                                             │
+                           4. GROUND                         │
+                           ┌──────────────┐                  │
+                           │ Datasheets   │──────────────────┤
+                           │ (per MPN)    │                  │
+                           └──────────────┘                  │
+                                                             ▼
+                           5. REVIEW                   6. DECIDE
+                           ┌──────────────┐           ┌──────────────┐
+                           │ Claude reads │           │ Engineer     │
+                           │ JSON + PDFs  │──report─▶ │ reviews      │
+                           │ Cross-refs   │           │ verifies     │
+                           │ Validates    │           │ decides      │
+                           └──────────────┘           └──────────────┘
+```
+
+Steps 1–4 are deterministic and reproducible. Step 5 is AI-assisted reasoning. Step 6 is human judgment. The engineer is always the final authority.
+
+## Further reading
+
+- [Schematic analysis methodology](skills/kicad/scripts/methodology_schematic.md) — parsing pipeline, net building, all 21 signal detectors
+- [PCB layout analysis methodology](skills/kicad/scripts/methodology_pcb.md) — extraction, connectivity, DFM scoring, thermal analysis
+- [Gerber analysis methodology](skills/kicad/scripts/methodology_gerbers.md) — RS-274X/Excellon parsing, layer identification, completeness checks
+- [Example design review report](example-report.md) — full output from a real ESP32-S3 board analysis
+- [Analysis scripts README](skills/kicad/scripts/README.md) — developer reference for the Python scripts

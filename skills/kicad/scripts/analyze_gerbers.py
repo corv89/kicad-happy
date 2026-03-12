@@ -22,6 +22,8 @@ import json
 import math
 import re
 import sys
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -894,6 +896,116 @@ def build_pad_summary(gerbers: list[dict], drill_class: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Zip archive scanning
+# ---------------------------------------------------------------------------
+
+_GERBER_EXTENSIONS = frozenset({
+    ".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gtp", ".gbp",
+    ".gto", ".gbo", ".gko", ".gm1",
+    ".g1", ".g2", ".g3", ".g4",
+    ".drl", ".gbrjob",
+})
+
+
+def scan_zip_archives(gerber_dir: Path, loose_gerber_files: list[Path],
+                      loose_drill_files: list[Path]) -> list[dict] | None:
+    """Scan zip files for gerber/drill contents and compare against loose files.
+
+    Reports each zip's contents, modification time, and how its timestamp
+    compares to the loose (unzipped) gerber files. This helps catch stale
+    archives that don't reflect the current design, or stale loose files
+    left over from an old unzip.
+    """
+    zip_files = sorted(gerber_dir.glob("*.zip")) + sorted(gerber_dir.glob("*.ZIP"))
+    zip_files = sorted(set(zip_files))
+    if not zip_files:
+        return None
+
+    # Latest mtime among loose gerber/drill files
+    loose_files = list(loose_gerber_files) + list(loose_drill_files)
+    loose_mtimes = []
+    for f in loose_files:
+        try:
+            loose_mtimes.append(f.stat().st_mtime)
+        except OSError:
+            pass
+    latest_loose_mtime = max(loose_mtimes) if loose_mtimes else None
+
+    results = []
+    for zf_path in zip_files:
+        entry: dict = {
+            "filename": zf_path.name,
+            "size_bytes": zf_path.stat().st_size,
+        }
+
+        try:
+            zf_mtime = zf_path.stat().st_mtime
+            entry["modified"] = datetime.fromtimestamp(
+                zf_mtime, tz=timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except OSError:
+            zf_mtime = None
+
+        try:
+            with zipfile.ZipFile(zf_path, "r") as zf:
+                members = zf.namelist()
+                gerber_members = []
+                drill_members = []
+                other_members = []
+                for name in members:
+                    ext = Path(name).suffix.lower()
+                    if ext == ".drl":
+                        drill_members.append(name)
+                    elif ext in _GERBER_EXTENSIONS:
+                        gerber_members.append(name)
+                    else:
+                        other_members.append(name)
+
+                entry["total_files"] = len(members)
+                entry["gerber_files"] = len(gerber_members)
+                entry["drill_files"] = len(drill_members)
+                entry["other_files"] = len(other_members)
+
+                # Latest file date inside the zip (from zip directory entries)
+                latest_inside = None
+                for info in zf.infolist():
+                    try:
+                        dt = datetime(*info.date_time, tzinfo=timezone.utc)
+                        ts = dt.timestamp()
+                        if latest_inside is None or ts > latest_inside:
+                            latest_inside = ts
+                    except (ValueError, OSError):
+                        pass
+
+                if latest_inside is not None:
+                    entry["newest_member_date"] = datetime.fromtimestamp(
+                        latest_inside, tz=timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                # Compare zip contents date vs loose files
+                compare_ts = latest_inside if latest_inside is not None else zf_mtime
+                if compare_ts is not None and latest_loose_mtime is not None:
+                    delta_seconds = latest_loose_mtime - compare_ts
+                    if delta_seconds > 60:
+                        entry["vs_loose_files"] = "loose_files_newer"
+                        entry["age_delta_hours"] = round(delta_seconds / 3600, 1)
+                    elif delta_seconds < -60:
+                        entry["vs_loose_files"] = "archive_newer"
+                        entry["age_delta_hours"] = round(-delta_seconds / 3600, 1)
+                    else:
+                        entry["vs_loose_files"] = "same_age"
+
+        except zipfile.BadZipFile:
+            entry["error"] = "not a valid zip file"
+        except Exception as e:
+            entry["error"] = str(e)
+
+        results.append(entry)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Main analysis
 # ---------------------------------------------------------------------------
 
@@ -918,6 +1030,9 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
     gerber_files = [f for f in gerber_files
                     if f.suffix.lower() not in (".drl", ".gbrjob", ".zip", ".pos")]
     drill_files = sorted(set(drill_files))
+
+    # Scan zip archives before parsing (uses file lists for timestamp comparison)
+    zip_scan = scan_zip_archives(gerber_dir, gerber_files, drill_files)
 
     # Parse
     gerbers = []
@@ -1066,6 +1181,9 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
 
     if job_info:
         result["job_file"] = job_info
+
+    if zip_scan:
+        result["zip_archives"] = zip_scan
 
     # Full mode: include raw pin-to-net connectivity
     if full and any(g.get("x2_objects") for g in gerbers):
