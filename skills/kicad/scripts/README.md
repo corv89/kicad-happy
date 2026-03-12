@@ -1,13 +1,21 @@
 # KiCad Analysis Scripts — Developer Reference
 
-This directory contains three analysis scripts and a shared parser. Each script outputs structured JSON for Claude to consume during design reviews.
+This directory contains three analysis scripts, shared utilities, and a parser. Each script outputs structured JSON for Claude to consume during design reviews.
 
 | Script | Input | Size | Purpose |
 |--------|-------|------|---------|
-| `analyze_schematic.py` | `.kicad_sch` / `.sch` | ~7300 LOC | Component extraction, net building, subcircuit detection, signal/power/BOM/DFM analysis |
+| `analyze_schematic.py` | `.kicad_sch` / `.sch` | ~5200 LOC | Component extraction, net building, subcircuit detection, signal/power/BOM/DFM analysis |
 | `analyze_pcb.py` | `.kicad_pcb` | ~3200 LOC | Footprint inventory, routing, signal integrity, power, thermal, placement, manufacturing, DFM |
 | `analyze_gerbers.py` | Gerber dir (`.gbr`/`.drl`) | ~1100 LOC | Layer completeness, drill holes, apertures, coordinate alignment, X2 attributes |
 | `sexp_parser.py` | — | ~160 LOC | S-expression parser shared by schematic and PCB analyzers |
+| `kicad_utils.py` | — | ~460 LOC | Shared utilities: component classification, value parsing, net name detection |
+| `kicad_types.py` | — | ~60 LOC | Typed dataclass (`AnalysisContext`) shared between analysis functions |
+| `signal_detectors.py` | — | ~2400 LOC | Signal path detector functions extracted from `analyze_signal_paths()` |
+
+Detailed methodology documentation for each analyzer:
+- `methodology_schematic.md` — parsing pipeline, net building, component classification, all 21 signal detectors
+- `methodology_pcb.md` — extraction, union-find connectivity, DFM scoring, thermal/placement/SI analysis
+- `methodology_gerbers.md` — RS-274X/Excellon parsing, X2 attributes, layer identification, completeness/alignment checks
 
 ---
 
@@ -116,6 +124,7 @@ gerber directory
     v
 parse_gerber()          -- Per-file: apertures, X2 attributes, flash/draw counts, coord range
 parse_drill()           -- Per-file: tool definitions, hole counts, coord range, PTH/NPTH type
+scan_zip_archives()     -- Zip contents inventory + timestamp comparison vs loose files
     |
     v
 identify_layer_type()   -- Map filename/X2 attributes to KiCad layer names (F.Cu, B.Mask, etc.)
