@@ -194,6 +194,9 @@ python3 <skill-path>/scripts/sync_datasheets_element14.py <file.kicad_sch> --sto
 
 # Custom output directory
 python3 <skill-path>/scripts/sync_datasheets_element14.py <file.kicad_sch> -o ./my-datasheets
+
+# Parallel downloads (3 workers)
+python3 <skill-path>/scripts/sync_datasheets_element14.py <file.kicad_sch> --parallel 3
 ```
 
 The script:

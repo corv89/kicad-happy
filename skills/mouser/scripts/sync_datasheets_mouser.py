@@ -38,7 +38,9 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fetch_datasheet_mouser import (
     download_pdf,
     normalize_url,
+    scrape_product_page,
     try_alternative_sources,
     verify_datasheet,
     search_mouser,
@@ -338,7 +341,38 @@ def sync_one_part(
                 result["verification_details"] = vr["details"]
             return result
 
-    # Strategy 3: Try alternative manufacturer sources
+    # Strategy 3: Scrape Mouser product page for datasheet link
+    if mouser_part:
+        product_url = mouser_part.get("ProductDetailUrl", "")
+        if product_url:
+            print(f"  Scraping product page for datasheet link...", file=sys.stderr)
+            scraped_url = scrape_product_page(product_url)
+            if scraped_url:
+                print(f"  Found datasheet link on product page", file=sys.stderr)
+                if download_pdf(scraped_url, str(output_path)):
+                    size = os.path.getsize(str(output_path))
+                    vr = verify_datasheet(str(output_path), display_pn, desc, mfg)
+                    if vr["confidence"] == "wrong":
+                        print(f"  WARNING: PDF may be wrong datasheet — {vr['details']}",
+                              file=sys.stderr)
+                    result = {
+                        "file": filename,
+                        "manufacturer": mfg,
+                        "description": desc,
+                        "value": part["value"],
+                        "datasheet_url": scraped_url,
+                        "downloaded_date": now,
+                        "source": "mouser_scrape",
+                        "status": "ok",
+                        "references": part["references"],
+                        "size_bytes": size,
+                        "verification": vr["confidence"],
+                    }
+                    if vr["confidence"] == "wrong":
+                        result["verification_details"] = vr["details"]
+                    return result
+
+    # Strategy 4: Try alternative manufacturer sources
     if display_pn:
         print(f"  Trying alternative sources...", file=sys.stderr)
     if display_pn and try_alternative_sources(display_pn, str(output_path)):
@@ -390,6 +424,7 @@ def sync_datasheets(
     force: bool = False,
     force_all: bool = False,
     delay: float = 1.0,
+    parallel: int = 1,
     dry_run: bool = False,
     as_json: bool = False,
 ) -> dict:
@@ -492,34 +527,72 @@ def sync_datasheets(
     failed = []
     warnings = []
 
-    for i, part in enumerate(to_download):
-        display_pn = part["mpn"] or part.get("mouser", "")
-        print(f"[{i+1}/{len(to_download)}] {display_pn}", file=sys.stderr)
+    if parallel > 1:
+        lock = threading.Lock()
+        counter = [0]
 
-        result = sync_one_part(part, out_dir, mouser_api_key, index, delay)
+        def _process_part(part):
+            display_pn = part["mpn"] or part.get("mouser", "")
+            with lock:
+                counter[0] += 1
+                n = counter[0]
+            print(f"[{n}/{len(to_download)}] {display_pn}", file=sys.stderr)
 
-        index.setdefault("parts", {})[display_pn] = result
+            result = sync_one_part(part, out_dir, mouser_api_key, index, delay)
 
-        if result["status"] == "ok":
-            downloaded.append(display_pn)
-            vconf = result.get("verification", "")
-            vmark = ""
-            if vconf == "wrong":
-                vmark = " ⚠ WRONG DATASHEET?"
-                warnings.append(display_pn)
-            elif vconf == "unverified":
-                vmark = " (unverified)"
-            print(f"  OK: {result['file']} ({result['size_bytes']:,} bytes){vmark}",
-                  file=sys.stderr)
-        else:
-            failed.append(display_pn)
-            print(f"  {result['status'].upper()}: {result.get('error', '')}",
-                  file=sys.stderr)
+            with lock:
+                index.setdefault("parts", {})[display_pn] = result
 
-        # Save after each download so progress is preserved on interrupt
-        index["schematic"] = str(input_path)
-        index["last_sync"] = datetime.now(timezone.utc).isoformat()
-        save_index(index_path, index)
+                if result["status"] == "ok":
+                    downloaded.append(display_pn)
+                    vconf = result.get("verification", "")
+                    vmark = ""
+                    if vconf == "wrong":
+                        vmark = " ⚠ WRONG DATASHEET?"
+                        warnings.append(display_pn)
+                    elif vconf == "unverified":
+                        vmark = " (unverified)"
+                    print(f"  OK: {result['file']} ({result['size_bytes']:,} bytes){vmark}",
+                          file=sys.stderr)
+                else:
+                    failed.append(display_pn)
+                    print(f"  {result['status'].upper()}: {result.get('error', '')}",
+                          file=sys.stderr)
+
+                index["schematic"] = str(input_path)
+                index["last_sync"] = datetime.now(timezone.utc).isoformat()
+                save_index(index_path, index)
+
+        with ThreadPoolExecutor(max_workers=parallel) as executor:
+            executor.map(_process_part, to_download)
+    else:
+        for i, part in enumerate(to_download):
+            display_pn = part["mpn"] or part.get("mouser", "")
+            print(f"[{i+1}/{len(to_download)}] {display_pn}", file=sys.stderr)
+
+            result = sync_one_part(part, out_dir, mouser_api_key, index, delay)
+
+            index.setdefault("parts", {})[display_pn] = result
+
+            if result["status"] == "ok":
+                downloaded.append(display_pn)
+                vconf = result.get("verification", "")
+                vmark = ""
+                if vconf == "wrong":
+                    vmark = " ⚠ WRONG DATASHEET?"
+                    warnings.append(display_pn)
+                elif vconf == "unverified":
+                    vmark = " (unverified)"
+                print(f"  OK: {result['file']} ({result['size_bytes']:,} bytes){vmark}",
+                      file=sys.stderr)
+            else:
+                failed.append(display_pn)
+                print(f"  {result['status'].upper()}: {result.get('error', '')}",
+                      file=sys.stderr)
+
+            index["schematic"] = str(input_path)
+            index["last_sync"] = datetime.now(timezone.utc).isoformat()
+            save_index(index_path, index)
 
     summary = {
         "downloaded": len(downloaded),
@@ -590,6 +663,10 @@ def main():
         help="Seconds between API calls (default: 1.0)",
     )
     parser.add_argument(
+        "--parallel", type=int, default=1,
+        help="Number of parallel download workers (default: 1)",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Show what would be downloaded without doing it",
     )
@@ -605,6 +682,7 @@ def main():
         force=args.force,
         force_all=args.force_all,
         delay=args.delay,
+        parallel=args.parallel,
         dry_run=args.dry_run,
         as_json=args.json,
     )

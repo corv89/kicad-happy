@@ -228,18 +228,22 @@ ESD protection ICs: `USBLC6`, `PRTR5V`, `SP0502`, `TPD4E05` etc. Multi-channel p
 
 ## Legacy .sch Format
 
-### Limitations
+### What the Analyzer Provides
 
-- **No pin-to-net mapping** without `.lib` files — you get components and wires but can't map specific pins to nets
-- **No ki_keywords** — P-channel detection relies on lib_id and value only
-- Signal analysis (regulators, op-amps, etc.) requires cross-referencing with datasheets since pin names aren't available
-
-### What You CAN Extract
+The analyzer now parses `.lib` files (cache libraries and project libs) to populate pin data for legacy schematics. When `.lib` files are available:
 
 - All component references, values, footprints, lib_ids
-- All wire connectivity (union-find on coordinates)
-- Net names from labels and power symbols
+- Pin positions, pin names, and pin types (from `.lib` files)
+- Pin-to-net mapping via wire connectivity + pin positions
+- Signal analysis (voltage dividers, regulators, op-amp circuits, etc.)
+- Subcircuit detection (IC + 1-hop neighbors)
+- Net names from labels, power symbols, and pin associations
 - Custom properties (F4+ fields: MPN, manufacturer, distributor PNs)
+
+### Remaining Limitations
+
+- **Pin coverage depends on `.lib` availability** — components whose `.lib` files aren't in the repo (standard KiCad system libs like `power`, `device`, `conn`) use built-in fallbacks for common symbols (R, C, L, D, LED, transistors). Uncommon standard library symbols may lack pin data.
+- **No ki_keywords** — P-channel detection relies on lib_id and value only
 
 ### Hierarchical Legacy Designs
 

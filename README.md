@@ -235,6 +235,20 @@ Claude exports per-supplier upload files — DigiKey bulk-add CSV, Mouser cart f
 6. **Export** BOM tracking CSV + per-supplier order files + CPL for your assembler
 7. **Order** boards from JLCPCB or PCBWay
 
+## 🧪 Test harness
+
+The analyzers are validated against **1,000+ open-source projects** across 25 categories using a [dedicated test harness](https://github.com/aklofas/kicad-happy-testharness) that runs every analyzer against the full corpus on each change and catches regressions automatically.
+
+**Three-layer regression testing:**
+
+| Layer | What it catches | How |
+| --- | --- | --- |
+| **Baselines** | Output drift between analyzer versions | Snapshot/diff of JSON outputs across the full corpus |
+| **Assertions** | Hard regressions on known-good results | Machine-checkable facts per file (component counts, detected subcircuits, signal paths) |
+| **LLM review** | Semantic issues deterministic checks miss | Claude reviews source + output pairs, findings get promoted to assertions |
+
+**What gets tested:** All three analyzers (schematic, PCB, Gerber) against every file in the corpus, MPN extraction and validation across all four distributor APIs, the datasheet download pipeline, the BOM manager end-to-end, and legacy KiCad 5 format support.
+
 ## 🎨 Why KiCad?
 
 This project exists because **KiCad is absolutely incredible** — and we're not being subtle about it. It is, hands down, the best EDA tool available today. Fully open-source, cross-platform, backed by CERN, with a community that ships features faster than most commercial tools. It's used everywhere from weekend hobby projects to production hardware at real companies. And it's *free*. In 2026. While Altium charges you $10K/year. Unreal. 🎉
@@ -255,7 +269,7 @@ KiCad + Claude Code is the most powerful electronics design workflow you can set
 | KiCad 8 | Full                 | Full | Full   |
 | KiCad 7 | Full                 | Full | Full   |
 | KiCad 6 | Full                 | Full | Full   |
-| KiCad 5 | Full (legacy `.sch`) | Full | Full   |
+| KiCad 5 | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
 ## 📜 License
 

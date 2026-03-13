@@ -465,7 +465,7 @@ The analyzer can silently produce plausible but incorrect results. Cross-referen
 Document these when they affect the report — it helps the designer understand what the tool can and can't catch:
 
 - **Vref coverage**: Feedback divider Vout calculations use a lookup table (~60 regulator families) with heuristic fallback. When `vref_source` is `"heuristic"`, the assumed Vref may be wrong — always verify against the datasheet. The `vout_net_mismatch` field flags cases where estimated Vout differs >15% from the output rail name voltage.
-- **Legacy format**: KiCad 5 `.sch` files get component + net extraction only — no pin-to-net mapping, no signal analysis, no subcircuit detection.
+- **Legacy format**: KiCad 5 `.sch` files get full analysis when `.lib` files are available in the repo (92–100% typical coverage). Components whose `.lib` files are missing will lack pin data and won't participate in signal analysis or subcircuit detection.
 - **Sleep current model**: Uses worst-case assumption (all pull-ups driven low simultaneously) plus family-level regulator Iq estimates with EN pin detection. Real sleep current is typically 5-20x lower than reported.
 - **Cross-domain analysis**: Uses voltage equivalence (parsing voltage from rail names) to reduce false positives, but rails without parseable voltages in their names may still trigger false cross-domain warnings.
 - **MOSFET load classification**: Net name keyword detection covers common patterns (motor, heater, fan, solenoid, valve, pump, relay, speaker, buzzer, lamp) but may miss unusual naming conventions.

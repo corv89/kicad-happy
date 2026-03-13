@@ -190,6 +190,15 @@ def parse_value(value_str: str) -> float | None:
         "R": 1, "r": 1,  # "R" as decimal point: 4R7 = 4.7, 0R1 = 0.1
     }
 
+    # Handle prefix-first European notation: "u1" -> 0.1e-6, "p47" -> 0.47e-12
+    # The letter replaces the decimal point; when it comes first, implied leading 0.
+    if len(s) >= 2 and s[0] in multipliers and s[1:].isdigit():
+        mult = multipliers[s[0]]
+        try:
+            return float(f"0.{s[1:]}") * mult
+        except ValueError:
+            pass
+
     # Handle embedded multiplier: "4K7" -> 4.7e3, "0R1" -> 0.1, "1R0" -> 1.0
     for suffix, mult in multipliers.items():
         if suffix in s and not s.endswith(suffix):

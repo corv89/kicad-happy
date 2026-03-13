@@ -216,6 +216,9 @@ python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch> -o ./my
 
 # Use pre-computed analyzer JSON instead of running the analyzer
 python3 <skill-path>/scripts/sync_datasheets_digikey.py analyzer_output.json
+
+# Parallel downloads (3 workers)
+python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch> --parallel 3
 ```
 
 The script:
