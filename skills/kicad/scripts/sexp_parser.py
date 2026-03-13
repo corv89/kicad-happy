@@ -125,7 +125,7 @@ def get_value(node: list, keyword: str) -> str | None:
 
 
 def get_property(node: list, prop_name: str) -> str | None:
-    """Get the value of a named property.
+    """Get the value of a named property (exact case match).
 
     Example: get_property(symbol, "Reference") -> "C7"
     """
@@ -133,6 +133,23 @@ def get_property(node: list, prop_name: str) -> str | None:
         if isinstance(child, list) and len(child) >= 3 and child[0] == "property" and child[1] == prop_name:
             return str(child[2])
     return None
+
+
+def get_properties(node: list) -> dict[str, str]:
+    """Return all properties of a node as a case-normalised dict.
+
+    Keys are lowercased so callers can do case-insensitive lookups without
+    enumerating every possible capitalisation variant.
+
+    Example:
+        props = get_properties(sym)
+        digikey = props.get("digikey") or props.get("digi-key part number") or ""
+    """
+    result: dict[str, str] = {}
+    for child in node:
+        if isinstance(child, list) and len(child) >= 3 and child[0] == "property":
+            result[child[1].lower()] = str(child[2])
+    return result
 
 
 def get_at(node: list) -> tuple[float, float, float] | None:
