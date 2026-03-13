@@ -379,6 +379,20 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
             if ctx.is_power_net(shared_net_lc) or ctx.is_ground(shared_net_lc):
                 continue
 
+            # Skip bootstrap capacitors: cap between BST/BOOT pin and SW/LX node.
+            # These are gate-drive charge pumps, not signal filters.
+            cap_other_net = (c_nets - {shared_net_lc}).pop()
+            is_bootstrap = False
+            if cap_other_net and cap_other_net in ctx.nets:
+                for p in ctx.nets[cap_other_net]["pins"]:
+                    pn = p.get("pin_name", "").upper().rstrip("0123456789")
+                    pn_parts = {pp.strip() for pp in pn.split("/")}
+                    if pn_parts & {"BST", "BOOT", "BOOTSTRAP", "CBST"}:
+                        is_bootstrap = True
+                        break
+            if is_bootstrap:
+                continue
+
             l_val = ctx.parsed_values[ind["reference"]]
             c_val = ctx.parsed_values[cap["reference"]]
 
@@ -554,56 +568,116 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
         if s_n1 == s_n2:
             continue
         # Skip if both nets are power/ground (bulk decoupling, not sensing)
-        if ctx.is_ground(s_n1) and ctx.is_ground(s_n2):
+        s1_pwr_or_gnd = ctx.is_ground(s_n1) or ctx.is_power_net(s_n1)
+        s2_pwr_or_gnd = ctx.is_ground(s_n2) or ctx.is_power_net(s_n2)
+        if s1_pwr_or_gnd and s2_pwr_or_gnd:
             continue
 
         shunt_ohms = ctx.parsed_values[shunt["reference"]]
 
-        # Find ICs connected to BOTH sides of the shunt (via current or sense pins)
+        # Find ICs connected to BOTH sides of the shunt.
+        # Ground-net exclusion: GND connects to every IC on the board, so it
+        # can't be used for "IC on both sides" matching.  When one side of the
+        # shunt is GND, skip GND-side component collection entirely and instead
+        # match only ICs on the non-GND side that are known sense parts or have
+        # sense-related pin names on the shunt nets.
+        _SENSE_PIN_PREFIXES = frozenset({
+            "CS", "CSP", "CSN", "ISNS", "ISENSE", "IMON", "IOUT",
+            "SEN", "SENSE", "VSENSE", "VSEN", "VS", "INP", "INN",
+            "IS", "IAVG", "ISET",
+        })
+        _SENSE_IC_KEYWORDS = frozenset({
+            "ina", "acs7", "ad8210", "ad8217", "ad8218", "max9938",
+            "max4080", "max4081", "max471", "ltc6101", "ltc6102",
+            "ltc6103", "ltc4151", "ina226", "ina233", "ina180",
+            "ina181", "ina190", "ina199", "ina200", "ina210",
+            "ina240", "ina250", "ina260", "ina300", "ina381",
+            "pam2401", "zxct", "acs71", "acs72", "asc",
+        })
+
+        # Treat power nets the same as GND — they connect to many ICs
+        # through power pins and would cause the same false positive flood.
+        side1_is_pwr = ctx.is_ground(s_n1) or ctx.is_power_net(s_n1)
+        side2_is_pwr = ctx.is_ground(s_n2) or ctx.is_power_net(s_n2)
+        has_pwr_side = side1_is_pwr or side2_is_pwr
+
         comps_on_n1 = set()
         comps_on_n2 = set()
         check_nets_1 = [s_n1] + ([sense_n1] if sense_n1 else [])
         check_nets_2 = [s_n2] + ([sense_n2] if sense_n2 else [])
-        for nn in check_nets_1:
-            if nn in ctx.nets:
-                for p in ctx.nets[nn]["pins"]:
-                    if p["component"] != shunt["reference"]:
-                        comps_on_n1.add(p["component"])
-        for nn in check_nets_2:
-            if nn in ctx.nets:
-                for p in ctx.nets[nn]["pins"]:
-                    if p["component"] != shunt["reference"]:
-                        comps_on_n2.add(p["component"])
 
-        sense_ics = comps_on_n1 & comps_on_n2
-        # 1-hop: if no IC on both sides directly, look through filter resistors
-        # (e.g., shunt -> R_filter -> sense IC is a common BMS pattern)
-        if not any(ctx.comp_lookup.get(c, {}).get("type") == "ic" for c in sense_ics):
+        # Collect components on each side (skip power/GND side entirely)
+        if not side1_is_pwr:
             for nn in check_nets_1:
-                if nn not in ctx.nets:
-                    continue
-                for p in ctx.nets[nn]["pins"]:
-                    r_comp = ctx.comp_lookup.get(p["component"])
-                    if r_comp and r_comp["type"] == "resistor" and p["component"] != shunt["reference"]:
-                        r_other = ctx.get_two_pin_nets(p["component"])
-                        if r_other[0] and r_other[1]:
-                            hop_net = r_other[1] if r_other[0] == nn else r_other[0]
-                            if hop_net in ctx.nets:
-                                for hp in ctx.nets[hop_net]["pins"]:
-                                    comps_on_n1.add(hp["component"])
+                if nn in ctx.nets:
+                    for p in ctx.nets[nn]["pins"]:
+                        if p["component"] != shunt["reference"]:
+                            comps_on_n1.add(p["component"])
+        if not side2_is_pwr:
             for nn in check_nets_2:
-                if nn not in ctx.nets:
+                if nn in ctx.nets:
+                    for p in ctx.nets[nn]["pins"]:
+                        if p["component"] != shunt["reference"]:
+                            comps_on_n2.add(p["component"])
+
+        if has_pwr_side:
+            # One side is a power/GND rail: use only the non-power side's
+            # components.  Filter to ICs that are plausible current sense
+            # monitors: either by part name or by having sense-related pin
+            # names on the shunt nets.
+            non_pwr_comps = comps_on_n1 if not side1_is_pwr else comps_on_n2
+            non_pwr_nets = check_nets_1 if not side1_is_pwr else check_nets_2
+            sense_ics_set = set()
+            for cref in non_pwr_comps:
+                ic_comp = ctx.comp_lookup.get(cref)
+                if not ic_comp or ic_comp["type"] != "ic":
                     continue
-                for p in ctx.nets[nn]["pins"]:
-                    r_comp = ctx.comp_lookup.get(p["component"])
-                    if r_comp and r_comp["type"] == "resistor" and p["component"] != shunt["reference"]:
-                        r_other = ctx.get_two_pin_nets(p["component"])
-                        if r_other[0] and r_other[1]:
-                            hop_net = r_other[1] if r_other[0] == nn else r_other[0]
-                            if hop_net in ctx.nets:
-                                for hp in ctx.nets[hop_net]["pins"]:
-                                    comps_on_n2.add(hp["component"])
+                # Check if part is a known sense IC
+                val_lower = (ic_comp.get("value", "") + " " + ic_comp.get("lib_id", "")).lower()
+                if any(kw in val_lower for kw in _SENSE_IC_KEYWORDS):
+                    sense_ics_set.add(cref)
+                    continue
+                # Check if the IC's pin on this net has a sense-related name
+                for nn in non_pwr_nets:
+                    if nn not in ctx.nets:
+                        continue
+                    for p in ctx.nets[nn]["pins"]:
+                        if p["component"] == cref:
+                            pn = p.get("pin_name", "").upper().rstrip("0123456789+-")
+                            if pn in _SENSE_PIN_PREFIXES:
+                                sense_ics_set.add(cref)
+            sense_ics = sense_ics_set
+        else:
+            # Neither side is GND: use original "IC on both sides" algorithm
             sense_ics = comps_on_n1 & comps_on_n2
+            # 1-hop: if no IC on both sides directly, look through filter resistors
+            # (e.g., shunt -> R_filter -> sense IC is a common BMS pattern)
+            if not any(ctx.comp_lookup.get(c, {}).get("type") == "ic" for c in sense_ics):
+                for nn in check_nets_1:
+                    if nn not in ctx.nets:
+                        continue
+                    for p in ctx.nets[nn]["pins"]:
+                        r_comp = ctx.comp_lookup.get(p["component"])
+                        if r_comp and r_comp["type"] == "resistor" and p["component"] != shunt["reference"]:
+                            r_other = ctx.get_two_pin_nets(p["component"])
+                            if r_other[0] and r_other[1]:
+                                hop_net = r_other[1] if r_other[0] == nn else r_other[0]
+                                if hop_net in ctx.nets:
+                                    for hp in ctx.nets[hop_net]["pins"]:
+                                        comps_on_n1.add(hp["component"])
+                for nn in check_nets_2:
+                    if nn not in ctx.nets:
+                        continue
+                    for p in ctx.nets[nn]["pins"]:
+                        r_comp = ctx.comp_lookup.get(p["component"])
+                        if r_comp and r_comp["type"] == "resistor" and p["component"] != shunt["reference"]:
+                            r_other = ctx.get_two_pin_nets(p["component"])
+                            if r_other[0] and r_other[1]:
+                                hop_net = r_other[1] if r_other[0] == nn else r_other[0]
+                                if hop_net in ctx.nets:
+                                    for hp in ctx.nets[hop_net]["pins"]:
+                                        comps_on_n2.add(hp["component"])
+                sense_ics = comps_on_n1 & comps_on_n2
         for ic_ref in sense_ics:
             ic_comp = ctx.comp_lookup.get(ic_ref)
             if not ic_comp:
@@ -755,7 +829,16 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             else:
                 reg_info["topology"] = "switching"  # SW pin but no inductor found
         elif vout_pin and not sw_pin:
-            reg_info["topology"] = "LDO"
+            # Check if description/lib_id suggests a switching regulator whose
+            # SW pin wasn't found (e.g., pin in different unit or unusual name)
+            _switching_kw = ("buck", "boost", "switching", "step-down", "step-up",
+                             "step down", "step up", "dc-dc", "dc_dc", "smps",
+                             "converter", "synchronous")
+            if any(k in desc_lower for k in _switching_kw) or \
+               any(k in lib_val_lower for k in _switching_kw):
+                reg_info["topology"] = "switching"
+            else:
+                reg_info["topology"] = "LDO"
         elif fb_pin and not sw_pin:
             reg_info["topology"] = "unknown"
 

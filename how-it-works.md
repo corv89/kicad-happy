@@ -104,7 +104,7 @@ Being honest about limitations is more useful than pretending they don't exist.
 
 - **Regulator Vout estimates.** The Vref lookup table covers ~150 part families, each verified against the manufacturer's datasheet. If your regulator isn't in it, the analyzer falls back to a heuristic sweep that's right most of the time but not always. The `vref_source` field in the output tells you which method was used — `"lookup"` means datasheet-verified, `"heuristic"` means check it yourself.
 
-- **Legacy KiCad 5 designs.** The legacy `.sch` format doesn't encode pin positions in the schematic file — they're in separate `.lib` files that the analyzer doesn't parse. Signal analysis is limited for these designs. The `.net` netlist file (if available) closes the gap.
+- **Legacy KiCad 5 designs.** The legacy `.sch` format stores pin positions in separate `.lib` files. The analyzer parses cache libraries (`-cache.lib`) and project `.lib` files automatically, with built-in fallbacks for common standard library symbols (R, C, L, D, LED, transistors). Pin coverage is typically 92–100% depending on which `.lib` files are available in the repo. Components whose `.lib` files are missing (e.g., standard KiCad system libraries not committed to the project) will lack pin data and won't participate in signal analysis.
 
 - **Unusual symbol conventions.** If a symbol uses non-standard pin names or a reference designator prefix the classifier doesn't recognize, the component may be misclassified. The classifier handles hundreds of conventions, but edge cases exist.
 
@@ -164,7 +164,7 @@ The JSON is the truth. Everything Claude says should trace back to it. If it doe
 
 ### "Open source analysis scripts are a liability — what if they have bugs?"
 
-The scripts are tested against 1,053 schematics from 167 open-source KiCad projects on GitHub, spanning KiCad versions 4 through 9. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists.
+The scripts are tested against a [dedicated test harness](https://github.com/aklofas/kicad-happy-testharness) containing 1,000+ open-source KiCad projects from GitHub, spanning KiCad versions 5 through 9. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists and the test harness uses three layers of regression testing (see below).
 
 More importantly, the scripts are designed so that bugs produce *missing data*, not *wrong data*. If a detector fails to recognize a circuit pattern, you get a gap in the analysis (the reviewer's blind spot). If a detector misidentifies a circuit, it reports incorrect facts (the reviewer is misled). The detection logic is tuned to avoid the second failure mode — it's better to miss a voltage divider than to report one that doesn't exist.
 
@@ -201,6 +201,40 @@ The methodology documentation ([schematic](skills/kicad/scripts/methodology_sche
 ```
 
 Steps 1–4 are deterministic and reproducible. Step 5 is AI-assisted reasoning. Step 6 is human judgment. The engineer is always the final authority.
+
+## How the analyzers are tested
+
+The [kicad-happy test harness](https://github.com/aklofas/kicad-happy-testharness) validates every analyzer against 1,000+ open-source KiCad projects organized into 25 categories — microcontrollers, motor controllers, power supplies, RF, audio, sensors, FPGA, retro computing, aerospace, and more. The corpus is pinned by commit hash for reproducibility, and the test harness never stores the projects themselves — just URLs and hashes. You clone on demand.
+
+### Three layers of regression testing
+
+The harness uses three complementary layers, each catching things the others miss:
+
+**Layer 1: Baselines.** A baseline is a snapshot of all analyzer outputs at a point in time. After making changes to the analyzers, you run the corpus again and diff against the baseline. This catches output drift — did component counts change? Did a signal detector start finding fewer matches? Did a new edge case cause a crash? Compact baseline manifests are checked into git so any machine can compare.
+
+**Layer 2: Assertions.** Assertions are machine-checkable facts about specific files — "cynthion aux_port.kicad_sch has 29–37 components," "hackrf-one has decoupling analysis detected," "this board has at least 5 capacitors." They live in `data/assertions/` and provide permanent regression protection. If an analyzer change breaks a known-good result, the assertion fails immediately. Assertions support operators like `range`, `min_count`, `exists`, `contains_match`, and more.
+
+**Layer 3: LLM review.** Review packets pair source KiCad files with their analyzer output, and Claude independently verifies the analysis quality — checking whether detected subcircuits make sense, whether component classifications are correct, whether the signal analysis missed anything obvious. Findings from these reviews get tracked and, once confirmed, promoted into permanent assertions (layer 2). This is how the assertion set grows over time.
+
+### What gets exercised
+
+- **All three analyzers** (schematic, PCB, Gerber) against every discovered file in the corpus
+- **MPN extraction** from analyzer outputs, validated against DigiKey, Mouser, LCSC, and element14 APIs
+- **Datasheet download pipeline** across all four distributors — testing API auth, PDF retrieval, and MPN matching
+- **BOM manager pipeline** end-to-end — from schematic analysis through distributor search to order file generation
+- **Edge cases** — legacy KiCad 5 `.sch` format, multi-instance hierarchical sheets, unusual footprints, mixed file formats in the same repo
+
+### The development cycle
+
+1. Make changes to the analyzer scripts
+2. Run the analyzers against the corpus
+3. Diff against the baseline — review what changed
+4. Run assertions — catch any regressions
+5. Generate review packets for changed files — have Claude verify the changes make sense
+6. Promote confirmed findings to assertions
+7. Create a new baseline
+
+This means every analyzer change is validated against real hardware designs before it ships — not toy examples or hand-crafted test cases, but the actual KiCad projects that people are building.
 
 ## Further reading
 

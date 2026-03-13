@@ -142,11 +142,13 @@ This gives each pin an absolute `(x, y)` in schematic space, which is how pins c
 KiCad 4/5 `.sch` files use a line-based format with `$Comp`/`$EndComp` blocks, `Wire Wire Line` entries, and `Text Label`/`Text GLabel` markers. The analyzer has a separate parser for this format that:
 
 - Converts coordinates from mils (1/1000 inch) to mm
-- Parses the 2x2 orientation matrix to extract rotation angle
+- Parses the 2x2 orientation matrix to extract rotation angle and mirror flags
 - Extracts labels, wires, junctions, and no-connects with their own syntax
-- Does **not** compute pin positions (legacy format lacks pin geometry in the schematic; this requires the `.lib` file which is not parsed)
+- Parses `.lib` files (cache libraries and project libs) to populate pin positions and types
+- Computes absolute pin positions using `compute_pin_positions()` (same transform as KiCad 6+)
+- Performs subcircuit detection via `identify_subcircuits()`
 
-Legacy schematics get component lists, labels, and basic statistics, but no pin-level net connectivity or signal analysis.
+The `.lib` resolution strategy: (1) prefer `*-cache.lib` alongside the root `.sch` (self-contained), (2) fall back to individual `LIBS:` directives searching the project directory tree, (3) use built-in defaults for common standard library symbols (R, C, L, D, LED, transistors). Coverage is typically 92–100% depending on which `.lib` files are available in the repo.
 
 ---
 

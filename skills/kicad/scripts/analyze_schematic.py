@@ -363,16 +363,18 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
                         unit_num = si_entry["unit"]
         mpn = (get_property(sym, "MPN") or get_property(sym, "Mfg Part")
                or get_property(sym, "PartNumber") or get_property(sym, "Part Number")
+               or get_property(sym, "Part#")
                or get_property(sym, "Manufacturer_Part_Number") or get_property(sym, "Mfr No.")
                or get_property(sym, "Mfr_No") or get_property(sym, "ManufacturerPartNumber")
                or get_property(sym, "mpn") or "")
         manufacturer = (get_property(sym, "Manufacturer") or get_property(sym, "Mfr")
                         or get_property(sym, "MFR") or "")
         digikey = (get_property(sym, "Digi-Key Part Number") or get_property(sym, "Digi-Key_PN")
-                   or get_property(sym, "DigiKey") or get_property(sym, "DigiKey Part")
+                   or get_property(sym, "DigiKey") or get_property(sym, "Digikey")
+                   or get_property(sym, "DigiKey Part") or get_property(sym, "Digikey Part")
                    or get_property(sym, "Digikey Part Number") or get_property(sym, "Digi-Key PN")
                    or get_property(sym, "DigiKey_Part_Number") or get_property(sym, "DigiKey Part Number")
-                   or get_property(sym, "DK") or "")
+                   or get_property(sym, "DIGIKEY") or get_property(sym, "DK") or "")
         mouser = (get_property(sym, "Mouser") or get_property(sym, "Mouser Part Number")
                   or get_property(sym, "Mouser Part") or get_property(sym, "Mouser_PN")
                   or get_property(sym, "Mouser PN") or "")
@@ -1355,11 +1357,273 @@ def identify_subcircuits(components: list[dict], nets: dict, pin_net: dict | Non
     return subcircuits
 
 
+# KiCad 5 legacy .lib pin type codes → KiCad 6+ type strings
+_LEGACY_PIN_TYPE_MAP = {
+    "I": "input",
+    "O": "output",
+    "B": "bidirectional",
+    "T": "tri_state",
+    "P": "passive",
+    "W": "power_in",
+    "w": "power_out",
+    "C": "open_collector",
+    "E": "open_emitter",
+    "N": "unconnected",
+    "U": "unspecified",
+}
+
+# Built-in pin definitions for standard KiCad library symbols that won't be
+# found in project .lib files (power/device/conn libs).  Offsets are in mm,
+# matching the output of _parse_legacy_lib() after mil→mm conversion.
+_STANDARD_LIB_PINS = {
+    "R": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "C": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 1.016]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -1.016]},
+    ],
+    "C_Small": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 1.016]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -1.016]},
+    ],
+    "L": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "INDUCTOR": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "LED": [
+        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "D": [
+        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "D_Zener": [
+        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "D_Schottky": [
+        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
+        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+    ],
+    "Q_NPN_BEC": [
+        {"number": "1", "name": "B", "type": "input", "offset": [-2.54, 0]},
+        {"number": "2", "name": "E", "type": "passive", "offset": [1.27, -1.27]},
+        {"number": "3", "name": "C", "type": "passive", "offset": [1.27, 1.27]},
+    ],
+    "Q_PNP_BEC": [
+        {"number": "1", "name": "B", "type": "input", "offset": [-2.54, 0]},
+        {"number": "2", "name": "E", "type": "passive", "offset": [1.27, 1.27]},
+        {"number": "3", "name": "C", "type": "passive", "offset": [1.27, -1.27]},
+    ],
+    "MOSFET_N": [
+        {"number": "1", "name": "G", "type": "input", "offset": [-2.54, 0]},
+        {"number": "2", "name": "S", "type": "passive", "offset": [1.27, -1.27]},
+        {"number": "3", "name": "D", "type": "passive", "offset": [1.27, 1.27]},
+    ],
+    "MOSFET_P": [
+        {"number": "1", "name": "G", "type": "input", "offset": [-2.54, 0]},
+        {"number": "2", "name": "S", "type": "passive", "offset": [1.27, 1.27]},
+        {"number": "3", "name": "D", "type": "passive", "offset": [1.27, -1.27]},
+    ],
+}
+
+
+def _parse_legacy_lib(path: str) -> dict:
+    """Parse a KiCad 5 .lib file and return symbol definitions.
+
+    Returns dict matching extract_lib_symbols() format:
+    {symbol_name: {"pins": [...], "unit_pins": {unit: [...]}, ...}}
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return {}
+
+    if not lines or not lines[0].startswith("EESchema-LIBRARY"):
+        return {}
+
+    MIL_TO_MM = 0.0254
+    symbols = {}
+    current_name = None
+    current_pins = []
+    current_unit_pins = {}
+    current_datasheet = ""
+    in_draw = False
+
+    for line in lines:
+        line = line.strip()
+
+        if line.startswith("DEF "):
+            parts = line.split()
+            if len(parts) >= 2:
+                current_name = parts[1]
+                current_pins = []
+                current_unit_pins = {}
+                current_datasheet = ""
+                in_draw = False
+
+        elif line.startswith("F3 ") and current_name is not None:
+            m = re.match(r'F3\s+"([^"]*)"', line)
+            if m:
+                current_datasheet = m.group(1)
+
+        elif line == "DRAW":
+            in_draw = True
+
+        elif line == "ENDDRAW":
+            in_draw = False
+
+        elif line.startswith("X ") and in_draw and current_name is not None:
+            # X name number x y length dir sz1 sz2 unit convert elec_type [shape]
+            parts = line.split()
+            if len(parts) >= 12:
+                pin_name = parts[1]
+                pin_number = parts[2]
+                try:
+                    px = int(parts[3]) * MIL_TO_MM
+                    py = int(parts[4]) * MIL_TO_MM
+                    unit_num = int(parts[9])
+                except (ValueError, IndexError):
+                    continue
+                elec_code = parts[11]
+                pin_type = _LEGACY_PIN_TYPE_MAP.get(elec_code, "unspecified")
+
+                pin = {
+                    "number": pin_number,
+                    "name": pin_name if pin_name != "~" else "",
+                    "type": pin_type,
+                    "shape": "",
+                    "offset": [round(px, 4), round(py, 4)],
+                }
+                current_pins.append(pin)
+                current_unit_pins.setdefault(unit_num, []).append(pin)
+
+        elif line == "ENDDEF" and current_name is not None:
+            # Check if multi-unit: has pins in more than one non-zero unit
+            non_zero_units = {u for u in current_unit_pins if u != 0}
+            has_multi_unit = len(non_zero_units) > 1
+
+            symbols[current_name] = {
+                "pins": current_pins,
+                "unit_pins": current_unit_pins if has_multi_unit else None,
+                "description": "",
+                "keywords": "",
+                "is_power": False,
+                "ki_fp_filters": "",
+                "alternates": None,
+            }
+            if current_datasheet:
+                symbols[current_name]["datasheet"] = current_datasheet
+            current_name = None
+
+    return symbols
+
+
+def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
+    """Find and parse .lib files for legacy schematics.
+
+    Args:
+        sch_path: Path to the root .sch file.
+        all_sch_lines: Dict mapping sheet paths to their lines (for LIBS: extraction).
+
+    Strategy:
+    1. Look for *-cache.lib alongside the root .sch file (self-contained, preferred)
+    2. Parse LIBS: directives, search for each .lib in project directory tree
+    3. Fall back to built-in defaults for standard KiCad symbols
+    """
+    base = Path(sch_path)
+    base_dir = base.parent
+    stem = base.stem
+
+    # Strategy 1: cache lib — if present, it contains ALL symbols
+    cache_path = base_dir / f"{stem}-cache.lib"
+    if cache_path.exists():
+        symbols = _parse_legacy_lib(str(cache_path))
+        # Also add standard library fallbacks for anything missing
+        for name, pins in _STANDARD_LIB_PINS.items():
+            if name not in symbols:
+                symbols[name] = {
+                    "pins": pins, "unit_pins": None, "description": "",
+                    "keywords": "", "is_power": False, "ki_fp_filters": "",
+                    "alternates": None,
+                }
+        return symbols
+
+    # Strategy 2: collect LIBS: directives from all parsed sheets
+    lib_names = []
+    seen_lib_names = set()
+    for sheet_lines in all_sch_lines.values():
+        for line in sheet_lines:
+            if line.startswith("LIBS:"):
+                name = line[5:].strip()
+                # Skip cache lib references (they reference the missing cache)
+                if name.endswith("-cache") or name.endswith("-rescue"):
+                    continue
+                # Skip standard KiCad libs we handle with built-in defaults
+                if name in ("power", "device", "conn", "transistors",
+                            "linear", "regul", "74xx", "cmos4000",
+                            "adc-dac", "memory", "xilinx", "microcontrollers",
+                            "dsp", "microchip", "analog_switches",
+                            "motorola", "texas", "intel", "audio",
+                            "interface", "digital-audio", "philips",
+                            "display", "cypress", "siliconi", "opto",
+                            "atmel", "contrib", "valves"):
+                    continue
+                if name not in seen_lib_names:
+                    lib_names.append(name)
+                    seen_lib_names.add(name)
+
+    # Search for each .lib file
+    # Build search dirs: from .sch dir, walk up to 4 levels
+    search_dirs = []
+    d = base_dir
+    for _ in range(5):
+        search_dirs.append(d)
+        # Also check lib/ subdirectory
+        lib_subdir = d / "lib"
+        if lib_subdir.is_dir():
+            search_dirs.append(lib_subdir)
+        parent = d.parent
+        if parent == d:
+            break
+        d = parent
+
+    symbols = {}
+    for lib_name in lib_names:
+        lib_file = f"{lib_name}.lib"
+        for search_dir in search_dirs:
+            candidate = search_dir / lib_file
+            if candidate.exists():
+                parsed = _parse_legacy_lib(str(candidate))
+                symbols.update(parsed)
+                break
+
+    # Add standard library fallbacks
+    for name, pins in _STANDARD_LIB_PINS.items():
+        if name not in symbols:
+            symbols[name] = {
+                "pins": pins, "unit_pins": None, "description": "",
+                "keywords": "", "is_power": False, "ki_fp_filters": "",
+                "alternates": None,
+            }
+
+    return symbols
+
+
 def _parse_legacy_single_sheet(path: str) -> tuple:
     """Parse a single legacy .sch file and return raw extracted data.
 
-    Returns: (components, wires, labels, junctions, no_connects, sub_sheet_paths)
-    where sub_sheet_paths is a list of resolved Path strings for $Sheet references.
+    Returns: (components, wires, labels, junctions, no_connects, sub_sheet_paths, lib_lines)
+    where sub_sheet_paths is a list of resolved Path strings for $Sheet references,
+    and lib_lines is a list of raw 'LIBS:...' lines from the file header.
     """
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -1467,18 +1731,24 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                                     comp["dnp"] = field_val.strip() not in ("", "0", "false")
 
                 # Orientation matrix line (after position line)
-                # Format: unit x y orientation_matrix
+                # Format: a b c d  (2x2 transform matrix [a b; c d])
+                # det = a*d - b*c: +1 = no mirror, -1 = mirrored (X axis)
                 elif cl and cl[0].isdigit() and len(cl.split()) == 4:
                     parts = cl.split()
                     try:
-                        mat = [int(p) for p in parts]
-                        # Matrix: [a b c d] where rotation/mirror encoded
-                        # 1 0 0 -1 = normal, 0 1 1 0 = 90deg, etc.
-                        if mat == [0, 1, 1, 0] or mat == [0, -1, -1, 0]:
+                        a, b, c, d = [int(p) for p in parts]
+                        det = a * d - b * c
+                        if det < 0:
+                            comp["mirror_x"] = True
+                            # Remove mirror to extract pure rotation
+                            c, d = -c, -d
+                        if (a, b) == (1, 0):
+                            comp["angle"] = 0
+                        elif (a, b) == (0, 1):
                             comp["angle"] = 90
-                        elif mat == [-1, 0, 0, 1] or mat == [-1, 0, 0, -1]:
+                        elif (a, b) == (-1, 0):
                             comp["angle"] = 180
-                        elif mat == [0, -1, 1, 0] or mat == [0, 1, -1, 0]:
+                        elif (a, b) == (0, -1):
                             comp["angle"] = 270
                     except ValueError:
                         pass
@@ -1574,7 +1844,10 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
 
         i += 1
 
-    return components, wires, labels, junctions, no_connects, sub_sheet_paths
+    # Collect LIBS: directives from header for lib resolution
+    lib_lines = [l.strip() for l in lines if l.strip().startswith("LIBS:")]
+
+    return components, wires, labels, junctions, no_connects, sub_sheet_paths, lib_lines
 
 
 def parse_legacy_schematic(path: str) -> dict:
@@ -1585,6 +1858,9 @@ def parse_legacy_schematic(path: str) -> dict:
 
     For hierarchical designs, recursively parses all subsheets referenced by
     $Sheet blocks and merges connectivity across sheets.
+
+    Parses .lib files to populate component pin data for pin-to-net mapping
+    and signal analysis.
     """
     all_components = []
     all_wires = []
@@ -1592,6 +1868,7 @@ def parse_legacy_schematic(path: str) -> dict:
     all_junctions = []
     all_no_connects = []
     sheets_parsed = []
+    all_sch_lines = {}  # path -> LIBS: lines for lib resolution
 
     to_parse = [str(Path(path).resolve())]
     parsed = set()
@@ -1602,8 +1879,10 @@ def parse_legacy_schematic(path: str) -> dict:
             continue
         parsed.add(sheet_path)
 
-        components, wires, labels, junctions, no_connects, sub_sheets = \
+        components, wires, labels, junctions, no_connects, sub_sheets, lib_lines = \
             _parse_legacy_single_sheet(sheet_path)
+
+        all_sch_lines[sheet_path] = lib_lines
 
         # Tag elements with sheet index to keep coordinate spaces separate
         sheet_idx = len(sheets_parsed)
@@ -1627,6 +1906,23 @@ def parse_legacy_schematic(path: str) -> dict:
             if sub_path not in parsed:
                 to_parse.append(sub_path)
 
+    # Resolve .lib files and parse pin data
+    root_path = str(Path(path).resolve())
+    lib_symbols = _resolve_legacy_libs(root_path, all_sch_lines)
+
+    # Populate pin positions for each component using lib symbol data.
+    # V2 format uses bare symbol names ("MIC5207-BM5"), V4 uses "Library:Symbol".
+    # Cache libs use underscores ("Device_C") instead of colons ("Device:C").
+    for comp in all_components:
+        lib_id = comp.get("lib_id", "")
+        sym_def = lib_symbols.get(lib_id)
+        if not sym_def and ":" in lib_id:
+            # V4: try underscore form (cache lib naming) and bare symbol name
+            sym_def = (lib_symbols.get(lib_id.replace(":", "_"))
+                       or lib_symbols.get(lib_id.split(":", 1)[1]))
+        if sym_def:
+            comp["pins"] = compute_pin_positions(comp, {lib_id: sym_def})
+
     # Extract power symbols (preserve _sheet so build_net_map keeps coordinate
     # spaces separate — without it, power symbols from sub-sheets all land in
     # sheet 0's coordinate space and fail to connect to their actual wires).
@@ -1646,13 +1942,14 @@ def parse_legacy_schematic(path: str) -> dict:
     # Generate BOM
     bom = generate_bom(all_components)
 
-    # Build nets from wires + labels + power symbols using union-find.
-    # Legacy files don't have pin position data (that's in separate .lib files),
-    # so nets won't have component pin associations, but we still get the wire
-    # topology and net names from labels and power symbols.
+    # Build nets from wires + labels + power symbols + component pins
     nets = build_net_map(all_components, all_wires, all_labels, power_symbols, all_junctions)
 
     stats = compute_statistics(all_components, nets, bom, all_wires, all_no_connects)
+
+    # Subcircuit detection (IC + 1-hop neighbors)
+    pin_net = build_pin_to_net_map(nets)
+    subcircuits = identify_subcircuits(all_components, nets, pin_net=pin_net)
 
     # Filter to real components (non-power) for annotation check
     real_components = [
@@ -1669,17 +1966,13 @@ def parse_legacy_schematic(path: str) -> dict:
         "sheet_files": sheets_parsed,
         "statistics": stats,
         "bom": bom,
-        "components": [
-            {k: v for k, v in c.items() if k != "pins"}
-            for c in real_components
-        ],
+        "components": real_components,
         "nets": nets,
-        "subcircuits": [],
+        "subcircuits": subcircuits,
         "labels": all_labels,
         "no_connects": all_no_connects,
         "power_symbols": power_symbols,
         "annotation_issues": annotation_issues,
-        "note": "Legacy KiCad 5 format — net names from labels/power symbols are available but component pin-to-net mapping requires the .lib library files which are not parsed.",
     }
 
 

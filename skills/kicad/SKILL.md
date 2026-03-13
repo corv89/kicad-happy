@@ -62,11 +62,11 @@ Outputs structured JSON (~60-220KB depending on board complexity) with:
 
 Supports modern `.kicad_sch` (KiCad 6+) and legacy `.sch` (KiCad 4/5). Hierarchical designs parsed recursively.
 
-**Legacy format limitations:** For KiCad 5 legacy `.sch` files, the analyzer provides **component and net extraction only** — no pin-to-net mapping, no signal analysis, no subcircuit detection. When signal analysis is missing from the output, use supplementary data sources to fill the gaps — see the section below.
+**Legacy format:** For KiCad 5 legacy `.sch` files, the analyzer parses `.lib` files (cache libraries and project libs) to populate pin data. Pin-to-net mapping, signal analysis, and subcircuit detection all work when `.lib` files are available. Coverage is typically 92–100% — components whose `.lib` files are missing (standard KiCad system libs not in the repo) will lack pin data. Built-in fallbacks cover common symbols (R, C, L, D, LED, transistors).
 
 ### Supplementary Data for Legacy Designs
 
-When `analyze_schematic.py` returns incomplete data (typically legacy `.sch` format — missing pin-to-net mapping, signal analysis, and subcircuit detection), use additional project files to recover full analysis capability. The most valuable source is the `.net` netlist file, which provides explicit pin-to-net mapping that closes the signal analysis gap entirely.
+When `analyze_schematic.py` returns incomplete data (components with missing pins due to unavailable `.lib` files), use additional project files to recover full analysis capability. The most valuable source is the `.net` netlist file, which provides explicit pin-to-net mapping that closes any remaining gaps.
 
 For detailed parsing instructions, data recovery workflows, and a priority matrix of supplementary sources (netlist, cache library, PCB cross-reference, PDF exports), read `references/supplementary-data-sources.md`.
 

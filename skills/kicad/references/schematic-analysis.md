@@ -41,7 +41,7 @@ Use this structured data as the starting point — it replaces manual component 
 
 **If the script fails or returns unexpected results** (0 components, crash, etc.), fall back to manual parsing. See `manual-schematic-parsing.md` for the complete fallback methodology.
 
-**If the script returns incomplete data** (components but no signal analysis — typical for legacy KiCad 5 `.sch` files), use supplementary project files to recover the missing data. See `supplementary-data-sources.md` for the netlist parsing, cache library, and PCB cross-reference workflow.
+**If the script returns incomplete data** (some components missing pins — typically due to `.lib` files not being available in the repo for legacy KiCad 5 projects), use supplementary project files to recover the missing data. See `supplementary-data-sources.md` for the netlist parsing and PCB cross-reference workflow.
 
 ### Step 2: Verify script output against the raw schematic
 

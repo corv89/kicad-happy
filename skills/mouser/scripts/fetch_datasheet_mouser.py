@@ -245,6 +245,70 @@ def download_pdf(url: str, output_path: str) -> bool:
     return False
 
 
+def scrape_product_page(product_url: str) -> str:
+    """Try to extract a datasheet PDF URL from a Mouser product page.
+
+    Mouser product pages contain datasheet links in the HTML. This tries
+    to fetch the page and extract the link without requiring JS rendering.
+    Returns the datasheet URL or empty string on failure.
+    """
+    if not product_url:
+        return ""
+
+    # Normalize URL
+    if not product_url.startswith("http"):
+        product_url = "https://www.mouser.com" + product_url
+
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    html = ""
+
+    # Try requests first
+    if _requests is not None:
+        try:
+            resp = _requests.get(product_url, headers=headers, timeout=20,
+                                 allow_redirects=True)
+            if resp.status_code == 200:
+                html = resp.text
+        except Exception:
+            pass
+
+    # Fallback to urllib
+    if not html:
+        try:
+            req = urllib.request.Request(product_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+
+    if not html:
+        return ""
+
+    # Look for datasheet PDF links in the HTML
+    # Mouser uses patterns like href="/datasheet/..." or data-href with PDF URLs
+    patterns = [
+        r'href="(https?://www\.mouser\.com/datasheet/[^"]+\.pdf[^"]*)"',
+        r'href="(/datasheet/[^"]+\.pdf[^"]*)"',
+        r'href="(https?://[^"]+\.pdf)"[^>]*>[^<]*[Dd]ata\s*[Ss]heet',
+        r'"(https?://www\.mouser\.com/pdfDocs/[^"]+\.pdf)"',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match:
+            url = match.group(1)
+            if url.startswith("/"):
+                url = "https://www.mouser.com" + url
+            return url
+
+    return ""
+
+
 def try_alternative_sources(mpn: str, output_path: str) -> bool:
     """Try downloading from known alternative datasheet sources.
 
@@ -505,14 +569,23 @@ def main():
         else:
             print(f"[Mouser] Mouser URL blocked or failed", file=sys.stderr)
 
-    # Strategy 2: Try alternative manufacturer sources
+    # Strategy 2: Scrape Mouser product page for datasheet link
+    product_url = mouser_part.get("ProductDetailUrl", "")
+    if product_url:
+        print(f"[Mouser] Scraping product page for datasheet link...", file=sys.stderr)
+        scraped_url = scrape_product_page(product_url)
+        if scraped_url:
+            print(f"[Mouser] Found datasheet link on product page", file=sys.stderr)
+            if download_pdf(scraped_url, output_path):
+                _finish_success(output_path, "mouser_scrape")
+
+    # Strategy 3: Try alternative manufacturer sources
     print(f"[Mouser] Trying alternative sources...", file=sys.stderr)
     if try_alternative_sources(mpn, output_path):
         _finish_success(output_path, "alternative")
 
     # All methods failed — provide manual URL
     print(f"[Mouser] Failed to download datasheet for {mpn}", file=sys.stderr)
-    product_url = mouser_part.get("ProductDetailUrl", "")
     if product_url:
         print(f"[Mouser] Manual download: {product_url}", file=sys.stderr)
     if result:

@@ -35,7 +35,9 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -388,6 +390,7 @@ def sync_datasheets(
     force: bool = False,
     force_all: bool = False,
     delay: float = 0.5,
+    parallel: int = 1,
     dry_run: bool = False,
     as_json: bool = False,
     api_key: str = "",
@@ -490,34 +493,72 @@ def sync_datasheets(
     failed = []
     warnings = []
 
-    for i, part in enumerate(to_download):
-        part_key = part["_key"]
-        print(f"[{i+1}/{len(to_download)}] {part_key}", file=sys.stderr)
+    if parallel > 1:
+        lock = threading.Lock()
+        counter = [0]
 
-        result = sync_one_part(part, out_dir, index, delay, api_key, store)
+        def _process_part(part):
+            part_key = part["_key"]
+            with lock:
+                counter[0] += 1
+                n = counter[0]
+            print(f"[{n}/{len(to_download)}] {part_key}", file=sys.stderr)
 
-        index.setdefault("parts", {})[part_key] = result
+            result = sync_one_part(part, out_dir, index, delay, api_key, store)
 
-        if result["status"] == "ok":
-            downloaded.append(part_key)
-            vconf = result.get("verification", "")
-            vmark = ""
-            if vconf == "wrong":
-                vmark = " ⚠ WRONG DATASHEET?"
-                warnings.append(part_key)
-            elif vconf == "unverified":
-                vmark = " (unverified)"
-            print(f"  OK: {result['file']} ({result['size_bytes']:,} bytes){vmark}",
-                  file=sys.stderr)
-        else:
-            failed.append(part_key)
-            print(f"  {result['status'].upper()}: {result.get('error', '')}",
-                  file=sys.stderr)
+            with lock:
+                index.setdefault("parts", {})[part_key] = result
 
-        # Save after each download so progress is preserved on interrupt
-        index["schematic"] = str(input_path)
-        index["last_sync"] = datetime.now(timezone.utc).isoformat()
-        save_index(index_path, index)
+                if result["status"] == "ok":
+                    downloaded.append(part_key)
+                    vconf = result.get("verification", "")
+                    vmark = ""
+                    if vconf == "wrong":
+                        vmark = " ⚠ WRONG DATASHEET?"
+                        warnings.append(part_key)
+                    elif vconf == "unverified":
+                        vmark = " (unverified)"
+                    print(f"  OK: {result['file']} ({result['size_bytes']:,} bytes){vmark}",
+                          file=sys.stderr)
+                else:
+                    failed.append(part_key)
+                    print(f"  {result['status'].upper()}: {result.get('error', '')}",
+                          file=sys.stderr)
+
+                index["schematic"] = str(input_path)
+                index["last_sync"] = datetime.now(timezone.utc).isoformat()
+                save_index(index_path, index)
+
+        with ThreadPoolExecutor(max_workers=parallel) as executor:
+            executor.map(_process_part, to_download)
+    else:
+        for i, part in enumerate(to_download):
+            part_key = part["_key"]
+            print(f"[{i+1}/{len(to_download)}] {part_key}", file=sys.stderr)
+
+            result = sync_one_part(part, out_dir, index, delay, api_key, store)
+
+            index.setdefault("parts", {})[part_key] = result
+
+            if result["status"] == "ok":
+                downloaded.append(part_key)
+                vconf = result.get("verification", "")
+                vmark = ""
+                if vconf == "wrong":
+                    vmark = " ⚠ WRONG DATASHEET?"
+                    warnings.append(part_key)
+                elif vconf == "unverified":
+                    vmark = " (unverified)"
+                print(f"  OK: {result['file']} ({result['size_bytes']:,} bytes){vmark}",
+                      file=sys.stderr)
+            else:
+                failed.append(part_key)
+                print(f"  {result['status'].upper()}: {result.get('error', '')}",
+                      file=sys.stderr)
+
+            index["schematic"] = str(input_path)
+            index["last_sync"] = datetime.now(timezone.utc).isoformat()
+            save_index(index_path, index)
 
     summary = {
         "downloaded": len(downloaded),
@@ -590,6 +631,10 @@ def main():
         help="Seconds between API calls (default: 0.5)",
     )
     parser.add_argument(
+        "--parallel", type=int, default=1,
+        help="Number of parallel download workers (default: 1)",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Show what would be downloaded without doing it",
     )
@@ -605,6 +650,7 @@ def main():
         force=args.force,
         force_all=args.force_all,
         delay=args.delay,
+        parallel=args.parallel,
         dry_run=args.dry_run,
         as_json=args.json,
         store=args.store,

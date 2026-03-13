@@ -125,6 +125,62 @@ def search_lcsc(query: str) -> dict | None:
     return components[0]
 
 
+def search_lcsc_direct(lcsc_code: str) -> dict | None:
+    """Query LCSC's wmsc API directly for a part by LCSC code (Cxxxxx).
+
+    This is a fallback when jlcsearch returns no results. The wmsc API
+    is unauthenticated and returns product details including datasheet URLs.
+    """
+    if not re.match(r"^C\d+$", lcsc_code, re.IGNORECASE):
+        return None
+
+    url = f"https://wmsc.lcsc.com/ftps/wm/product/detail?productCode={lcsc_code.upper()}"
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": _USER_AGENT,
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        print(f"[LCSC] Direct lookup failed for {lcsc_code}: {e}", file=sys.stderr)
+        return None
+
+    result = data.get("result") or data
+    if not result or isinstance(result, str):
+        return None
+
+    # Normalize to jlcsearch-compatible dict format
+    pdf_url = ""
+    pdf_list = result.get("pdfUrl") or result.get("dataSheetUrl") or ""
+    if isinstance(pdf_list, str) and pdf_list:
+        pdf_url = pdf_list
+    elif isinstance(pdf_list, list) and pdf_list:
+        pdf_url = pdf_list[0] if isinstance(pdf_list[0], str) else ""
+
+    component = {
+        "mfr": result.get("productModel") or result.get("modelName") or "",
+        "description": result.get("productDescEn") or result.get("description") or "",
+        "datasheet": pdf_url,
+        "stock": result.get("stockNumber") or result.get("stockCount") or 0,
+        "price": result.get("productPriceList"),
+        "lcsc": lcsc_code.lstrip("Cc"),
+        "extra": {
+            "number": lcsc_code.upper(),
+            "mpn": result.get("productModel") or result.get("modelName") or "",
+            "description": result.get("productDescEn") or result.get("description") or "",
+            "manufacturer": {
+                "name": result.get("brandNameEn") or result.get("manufacturer") or "",
+            },
+            "datasheet": {
+                "pdf": pdf_url,
+            },
+        },
+    }
+
+    return component
+
+
 def _get_datasheet_url(component: dict) -> str:
     """Extract the best datasheet URL from a jlcsearch component.
 
@@ -410,6 +466,10 @@ def main():
 
     if args.search:
         component = search_lcsc(args.search)
+        if not component and re.match(r"^C\d+$", args.search, re.IGNORECASE):
+            print(f"jlcsearch returned no results for {args.search}, trying wmsc API...",
+                  file=sys.stderr)
+            component = search_lcsc_direct(args.search)
         if not component:
             if args.json:
                 json.dump({"success": False, "error": "Part not found on LCSC"}, sys.stdout)

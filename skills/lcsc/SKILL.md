@@ -132,12 +132,16 @@ python3 <skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch> --force
 
 # Custom output directory
 python3 <skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch> -o ./my-datasheets
+
+# Parallel downloads (3 workers)
+python3 <skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch> --parallel 3
 ```
 
 The script:
 - **Runs the kicad schematic analyzer** to extract components, MPNs, and LCSC codes
 - **Accepts any identifier** — MPN, LCSC code, or other distributor PNs from KiCad symbol properties
 - **Prefers LCSC code** for search (exact match) — falls back to MPN keyword search
+- **Falls back to wmsc.lcsc.com API** when jlcsearch has no results for an LCSC code (Cxxxxx)
 - **Downloads from LCSC CDN** — direct PDF URLs, no bot protection
 - **Writes `index.json` manifest** — same format as DigiKey/Mouser skills
 - **Verifies PDF content** — checks MPN, manufacturer, and description keywords

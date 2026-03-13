@@ -427,10 +427,11 @@ def extract_footprints(root: list) -> list[dict]:
             if pad_drill and len(pad_drill) >= 2:
                 # Drill can be (drill D) or (drill oval W H) or (drill D (offset X Y))
                 drill_val = pad_drill[1]
-                if drill_val == "oval" and len(pad_drill) >= 4:
-                    pad_info["drill"] = float(pad_drill[2])  # use width
-                    pad_info["drill_h"] = float(pad_drill[3])
+                if drill_val == "oval" and len(pad_drill) >= 3:
                     pad_info["drill_shape"] = "oval"
+                    pad_info["drill"] = float(pad_drill[2])
+                    if len(pad_drill) >= 4 and isinstance(pad_drill[3], str):
+                        pad_info["drill_h"] = float(pad_drill[3])
                 else:
                     try:
                         pad_info["drill"] = float(drill_val)
@@ -3530,16 +3531,23 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     # Copper presence analysis (cross-layer zone fill at pad locations)
     copper_presence = analyze_copper_presence(footprints, zones, zone_fills)
 
-    # Compact footprint output (exclude raw pad data for summary, keep it in full output)
+    # Compact footprint output — include pad-to-net mapping but omit pad geometry
     footprint_summary = []
     for fp in footprints:
         fp_summary = {k: v for k, v in fp.items() if k != "pads"}
-        # Add net summary per footprint
+        # Per-pad net mapping (pad number → net name + pin function)
+        pad_nets = {}
         fp_nets = set()
         for pad in fp["pads"]:
             nn = pad.get("net_name", "")
             if nn:
                 fp_nets.add(nn)
+                entry = {"net": nn}
+                pf = pad.get("pinfunction")
+                if pf:
+                    entry["pin"] = pf
+                pad_nets[pad["number"]] = entry
+        fp_summary["pad_nets"] = pad_nets
         fp_summary["connected_nets"] = sorted(fp_nets)
         footprint_summary.append(fp_summary)
 

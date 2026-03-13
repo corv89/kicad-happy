@@ -165,7 +165,13 @@ All search endpoints return the same response format:
 
 ## Datasheet Download & Sync
 
-Mouser's `DataSheetUrl` field points to Mouser-hosted URLs (`mouser.com/datasheet/...`). These URLs **block automated downloads** — they return an HTML "Access denied" page when fetched with Python/curl/wget, even with browser User-Agent headers. The download scripts handle this by trying alternative manufacturer sources.
+Mouser's `DataSheetUrl` field points to Mouser-hosted URLs (`mouser.com/datasheet/...`). These URLs **block automated downloads** — they return an HTML "Access denied" page when fetched with Python/curl/wget, even with browser User-Agent headers. The download scripts handle this with a multi-strategy approach:
+
+1. Try the Mouser datasheet URL directly (works for some parts)
+2. Scrape the Mouser product page HTML for alternative datasheet links
+3. Try manufacturer-specific alternative URL patterns
+
+Note: Mouser's product pages return 403 for most automated requests, so strategy 2 has limited success. DigiKey and LCSC are more reliable datasheet sources.
 
 ### Datasheet Directory Sync
 
@@ -183,6 +189,9 @@ python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> --force
 
 # Custom output directory
 python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> -o ./my-datasheets
+
+# Parallel downloads (3 workers)
+python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> --parallel 3
 ```
 
 ### Single Datasheet Download
