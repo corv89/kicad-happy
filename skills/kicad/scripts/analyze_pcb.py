@@ -2508,11 +2508,21 @@ def analyze_layer_transitions(tracks: dict, vias: dict,
 
 def compute_statistics(footprints: list[dict], tracks: dict, vias: dict,
                        zones: list[dict], outline: dict, connectivity: dict,
-                       net_names: dict[int, str] | None = None) -> dict:
+                       net_names: dict[int, str] | None = None,
+                       layers: list[dict] | None = None) -> dict:
     """Compute summary statistics."""
+    # Resolve copper layer names from declarations
+    if layers:
+        copper_layer_names = {l["name"] for l in layers if l["type"] in ("signal", "power", "mixed", "user")}
+        front_copper = next((l["name"] for l in layers if l["number"] == 0), "F.Cu")
+        back_copper = next((l["name"] for l in layers if l["number"] == 31), "B.Cu")
+    else:
+        copper_layer_names = None
+        front_copper, back_copper = "F.Cu", "B.Cu"
+
     # Component side distribution
-    front = sum(1 for fp in footprints if fp["layer"] == "F.Cu")
-    back = sum(1 for fp in footprints if fp["layer"] == "B.Cu")
+    front = sum(1 for fp in footprints if fp["layer"] == front_copper)
+    back = sum(1 for fp in footprints if fp["layer"] == back_copper)
 
     # SMD vs through-hole
     smd = sum(1 for fp in footprints if fp["type"] == "smd")
@@ -2526,18 +2536,19 @@ def compute_statistics(footprints: list[dict], tracks: dict, vias: dict,
         total_length += math.sqrt(dx * dx + dy * dy)
 
     # Copper layer count — tracks, vias, and zones
-    copper_layers = set()
+    all_used_layers = set()
     for seg in tracks.get("segments", []):
-        if "Cu" in seg.get("layer", ""):
-            copper_layers.add(seg["layer"])
+        all_used_layers.add(seg.get("layer", ""))
     for via in vias.get("vias", []):
         for l in via.get("layers", []):
-            if "Cu" in l:
-                copper_layers.add(l)
+            all_used_layers.add(l)
     for zone in zones:
         for l in zone.get("layers", []):
-            if "Cu" in l:
-                copper_layers.add(l)
+            all_used_layers.add(l)
+    if copper_layer_names:
+        copper_layers = all_used_layers & copper_layer_names
+    else:
+        copper_layers = {l for l in all_used_layers if "Cu" in l}
 
     return {
         "footprint_count": len(footprints),
@@ -3468,7 +3479,7 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     # Connectivity analysis (zone-aware)
     connectivity = analyze_connectivity(footprints, tracks, vias, net_names, zones)
 
-    stats = compute_statistics(footprints, tracks, vias, zones, outline, connectivity, net_names)
+    stats = compute_statistics(footprints, tracks, vias, zones, outline, connectivity, net_names, layers=layers)
 
     version = get_value(root, "version") or "unknown"
     generator_version = get_value(root, "generator_version") or "unknown"

@@ -1078,7 +1078,7 @@ def compute_statistics(components: list[dict], nets: dict, bom: list[dict],
     return {
         "total_components": len(non_power),
         "unique_parts": len(bom_items),
-        "dnp_parts": len(dnp_items),
+        "dnp_parts": sum(b["quantity"] for b in dnp_items),
         "total_nets": len(nets),
         "total_wires": len(wires),
         "total_no_connects": len(no_connects),
@@ -1481,7 +1481,7 @@ def _parse_legacy_lib(path: str) -> dict:
         if line.startswith("DEF "):
             parts = line.split()
             if len(parts) >= 2:
-                current_name = parts[1]
+                current_name = parts[1].lstrip("~")
                 current_pins = []
                 current_unit_pins = {}
                 current_datasheet = ""
@@ -1718,8 +1718,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                             # Check if the field has a name after the positional data
                             # Format: F N "value" H x y size flags visibility hjustify "FieldName"
                             name_match = re.search(r'"([^"]*)"[^"]*$', cl[fm.end():])
+                            fname = name_match.group(1) if name_match else f"Field{field_num}"
                             if name_match:
-                                fname = name_match.group(1)
                                 fu = fname.upper()
                                 if fu in ("MPN", "MFG PART", "MFGPART", "MANF#",
                                           "MPN#", "PART#", "MANUFACTURER_PART_NUMBER",
@@ -1752,6 +1752,9 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                                         comp["dnp"] = True
                                 elif fu in ("DESCRIPTION", "DESC"):
                                     comp["description"] = field_val
+                            # Track generic-named fields for positional fallback
+                            if re.match(r'^Field\d+$', fname):
+                                comp.setdefault("_generic_fields", {})[fname] = field_val
 
                 # Orientation matrix line (after position line)
                 # Format: a b c d  (2x2 transform matrix [a b; c d])
@@ -1777,6 +1780,14 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                         pass
 
                 i += 1
+            # Positional fallback for generic field names (Field1=manufacturer, Field2=MPN)
+            gf = comp.pop("_generic_fields", {})
+            if not comp.get("mpn") and gf:
+                if "Field2" in gf and gf["Field2"]:
+                    comp["mpn"] = gf["Field2"]
+                if not comp.get("manufacturer") and "Field1" in gf and gf["Field1"]:
+                    comp["manufacturer"] = gf["Field1"]
+
             # Legacy power symbol detection: #PWR/#FLG refs or library named "power"
             lib_prefix = comp["lib_id"].split(":")[0].lower()
             is_power = (comp["reference"].startswith("#PWR")
@@ -1977,6 +1988,12 @@ def parse_legacy_schematic(path: str) -> dict:
     pin_net = build_pin_to_net_map(nets)
     subcircuits = identify_subcircuits(all_components, nets, pin_net=pin_net)
 
+    # Signal path and filter analysis
+    signal_analysis = analyze_signal_paths(all_components, nets, lib_symbols, pin_net=pin_net)
+
+    # Design rule analysis
+    design_analysis = analyze_design_rules(all_components, nets, all_no_connects, signal_analysis, pin_net=pin_net)
+
     # Filter to real components (non-power) for annotation check
     real_components = [
         c for c in all_components
@@ -1995,6 +2012,8 @@ def parse_legacy_schematic(path: str) -> dict:
         "components": real_components,
         "nets": nets,
         "subcircuits": subcircuits,
+        "signal_analysis": signal_analysis,
+        "design_analysis": design_analysis,
         "labels": all_labels,
         "no_connects": all_no_connects,
         "power_symbols": power_symbols,

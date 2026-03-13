@@ -25,6 +25,10 @@ The easiest way — just ask Claude Code:
 
 > Clone https://github.com/aklofas/kicad-happy and install all the skills
 
+And keep up to date with the latest as we use our [test harness](https://github.com/aklofas/kicad-happy-testharness) to validate against a [corpus](https://github.com/aklofas/kicad-happy-testharness/blob/main/repos.md) of open source projects.
+
+> Claude, pull the latest changes for kicad-happy and update my skills
+
 Or do it manually:
 
 ```bash
@@ -135,7 +139,6 @@ The analysis scripts parse KiCad's S-expression file format directly into struct
 - **[PCB layout analysis methodology](skills/kicad/scripts/methodology_pcb.md)** — footprint extraction, union-find connectivity, DFM scoring, thermal/placement/signal integrity analysis
 - **[Gerber analysis methodology](skills/kicad/scripts/methodology_gerbers.md)** — RS-274X and Excellon parsing, X2 attribute extraction, layer identification, completeness and alignment checks, zip archive staleness detection
 
-
 ### 🖐️ Ask about specific circuits
 
 You don't have to ask for a full design review — just point Claude at whatever you're working on:
@@ -241,11 +244,11 @@ The analyzers are validated against **1,000+ open-source projects** across 25 ca
 
 **Three-layer regression testing:**
 
-| Layer | What it catches | How |
-| --- | --- | --- |
-| **Baselines** | Output drift between analyzer versions | Snapshot/diff of JSON outputs across the full corpus |
-| **Assertions** | Hard regressions on known-good results | Machine-checkable facts per file (component counts, detected subcircuits, signal paths) |
-| **LLM review** | Semantic issues deterministic checks miss | Claude reviews source + output pairs, findings get promoted to assertions |
+| Layer          | What it catches                           | How                                                                                     |
+| -------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| **Baselines**  | Output drift between analyzer versions    | Snapshot/diff of JSON outputs across the full corpus                                    |
+| **Assertions** | Hard regressions on known-good results    | Machine-checkable facts per file (component counts, detected subcircuits, signal paths) |
+| **LLM review** | Semantic issues deterministic checks miss | Claude reviews source + output pairs, findings get promoted to assertions               |
 
 **What gets tested:** All three analyzers (schematic, PCB, Gerber) against every file in the corpus, MPN extraction and validation across all four distributor APIs, the datasheet download pipeline, the BOM manager end-to-end, and legacy KiCad 5 format support.
 
@@ -263,12 +266,12 @@ KiCad + Claude Code is the most powerful electronics design workflow you can set
 
 ## ✅ KiCad version support
 
-| Version | Schematic            | PCB  | Gerber |
-| ------- | -------------------- | ---- | ------ |
-| KiCad 9 | Full                 | Full | Full   |
-| KiCad 8 | Full                 | Full | Full   |
-| KiCad 7 | Full                 | Full | Full   |
-| KiCad 6 | Full                 | Full | Full   |
+| Version | Schematic                     | PCB  | Gerber |
+| ------- | ----------------------------- | ---- | ------ |
+| KiCad 9 | Full                          | Full | Full   |
+| KiCad 8 | Full                          | Full | Full   |
+| KiCad 7 | Full                          | Full | Full   |
+| KiCad 6 | Full                          | Full | Full   |
 | KiCad 5 | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
 ## 📜 License

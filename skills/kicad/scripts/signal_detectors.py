@@ -2268,14 +2268,16 @@ def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
 
     # Find antenna connectors
     _ant_prefixes = ("AE", "ANT")
-    _ant_keywords = ("antenna", "u.fl", "ufl", "sma", "ipex", "mhf", "rf_conn")
+    _ant_keywords = ("antenna", "u.fl", "ufl", "ipex", "mhf", "rf_conn")
+    _ant_lib_keywords = ("antenna", "u.fl", "ufl", "sma", "ipex", "mhf", "rf_conn")
     antennas = []
     for comp in ctx.components:
         ref_prefix = "".join(c for c in comp["reference"] if c.isalpha())
         val_lower = comp.get("value", "").lower()
         lib_lower = comp.get("lib_id", "").lower()
         if (ref_prefix in _ant_prefixes
-                or any(kw in val_lower or kw in lib_lower for kw in _ant_keywords)):
+                or any(kw in val_lower for kw in _ant_keywords)
+                or any(kw in lib_lower for kw in _ant_lib_keywords)):
             antennas.append(comp)
 
     for ant in antennas:
@@ -2337,6 +2339,12 @@ def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
             frontier = next_frontier
 
         if not matching_components:
+            continue
+
+        # RF matching networks require at least one inductor — pure C networks
+        # are decoupling/filtering, not impedance matching
+        has_inductor = any(mc["type"] == "inductor" for mc in matching_components)
+        if not has_inductor:
             continue
 
         # Classify topology
