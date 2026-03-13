@@ -91,7 +91,9 @@ def extract_lib_symbols(root: list) -> dict:
     for sym in find_all(lib_symbols_node, "symbol"):
         name = sym[1] if len(sym) > 1 else "unknown"
         # Skip sub-unit symbols (e.g., "Device:C_0_1", "Device:C_1_1")
-        if "_" in name.split(":")[-1] and name.split(":")[-1].split("_")[-1].isdigit():
+        # Real sub-units have _U_V suffix where BOTH U and V are digits.
+        parts = name.split(":")[-1].rsplit("_", 2)
+        if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
             continue
 
         # Collect pins from sub-unit symbols, keyed by unit number.
@@ -366,7 +368,9 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
                or get_property(sym, "Part#")
                or get_property(sym, "Manufacturer_Part_Number") or get_property(sym, "Mfr No.")
                or get_property(sym, "Mfr_No") or get_property(sym, "ManufacturerPartNumber")
-               or get_property(sym, "mpn") or "")
+               or get_property(sym, "mpn")
+               or get_property(sym, "PARTNO") or get_property(sym, "PartNo")
+               or get_property(sym, "Partno") or "")
         manufacturer = (get_property(sym, "Manufacturer") or get_property(sym, "Mfr")
                         or get_property(sym, "MFR") or "")
         digikey = (get_property(sym, "Digi-Key Part Number") or get_property(sym, "Digi-Key_PN")
@@ -391,6 +395,8 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
 
         in_bom = get_value(sym, "in_bom") != "no"
         dnp = get_value(sym, "dnp") == "yes"
+        if not dnp and value.upper() in ("DNP", "DO NOT POPULATE", "DO NOT PLACE", "NP"):
+            dnp = True
         on_board = get_value(sym, "on_board") != "no"
 
         # Get pin UUIDs for connectivity
@@ -458,6 +464,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         detect_decoupling,
         detect_design_observations,
         detect_ethernet_interfaces,
+        detect_integrated_ldos,
         detect_isolation_barriers,
         detect_key_matrices,
         detect_lc_filters,
@@ -468,6 +475,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         detect_protection_devices,
         detect_rc_filters,
         detect_rf_chains,
+        detect_rf_matching,
         detect_transistor_circuits,
         detect_voltage_dividers,
         postfilter_vd_and_dedup,
@@ -496,6 +504,8 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     decoupling_analysis = detect_decoupling(ctx)
     current_sense = detect_current_sense(ctx)
     power_regulators = detect_power_regulators(ctx, voltage_dividers)
+    integrated_ldos = detect_integrated_ldos(ctx, power_regulators)
+    power_regulators.extend(integrated_ldos)
     protection_devices = detect_protection_devices(ctx)
     opamp_circuits = detect_opamp_circuits(ctx)
     bridge_circuits, matched_fets, fet_pins = detect_bridge_circuits(ctx)
@@ -511,6 +521,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     ethernet_interfaces = detect_ethernet_interfaces(ctx)
     memory_interfaces = detect_memory_interfaces(ctx)
     rf_chains = detect_rf_chains(ctx)
+    rf_matching = detect_rf_matching(ctx)
     bms_systems = detect_bms_systems(ctx)
 
     results = {
@@ -533,6 +544,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         "ethernet_interfaces": ethernet_interfaces,
         "memory_interfaces": memory_interfaces,
         "rf_chains": rf_chains,
+        "rf_matching": rf_matching,
         "bms_systems": bms_systems,
     }
 
@@ -1050,6 +1062,11 @@ def compute_statistics(components: list[dict], nets: dict, bom: list[dict],
     power_rails = sorted(set(
         comp["value"] for comp in components if comp["type"] == "power_symbol"
     ))
+    # Also detect power rails by net name patterns (covers local/hierarchical labels)
+    for net_name in nets:
+        if _is_power_net_name(net_name) and net_name not in power_rails:
+            power_rails.append(net_name)
+    power_rails = sorted(set(power_rails))
 
     # Missing properties
     missing_mpn = [c["reference"] for c in non_power
@@ -1705,7 +1722,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                                 fname = name_match.group(1)
                                 fu = fname.upper()
                                 if fu in ("MPN", "MFG PART", "MFGPART", "MANF#",
-                                          "MPN#", "PART#", "MANUFACTURER_PART_NUMBER"):
+                                          "MPN#", "PART#", "MANUFACTURER_PART_NUMBER",
+                                          "PARTNO", "PART NUMBER", "PART_NUMBER", "PART NO"):
                                     comp["mpn"] = field_val
                                 elif fu in ("MANUFACTURER", "MFG", "MANF", "MFR"):
                                     comp["manufacturer"] = field_val
@@ -1729,6 +1747,11 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                                     comp["element14"] = field_val
                                 elif fu == "DNP":
                                     comp["dnp"] = field_val.strip() not in ("", "0", "false")
+                                elif fu in ("NOTE", "NOTES", "COMMENT"):
+                                    if any(dnp_kw in field_val.upper() for dnp_kw in ("DNP", "DO NOT POPULATE", "DO NOT PLACE")):
+                                        comp["dnp"] = True
+                                elif fu in ("DESCRIPTION", "DESC"):
+                                    comp["description"] = field_val
 
                 # Orientation matrix line (after position line)
                 # Format: a b c d  (2x2 transform matrix [a b; c d])
@@ -1760,6 +1783,9 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                         or comp["reference"].startswith("#FLG")
                         or lib_prefix == "power"
                         or lib_prefix.endswith("_power"))
+            # Check value field for DNP indication
+            if not comp["dnp"] and comp["value"].upper() in ("DNP", "DO NOT POPULATE", "DO NOT PLACE", "NP"):
+                comp["dnp"] = True
             comp["type"] = classify_component(comp["reference"], comp["lib_id"], comp["value"], is_power)
             components.append(comp)
 
@@ -2213,6 +2239,9 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
     # (VCC, VDD) — for cross-domain analysis, the IO rail determines signal levels
     _io_pin_names = {"VDDIO", "VIO", "VCCA", "VCCB", "VREF", "VLOGIC",
                      "DVDD", "DVCC", "IOVDD", "IOVCC"}
+    _sense_pin_names = {"IN+", "IN-", "INP", "INN", "SENSE", "VSENSE", "SNS",
+                        "CSP", "CSN", "CS+", "CS-", "ISENSE", "IMON", "IOUT",
+                        "SEN", "VS+", "VS-"}
     power_domains = {}
     ics = [c for c in components if c["type"] == "ic"]
     for ic in ics:
@@ -2224,6 +2253,8 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
             if not net_name:
                 continue
             pname_upper = pin["name"].upper()
+            if pname_upper in _sense_pin_names:
+                continue
             is_pwr = is_power_net(net_name) and not is_ground(net_name)
             is_named_pwr = pname_upper in ("VCC", "VDD", "AVCC", "AVDD", "VBUS",
                                            "VIN", "VOUT", "VDDIO", "VIO", "VCCA",
@@ -2530,6 +2561,82 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
             }
     if uart_nets:
         buses["uart"] = list(uart_nets.values())
+
+    # SDIO/SD/eMMC: look for CLK + CMD + D0 minimum
+    _sdio_prefixes = ("SDIO", "SD_", "SD1_", "SD2_", "EMMC", "MMC", "WL_SDIO")
+    sdio_signals = {}
+    for net_name in nets:
+        nu = net_name.upper()
+        # Check if net matches an SDIO-related pattern
+        matched_prefix = None
+        for pfx in _sdio_prefixes:
+            if pfx in nu:
+                matched_prefix = pfx
+                break
+        if not matched_prefix:
+            # Also match bare SD signal patterns like SDCLK, SDCMD
+            if nu.startswith("SD") and any(nu.endswith(sig) for sig in ("CLK", "CMD", "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7")):
+                matched_prefix = "SD"
+            else:
+                continue
+
+        # Classify the signal type
+        sig_type = None
+        if "CLK" in nu:
+            sig_type = "CLK"
+        elif "CMD" in nu:
+            sig_type = "CMD"
+        else:
+            # Match data lines D0-D7
+            dm = re.search(r'D(\d)', nu)
+            if dm:
+                sig_type = f"D{dm.group(1)}"
+
+        if sig_type:
+            # Group by bus prefix for multi-bus designs
+            bus_key = matched_prefix.rstrip("_")
+            sdio_signals.setdefault(bus_key, {})[sig_type] = net_name
+
+    # Build SDIO bus entries
+    for bus_key, sigs in sdio_signals.items():
+        if "CLK" not in sigs or "CMD" not in sigs or "D0" not in sigs:
+            continue
+        # Count data lines
+        data_lines = sorted(k for k in sigs if k.startswith("D") and k[1:].isdigit())
+        bus_width = len(data_lines)
+
+        # Check for pull-ups on CMD and data lines
+        pullup_nets = []
+        for sig_name in ["CMD"] + data_lines:
+            net_name = sigs.get(sig_name)
+            if not net_name or net_name not in nets:
+                continue
+            for p in nets[net_name]["pins"]:
+                comp = comp_lookup.get(p["component"])
+                if comp and comp["type"] == "resistor":
+                    r_n1, _ = pin_net.get((p["component"], "1"), (None, None))
+                    r_n2, _ = pin_net.get((p["component"], "2"), (None, None))
+                    other = r_n2 if r_n1 == net_name else r_n1
+                    if other and is_power_net(other):
+                        pullup_nets.append(sig_name)
+                        break
+
+        # Find connected devices
+        all_devices = set()
+        for sig_name, net_name in sigs.items():
+            if net_name in nets:
+                for p in nets[net_name]["pins"]:
+                    if comp_lookup.get(p["component"], {}).get("type") == "ic":
+                        all_devices.add(p["component"])
+
+        buses.setdefault("sdio", []).append({
+            "bus_id": bus_key,
+            "bus_width": bus_width,
+            "signals": {sig: net for sig, net in sigs.items()},
+            "devices": sorted(all_devices),
+            "has_pullups": len(pullup_nets) > 0,
+            "pullup_signals": pullup_nets,
+        })
 
     # CAN: look for CAN_TX/CAN_RX nets, CANH/CANL, or CAN transceiver ICs
     can_keywords = ("can_tx", "can_rx", "cantx", "canrx", "canh", "canl", "can_h", "can_l")
@@ -5459,13 +5566,72 @@ def analyze_schematic(path: str) -> dict:
     return result
 
 
+def _get_schema():
+    """Return JSON output schema description for --schema flag."""
+    return {
+        "file": "string — input file path",
+        "kicad_version": "string — generator version",
+        "file_version": "string",
+        "title_block": {"title": "string", "date": "string", "rev": "string",
+                        "company": "string", "comments": "{number: string}"},
+        "statistics": {
+            "total_components": "int", "unique_parts": "int", "dnp_parts": "int",
+            "total_nets": "int", "total_wires": "int", "total_no_connects": "int",
+            "component_types": "{type_name: count}", "power_rails": "[string]",
+            "missing_mpn": "[reference_string]", "missing_footprint": "[reference_string]",
+        },
+        "bom": "[{value, footprint, mpn, manufacturer, digikey, mouser, lcsc, element14, datasheet, description, references: [string], quantity: int, dnp: bool, type}]",
+        "components": "[{reference, value, lib_id, footprint, datasheet, description, mpn, manufacturer, digikey, mouser, lcsc, element14, x: float, y: float, angle: float, mirror_x: bool, mirror_y: bool, unit: int|null, uuid, in_bom: bool, dnp: bool, on_board: bool, type, keywords, pins: [{number, name, type}], parsed_value: {value: float, unit: string}}]",
+        "nets": "{net_name: {name, pins: [{component, pin_number, pin_name, pin_type}], point_count: int}}",
+        "subcircuits": "[{reference, path, sheet_name, sheet_file, instances: int}]",
+        "ic_pin_analysis": "{ic_ref: {reference, value, pin_summary: {pin_number: {name, type, connected: bool, net}}, function, notes: [string]}}",
+        "signal_analysis": {
+            "voltage_dividers": "[{top_ref, bottom_ref, ratio, vout_estimated, input_net, output_net}]",
+            "rc_filters": "[{resistor, capacitor, cutoff_frequency_hz, type: lowpass|highpass}]",
+            "lc_filters": "[{inductor, capacitors, resonant_formatted}]",
+            "power_regulators": "[{ref, value, lib_id, topology: ldo|buck|boost|buck_boost|inverting|..., input_rail, output_rail, vout_estimated, vref_source: lookup|heuristic}]",
+            "crystal_circuits": "[{reference, value, frequency, type: passive|active_oscillator, load_caps}]",
+            "opamp_circuits": "[{reference, configuration, gain}]",
+            "transistor_circuits": "[{reference, type, load_classification}]",
+            "bridge_circuits": "[{topology, fet_refs}]",
+            "protection_devices": "[{type: tvs|esd|fuse|..., reference, protected_net}]",
+            "current_sense": "[{shunt: {ref, value, ohms}, sense_ic: {ref, value, type}, high_net, low_net, max_current_50mV_A, max_current_100mV_A}]",
+            "decoupling": "[{capacitor_ref, ic_ref, distance}]",
+            "key_matrices": "[{rows, cols, diodes}]",
+            "isolation_barriers": "[{isolator_ref, side_a_nets, side_b_nets}]",
+            "ethernet_interfaces": "[{phy_ref, magnetics_ref, connector_ref}]",
+            "memory_interfaces": "[{type, bus_signals}]",
+            "rf_chains": "[{components_in_chain}]",
+            "rf_matching": "[{antenna, antenna_value, topology: pi_match|L_match|T_match|matching_network, components: [{ref, type, value}], target_ic, target_value}]",
+            "bms_systems": "[{ic_ref, cell_count}]",
+        },
+        "design_analysis": {
+            "buses": "{i2c|spi|uart|can|sdio|differential_pairs: [bus_instances]}",
+            "power_domains": "{ic_ref: domain_info}",
+            "cross_domain_signals": "[signals crossing voltage domains]",
+            "erc_warnings": "[string]",
+        },
+        "connectivity_issues": {"single_pin_nets": "[net_name]", "multi_driver_nets": "[net_name]", "floating_nets": "[net_name]"},
+        "_optional_sections": "power_budget, power_sequencing, pdn_impedance, sleep_current_audit, usb_compliance, inrush_analysis, bom_optimization, test_coverage, assembly_complexity, sheets (multi-sheet only)",
+    }
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad Schematic Analyzer")
-    parser.add_argument("schematic", help="Path to .kicad_sch file")
+    parser.add_argument("schematic", nargs="?", help="Path to .kicad_sch file")
     parser.add_argument("--output", "-o", help="Output JSON file (default: stdout)")
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
+    parser.add_argument("--schema", action="store_true",
+                        help="Print JSON output schema and exit")
     args = parser.parse_args()
+
+    if args.schema:
+        print(json.dumps(_get_schema(), indent=2))
+        sys.exit(0)
+
+    if not args.schematic:
+        parser.error("the following arguments are required: schematic")
 
     result = analyze_schematic(args.schematic)
 

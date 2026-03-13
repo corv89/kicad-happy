@@ -38,7 +38,15 @@ For deep validation of extracted circuits against datasheets (verifying values, 
 
 This skill includes Python scripts that extract comprehensive structured JSON from KiCad files in a single pass. Run these first, then reason about the output.
 
-Read analyzer JSON output directly with the Read tool rather than writing ad-hoc extraction scripts. The JSON schema has specific field names (documented below) that are easy to get wrong in custom code. To extract a specific section: `python3 -c "import json; d=json.load(open('file.json')); print(json.dumps(d['key'], indent=2))"`.
+Read analyzer JSON output directly with the Read tool rather than writing ad-hoc extraction scripts. The JSON schema has specific field names (documented below and in `references/output-schema.md`) that are easy to get wrong in custom code. To extract a specific section: `python3 -c "import json; d=json.load(open('file.json')); print(json.dumps(d['key'], indent=2))"`.
+
+**Before writing any ad-hoc Python to process analyzer output**, run `--schema` to see the exact field names and types:
+```bash
+python3 <skill-path>/scripts/analyze_schematic.py --schema
+python3 <skill-path>/scripts/analyze_pcb.py --schema
+python3 <skill-path>/scripts/analyze_gerbers.py --schema
+```
+This prevents format-string bugs and wrong field names. Use f-strings or `json.dumps()` for output formatting — never `%s` with non-string types. See `references/output-schema.md` for the full schema with common extraction patterns.
 
 In all commands below, `<skill-path>` refers to this skill's base directory (shown at the top of this file when loaded).
 

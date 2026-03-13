@@ -1204,15 +1204,50 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
     return result
 
 
+def _get_schema():
+    """Return JSON output schema description for --schema flag."""
+    return {
+        "directory": "string — scan directory path",
+        "generator": "string (KiCad|other|unknown)",
+        "layer_count": "int",
+        "board_dimensions": {"x_min": "float", "x_max": "float", "y_min": "float",
+                             "y_max": "float", "width_mm": "float", "height_mm": "float"},
+        "statistics": {"gerber_files": "int", "drill_files": "int", "total_holes": "int",
+                       "total_flashes": "int", "total_draws": "int"},
+        "completeness": {"expected_layers": "[string]", "found_layers": "[string]",
+                         "missing_layers": "[string]", "extra_layers": "[string]",
+                         "coverage_percent": "float"},
+        "alignment": "{layer_name: {coord_range: {x_min, x_max, y_min, y_max: float}}}",
+        "drill_classification": {"total_unique": "int", "via_apertures": "int",
+                                 "component_holes": "int", "front_side": "int",
+                                 "back_side": "int", "both_sides": "int",
+                                 "smd_apertures": "int"},
+        "pad_summary": {"smd_apertures": "int", "via_apertures": "int",
+                        "component_holes": "int", "tht": "int"},
+        "gerbers": "[{file, filename, layer_type, format: {zero_omit, notation, x_integer, x_decimal, y_integer, y_decimal}, units: mm|inch, flash_count: int, draw_count: int, region_count: int, apertures: {d_code: {type, params, function}}, x2_attributes: {FileFunction, ...}}]",
+        "drills": "[{file, filename, units: mm|inch|null, type: PTH|NPTH|unknown, hole_count: int, coordinate_range, tools: {tool_id: {diameter_mm: float, hole_count: int}}, x2_attributes}]",
+        "_optional_sections": "component_analysis, net_analysis, trace_widths, job_file, zip_archives, connectivity (--full)",
+    }
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad Gerber & Drill File Analyzer")
-    parser.add_argument("directory", help="Path to gerber/drill file directory")
+    parser.add_argument("directory", nargs="?", help="Path to gerber/drill file directory")
     parser.add_argument("--output", "-o", help="Output JSON file (default: stdout)")
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
     parser.add_argument("--full", action="store_true",
                         help="Include full pin-to-net connectivity data")
+    parser.add_argument("--schema", action="store_true",
+                        help="Print JSON output schema and exit")
     args = parser.parse_args()
+
+    if args.schema:
+        print(json.dumps(_get_schema(), indent=2))
+        sys.exit(0)
+
+    if not args.directory:
+        parser.error("the following arguments are required: directory")
 
     result = analyze_gerbers(args.directory, full=args.full)
 

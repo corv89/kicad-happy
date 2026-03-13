@@ -412,3 +412,34 @@ Some components require careful copper management on both layers. Use the analyz
 - Ground plane voids under matching components can detune the network
 
 In all cases, the `copper_presence.no_opposite_layer_copper` list in the analyzer output identifies components without opposite-layer zone copper — these are the isolation points to verify against the design intent.
+
+---
+
+## Datasheet-Driven PCB Validation
+
+The schematic analysis methodology already prompts for datasheet cross-referencing (Vref lookup, pin verification, component values). PCB layout review needs the same rigor — many layout bugs are only visible when checked against the IC's datasheet recommendations.
+
+### Thermal Management
+
+- **Thermal vias**: Compare the number, size, and pattern of thermal vias under QFN/DFN/PowerPAD packages against the IC datasheet's recommended layout. Many datasheets specify exact via count, diameter, and grid pattern (e.g., TI's PowerPAD guidelines: 4×4 array of 0.3mm vias on 1.2mm pitch).
+- **θJA validation**: The datasheet's θJA is measured on a specific test board (usually JEDEC 2s2p for 4-layer). If the actual design has fewer layers or smaller copper area, θJA will be worse — note this when assessing thermal adequacy.
+- **Power dissipation check**: Calculate actual power dissipation from the circuit operating conditions (Vin, Vout, Iload for regulators; RDS(on) × I² for MOSFETs) and verify the thermal design can handle it. Flag when junction temperature exceeds the datasheet's maximum rating with margin.
+
+### Decoupling Requirements
+
+- **Capacitor values**: Many ICs specify minimum and maximum input/output capacitance, ESR range, and capacitor type (ceramic vs tantalum). Verify the schematic values match and that the PCB places them within the datasheet's maximum allowed distance.
+- **Placement distance**: Some datasheets specify "place within X mm of pin Y" — check the PCB analyzer's `decoupling_placement` distances against these requirements. LDOs and high-speed switching regulators are particularly sensitive.
+- **Capacitor type**: Datasheets that specify "low-ESR ceramic" or "X5R/X7R minimum" should be cross-checked against the schematic's capacitor specifications. Class II ceramics (Y5V/Z5U) lose significant capacitance under DC bias and may not meet minimum requirements.
+
+### Keepout Zones
+
+- **Antenna keepout**: Check the antenna manufacturer's datasheet for required copper-free area dimensions. The keepout must cover both the antenna element and a margin around it (often 5-10mm beyond the radiating element). Verify on all layers, not just the opposite layer.
+- **Touch controller keepout**: Capacitive touch controller datasheets specify clearance requirements for sensor pads, guard rings, and routing. Cross-reference pad layout against the controller's application note.
+- **Sensitive analog**: High-resolution ADCs and precision references often specify keepout zones or restricted routing areas near analog input pins. Check for digital traces routed under or near these components.
+
+### Component-Specific Layout Rules
+
+- **Crystal oscillator**: Datasheet specifies load capacitance; the PCB layout affects stray capacitance (typically 1-5pF). Route crystal traces short and direct, with ground guard if specified. Some crystals require no traces routed under the crystal body.
+- **Switching regulator power loop**: The hot loop (input cap → high-side switch → inductor → output cap → input cap return) must be minimized. Measure the loop area from the PCB layout and flag if the input capacitor is placed far from the IC or the inductor return path is indirect.
+- **USB impedance**: USB 2.0 requires 90Ω differential impedance; USB 3.x requires 85Ω. Verify trace width and spacing against the board stackup using the impedance parameters from the setup section. Check that D+/D- traces are length-matched per the USB spec tolerance.
+- **Exposed pad connection**: ICs with exposed thermal/ground pads (QFN, DFN, QFP-EP) require the pad to be soldered to the PCB. Verify the footprint has the pad connected to the correct net (usually GND) and has adequate thermal vias. A floating or poorly-connected exposed pad is both a thermal and electrical failure.

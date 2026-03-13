@@ -3622,17 +3622,67 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     return result
 
 
+def _get_schema():
+    """Return JSON output schema description for --schema flag."""
+    return {
+        "file": "string — input file path",
+        "kicad_version": "string", "file_version": "string",
+        "statistics": {
+            "footprint_count": "int", "front_side": "int", "back_side": "int",
+            "smd_count": "int", "tht_count": "int", "copper_layers_used": "int",
+            "copper_layer_names": "[string]", "track_segments": "int", "via_count": "int",
+            "zone_count": "int", "total_track_length_mm": "float",
+            "board_width_mm": "float|null", "board_height_mm": "float|null",
+            "net_count": "int", "routing_complete": "bool", "unrouted_net_count": "int",
+        },
+        "layers": "[{name, type, index: int}]",
+        "setup": "object — design rules, pad_to_mask_clearance, etc.",
+        "nets": "{net_name: net_index_int}",
+        "board_outline": {
+            "bounding_box": "{x_min, y_min, x_max, y_max, width, height: float}",
+            "outline_type": "string (rectangle|complex_polygon|...)",
+            "segments": "[{x1, y1, x2, y2: float, layer}]",
+        },
+        "component_groups": "{prefix: {count: int, type, examples: [ref]}}",
+        "footprints": "[{reference, value, lib_id, layer, x: float, y: float, angle: float, type: smd|through_hole|mixed, mpn, manufacturer, description, exclude_from_bom: bool, exclude_from_pos: bool, dnp: bool, pad_nets: {pad_number: {net, pin}}, connected_nets: [string]}]",
+        "tracks": {
+            "segment_count": "int", "arc_count": "int",
+            "width_distribution": "{width_mm_str: count}",
+            "layer_distribution": "{layer_name: count}",
+            "_with_full_flag": "segments: [{x1, y1, x2, y2, width: float, layer, net: int}], arcs: [{x1, y1, x2, y2, mid_x, mid_y, width: float, layer}]",
+        },
+        "vias": {
+            "count": "int", "size_distribution": "{size_str: count}",
+            "_analysis": "via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}, via_current: [warning]",
+            "_with_full_flag": "vias: [{x, y: float, layers: [string], size, drill: float, net: int|null}]",
+        },
+        "zones": "[{net, priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool}]",
+        "connectivity": {"routing_complete": "bool", "unrouted_count": "int", "unconnected_pads": "[{reference, pad, expected_net}]"},
+        "net_lengths": "{net_name: {track_length_mm: float, via_count: int, layer_transitions: int}}",
+        "_optional_sections": "power_net_routing, decoupling_placement, ground_domains, current_capacity, thermal_analysis, placement_analysis, trace_proximity (--proximity), dfm, tombstoning_risk, thermal_pad_vias, copper_presence",
+    }
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad PCB Layout Analyzer")
-    parser.add_argument("pcb", help="Path to .kicad_pcb file")
+    parser.add_argument("pcb", nargs="?", help="Path to .kicad_pcb file")
     parser.add_argument("--output", "-o", help="Output JSON file (default: stdout)")
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
     parser.add_argument("--full", action="store_true",
                         help="Include individual track/via coordinate data")
     parser.add_argument("--proximity", action="store_true",
                         help="Run trace proximity analysis for crosstalk assessment")
+    parser.add_argument("--schema", action="store_true",
+                        help="Print JSON output schema and exit")
     args = parser.parse_args()
+
+    if args.schema:
+        print(json.dumps(_get_schema(), indent=2))
+        sys.exit(0)
+
+    if not args.pcb:
+        parser.error("the following arguments are required: pcb")
 
     result = analyze_pcb(args.pcb, proximity=args.proximity)
 

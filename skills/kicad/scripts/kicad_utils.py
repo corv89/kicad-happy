@@ -17,7 +17,7 @@ COORD_EPSILON = 0.01
 # When a part isn't found here the analyzer falls back to the heuristic sweep.
 _REGULATOR_VREF: dict[str, float] = {
     # TI switching regulators (verified against datasheets)
-    "TPS6100": 0.6,    "TPS6102": 0.6,    "TPS6103": 0.6,   # TPS61023 FB = 0.6V
+    "TPS6100": 0.5,    "TPS6102": 0.595,  "TPS6103": 0.595, # TPS61000/01/02 FB = 0.5V; TPS61020/23/30 FB = 0.595V typ
     "TPS5430": 1.221,  "TPS5450": 1.221,                     # TPS5430 Vref = 1.221V
     "TPS54160": 0.8,   "TPS54260": 0.8,   "TPS54360": 0.8,   # TPS5436x FB = 0.8V
     "TPS542": 0.6,     "TPS543": 0.6,     "TPS544": 0.6,
@@ -298,6 +298,9 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
             return "varistor"
         if result == "diode" and ("led" in lib_low or "led" in val_low):
             return "led"
+        if result == "inductor":
+            if any(x in lib_low or x in val_low for x in ("ferrite", "bead")):
+                return "ferrite_bead"
         return result
 
     # Fallback: check value/lib_id for common patterns

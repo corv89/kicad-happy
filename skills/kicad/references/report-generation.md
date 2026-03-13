@@ -208,13 +208,29 @@ Use this template. Include sections that are relevant to the design — skip sec
 [Power net routing summary (width, length, current capacity), ground domain identification (AGND/DGND/PGND), zone stitching via density]
 
 ### Thermal Analysis
-[Thermal pad detection, via counting and adequacy for QFN/DFN packages, zone stitching density, thermal relief settings, tombstoning risk assessment (0201/0402 thermal asymmetry)]
+[Thermal pad detection, via counting and adequacy for QFN/DFN packages, zone stitching density, thermal relief settings, tombstoning risk assessment (0201/0402 thermal asymmetry). Cross-reference thermal via count and pad area against each IC's datasheet thermal management section — check recommended via count, via diameter, and exposed pad connection. Verify θJA assumptions match the datasheet's specified board conditions (e.g., JEDEC 2s2p vs actual layer count).]
 
 ### Copper Presence
 [Zone copper at component pad locations — from `copper_presence` section. Focus on `no_opposite_layer_copper` list: which components lack zone copper on the opposite layer? Verify this is intentional for capacitive touch pads and antennas (need isolation) vs unexpected for other components (might indicate a zone gap). Also note `same_layer_foreign_zones` — pads sitting on zones they're not connected to, which is normal for tightly-packed power island zones but worth flagging if unexpected.]
 
+### Capacitive Touch Pads
+[Include when TP-prefixed components or pad-only footprints appear in `copper_presence.no_opposite_layer_copper`, or when touch controller ICs are detected]
+
+| Pad | Position | Opposite-Layer Copper | Same-Layer Ground Pour Clearance | Trace Width to Controller |
+|-----|----------|----------------------|----------------------------------|--------------------------|
+| [ref] | [x, y] | [none (correct) / present (CRITICAL)] | [distance mm — check against controller app note, typically ≥1mm] | [width mm — narrow preferred to minimize parasitic C] |
+
+[Verify keepout zones exist under each touch pad on opposite layer. If no keepout zones are defined, recommend adding them — ground planes under touch pads drastically reduce sensitivity. Check controller datasheet for specific clearance and trace routing requirements.]
+
+### Antenna Layout
+[Include when ANT-prefixed footprints, antenna lib_id patterns, or RF antenna footprints are detected]
+- Keepout zone verification: check that copper keepout zones exist on the opposite layer under the antenna element, matching the manufacturer's reference layout dimensions
+- Ground plane termination: verify the ground plane ends at the antenna feed point and does not extend under the radiating element
+- Matching network placement: components between antenna and RF IC should be close to the antenna with controlled-impedance traces
+[If no keepout zones are defined around the antenna, flag as WARNING and recommend adding them per the antenna manufacturer's datasheet/app note. Reference the specific antenna part number's layout guide when available.]
+
 ### Decoupling Placement
-[Cap-to-IC distances for critical components, flag caps too far from IC power pins]
+[Cap-to-IC distances for critical components, flag caps too far from IC power pins. Verify capacitor values and placement distances against each IC's datasheet requirements — many ICs specify maximum distance, minimum capacitance, and ESR limits for input/output decoupling. Flag any deviation from datasheet recommendations.]
 
 ### Current Capacity
 [Per-net trace/via current capacity vs estimated load, narrow signal net warnings]
@@ -267,6 +283,15 @@ Use this template. Include sections that are relevant to the design — skip sec
 
 ### Simulation Readiness
 [Components likely simulatable vs needing SPICE models, coverage percentage]
+
+### Ordering Notes
+[Practical manufacturing summary for ordering:]
+- Layer count: [N] layers, surface finish: [HASL/ENIG/OSP], solder mask color: [green/black/etc.]
+- Stencil: [recommend if SMD components present, note if fine-pitch requires frameless stencil]
+- Board thickness: [standard 1.6mm or custom]
+- DFM tier: [standard vs advanced capability requirements based on min trace/space/drill from DFM section]
+- Copper weight: [1oz/2oz based on current requirements]
+- Special requirements: [impedance control, via-in-pad, castellated edges, etc. if applicable]
 
 ## All Issues & Suggestions
 [Complete list of all findings. CRITICAL and WARNING items were already shown in the Critical Findings section at the top — repeat them here with full detail and context. SUGGESTION items appear here only.]
