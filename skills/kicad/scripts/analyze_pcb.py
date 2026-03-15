@@ -1998,7 +1998,11 @@ def extract_silkscreen(root: list, footprints: list[dict]) -> dict:
     for fp in footprints:
         ref = fp.get("reference", "")
         lib = fp.get("library", "").lower()
-        val = fp.get("value", "").lower()
+        val = fp.get("value", "")
+        # KH-102: Defensive coercion — some PCB files have list-typed value fields
+        if isinstance(val, list):
+            val = str(val[1]) if len(val) > 1 else ""
+        val = val.lower()
 
         if not ref:
             continue

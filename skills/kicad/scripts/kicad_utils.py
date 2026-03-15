@@ -67,6 +67,7 @@ _REGULATOR_VREF: dict[str, float] = {
     "MIC29": 1.24,      "MIC55": 1.24,
     "MCP170": 1.21,
     # Diodes Inc
+    "AP736": 0.8,                                                 # AP7365 adjustable VFB = 0.8V (datasheet)
     "AP6": 0.6,         "AP73": 0.6,
     "AP2112": 0.8,                                              # AP2112 adjustable Vref = 0.8V
     # ST
@@ -87,6 +88,12 @@ _REGULATOR_VREF: dict[str, float] = {
     "LM614": 1.0,       "LM619": 1.0,                            # LM61495 VFB = 1.0V (datasheet, 0.99/1.0/1.01)
     # Diodes Inc (BCD Semiconductor)
     "AP3015": 1.23,                                               # AP3015A VFB = 1.23V (datasheet, 1.205/1.23/1.255)
+    # XL (XLSEMI)
+    "XL70": 1.25,                                               # XL7015 VFB = 1.25V (datasheet)
+    # TPS631xxx (TI ultra-low-power)
+    "TPS6310": 0.5,                                              # TPS631000 VFB = 0.5V (datasheet SLVSEK5)
+    # LMR38xxx (TI)
+    "LMR380": 1.0,                                               # LMR38010 VFB = 1.0V (datasheet SNVSB89)
     # Generic (well-established values)
     "LM317": 1.25,     "LM337": 1.25,
     "AMS1117": 1.25,   "AMS1085": 1.25,
@@ -341,6 +348,12 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                                                    "ld1117", "lm1117", "ap1117"))):
                 return "ic"
         if result == "transformer":
+            # KH-111: Common-mode chokes — classify as inductor, not transformer
+            if any(x in val_low for x in ("cmc", "common mode", "common_mode",
+                                           "rfcmf", "acm", "dlw")):
+                return "inductor"
+            if any(x in lib_low for x in ("common_mode", "cmc", "emi_filter")):
+                return "inductor"
             if any(x in lib_low or x in val_low or x in fp_low
                    for x in ("mosfet", "fet", "transistor", "bjt",
                              "q_npn", "q_pnp", "q_nmos", "q_pmos")):
@@ -360,6 +373,13 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         if result == "inductor":
             if any(x in lib_low or x in val_low for x in ("ferrite", "bead")):
                 return "ferrite_bead"
+        # KH-106: MX/Cherry/Kailh keyboard switches (K prefix maps to relay)
+        if result == "relay":
+            if any(x in lib_low for x in ("mx", "cherry", "kailh", "gateron",
+                                           "alps_hybrid", "key_switch")):
+                return "switch"
+            if any(x in val_low for x in ("mx-", "cherry", "kailh", "gateron")):
+                return "switch"
         return result
 
     # --- No full-prefix match.  Try lib_id / value before single-char fallback ---
@@ -428,6 +448,11 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
     # Connector detection: lib names and common connector part number patterns
     if "connector" in lib_lower or "conn_" in val_lower:
         return "connector"
+    # KH-110: Audio jack connectors
+    if "connector_audio" in lib_lower or "audio_jack" in lib_lower:
+        return "connector"
+    if any(value.startswith(p) for p in ("PJ-3", "SJ-3", "MJ-3")):
+        return "connector"
     if any(x in val_lower for x in ["usb_micro", "usb_c", "usb-c", "rj45", "rj11",
                                      "pin_header", "pin_socket", "barrel_jack"]):
         return "connector"
@@ -443,9 +468,13 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                    "HDMI", "EXT", "GPIO", "CAN", "SWD", "JTAG",
                    "ANT", "RJ", "SUPPLY"):
         return "connector"
+    # KH-106: Catch MX/Cherry/Kailh keyboard switches before relay detection
     if "switch" in lib_lower or "button" in lib_lower:
         return "switch"
-    if any(x in val_lower for x in ("button", "tact", "push", "t1102", "t1107", "yts-a")):
+    if any(x in lib_lower for x in ("cherry_mx", "mx_switch", "kailh", "gateron")):
+        return "switch"
+    if any(x in val_lower for x in ("button", "tact", "push", "t1102", "t1107", "yts-a",
+                                     "cherry_mx", "mx_switch", "kailh", "gateron")):
         return "switch"
     if "relay" in lib_lower:
         return "relay"

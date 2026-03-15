@@ -495,9 +495,10 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     voltage_dividers = vd_result["voltage_dividers"]
     feedback_networks = vd_result["feedback_networks"]
 
-    rc_filters = detect_rc_filters(ctx, voltage_dividers)
     lc_filters = detect_lc_filters(ctx)
     crystal_circuits = detect_crystal_circuits(ctx)
+    # KH-107: Pass crystal_circuits to exclude crystal R/C from RC filter detection
+    rc_filters = detect_rc_filters(ctx, voltage_dividers, crystal_circuits)
     decoupling_analysis = detect_decoupling(ctx)
     current_sense = detect_current_sense(ctx)
     power_regulators = detect_power_regulators(ctx, voltage_dividers)
@@ -2710,7 +2711,11 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
         elif any(kw in nu for kw in ("RESET", "NRST", "RST", "EN", "ENABLE")):
             net_classes[net_name] = "control"
         elif any(kw in nu for kw in ("CS", "SS", "NSS", "CE", "SEL")):
-            net_classes[net_name] = "chip_select"
+            # KH-097: Exclude video sync signals (CSYNC, HSYNC, VSYNC)
+            if any(sync in nu for sync in ("CSYNC", "HSYNC", "VSYNC", "SYNC")):
+                net_classes[net_name] = "signal"
+            else:
+                net_classes[net_name] = "chip_select"
         elif any(kw in nu for kw in ("INT", "IRQ", "ALERT", "DRDY")):
             net_classes[net_name] = "interrupt"
         elif any(kw in nu for kw in _OUTPUT_DRIVE_KEYWORDS):
