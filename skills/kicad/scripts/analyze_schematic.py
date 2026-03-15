@@ -35,6 +35,7 @@ from sexp_parser import (
 from kicad_utils import (
     COORD_EPSILON,
     _LOAD_TYPE_KEYWORDS,
+    _MIL_MM,
     _OUTPUT_DRIVE_KEYWORDS,
     _REGULATOR_VREF,
     classify_component,
@@ -64,29 +65,25 @@ def extract_lib_symbols(root: list) -> dict:
     if not lib_symbols_node:
         return {}
 
+    def _parse_single_pin(pin):
+        """Parse a single pin S-expression node into a dict."""
+        pin_type = pin[1] if len(pin) > 1 else "unknown"
+        pin_shape = pin[2] if len(pin) > 2 else "unknown"
+        at = get_at(pin)
+        pin_name_node = find_first(pin, "name")
+        pin_num_node = find_first(pin, "number")
+        pin_name = str(pin_name_node[1]) if pin_name_node and len(pin_name_node) > 1 and pin_name_node[1] is not None else ""
+        pin_num = str(pin_num_node[1]) if pin_num_node and len(pin_num_node) > 1 and pin_num_node[1] is not None else ""
+        return {
+            "number": pin_num, "name": pin_name,
+            "type": pin_type, "shape": pin_shape,
+            "offset": list(at) if at else None,
+        }
+
     def _extract_pins_from_node(node):
         """Extract pin definitions directly from a symbol node (not recursing into sub-symbols)."""
-        pins = []
-        for child in node:
-            if not isinstance(child, list) or len(child) < 3:
-                continue
-            if child[0] == "pin":
-                pin = child
-                pin_type = pin[1] if len(pin) > 1 else "unknown"
-                pin_shape = pin[2] if len(pin) > 2 else "unknown"
-                at = get_at(pin)
-                pin_name_node = find_first(pin, "name")
-                pin_num_node = find_first(pin, "number")
-                pin_name = str(pin_name_node[1]) if pin_name_node and len(pin_name_node) > 1 and pin_name_node[1] is not None else ""
-                pin_num = str(pin_num_node[1]) if pin_num_node and len(pin_num_node) > 1 and pin_num_node[1] is not None else ""
-                pins.append({
-                    "number": pin_num,
-                    "name": pin_name,
-                    "type": pin_type,
-                    "shape": pin_shape,
-                    "offset": list(at) if at else None,
-                })
-        return pins
+        return [_parse_single_pin(child) for child in node
+                if isinstance(child, list) and len(child) >= 3 and child[0] == "pin"]
 
     symbols = {}
     for sym in find_all(lib_symbols_node, "symbol"):
@@ -118,24 +115,7 @@ def extract_lib_symbols(root: list) -> dict:
 
         # If no sub-unit pins found, fall back to find_deep on the whole symbol
         if not all_pins:
-            all_pins = []
-            for pin in find_deep(sym, "pin"):
-                if len(pin) < 3:
-                    continue
-                pin_type = pin[1] if len(pin) > 1 else "unknown"
-                pin_shape = pin[2] if len(pin) > 2 else "unknown"
-                at = get_at(pin)
-                pin_name_node = find_first(pin, "name")
-                pin_num_node = find_first(pin, "number")
-                pin_name = str(pin_name_node[1]) if pin_name_node and len(pin_name_node) > 1 and pin_name_node[1] is not None else ""
-                pin_num = str(pin_num_node[1]) if pin_num_node and len(pin_num_node) > 1 and pin_num_node[1] is not None else ""
-                all_pins.append({
-                    "number": pin_num,
-                    "name": pin_name,
-                    "type": pin_type,
-                    "shape": pin_shape,
-                    "offset": list(at) if at else None,
-                })
+            all_pins = [_parse_single_pin(pin) for pin in find_deep(sym, "pin") if len(pin) >= 3]
 
         # Get symbol properties
         desc = get_property(sym, "Description") or ""
@@ -318,8 +298,8 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
 
         # Check for mirror
         mirror_node = find_first(sym, "mirror")
-        mirror_x = mirror_node is not None and "x" in mirror_node if mirror_node else False
-        mirror_y = mirror_node is not None and "y" in mirror_node if mirror_node else False
+        mirror_x = "x" in mirror_node if mirror_node else False
+        mirror_y = "y" in mirror_node if mirror_node else False
 
         # Extract unit number for multi-unit symbols
         unit_node = find_first(sym, "unit")
@@ -1835,7 +1815,7 @@ def _parse_legacy_lib(path: str) -> dict:
     if not lines or not lines[0].startswith("EESchema-LIBRARY"):
         return {}
 
-    MIL_TO_MM = 0.0254
+    MIL_TO_MM = _MIL_MM
     symbols = {}
     current_name = None
     current_pins = []
@@ -2098,7 +2078,7 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
     no_connects = []
     sub_sheet_paths = []
 
-    MIL_TO_MM = 0.0254
+    MIL_TO_MM = _MIL_MM
     base_dir = Path(path).parent
 
     i = 0

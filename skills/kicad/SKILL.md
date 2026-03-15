@@ -58,19 +58,20 @@ Outputs structured JSON (~60-220KB depending on board complexity) with:
 - **Components & BOM**: inventory with reference, value, footprint, lib_id, type classification, MPN, datasheet; deduplicated BOM with quantities
 - **Nets**: full connectivity map with pin-to-net mapping, wire counts, no-connects
 - **Signal analysis** (automated subcircuit detection):
-  - Power regulators — LDO/switching/inverting topology, Vout estimation via datasheet-verified Vref lookup (~60 families) with heuristic fallback, `vref_source` and `vout_net_mismatch` fields
-  - Voltage dividers, RC/LC filters (cutoff frequency), feedback networks, crystal circuits (load cap analysis)
-  - Op-amp circuits (configuration, gain), transistor circuits (net-name-aware load classification: motor/heater/fan/solenoid/valve/pump/relay/speaker/buzzer/lamp)
+  - Power regulators — LDO/switching/inverting topology, Vout estimation via datasheet-verified Vref lookup (~60 families) with heuristic fallback and fixed-output suffix parsing, `vref_source` (`lookup`/`heuristic`/`fixed_suffix`) and `vout_net_mismatch` fields
+  - Voltage dividers, RC/LC filters (cutoff frequency), feedback networks, crystal circuits (load cap analysis, IC pin-based detection)
+  - Op-amp circuits (configuration, gain, integrator/compensator), transistor circuits (net-name-aware load classification: motor/heater/fan/solenoid/valve/pump/relay/speaker/buzzer/lamp; FET level shifter topology)
   - Bridge circuits (H-bridge, 3-phase, cross-sheet detection), protection devices (ESD/TVS), current sense, decoupling analysis
-  - Domain-specific: RF chains, BMS, Ethernet, memory interfaces, key matrices, isolation barriers
+  - Domain-specific: RF chains, RF matching networks, BMS, Ethernet (BFS PHY-to-connector tracing), HDMI/DVI interfaces, memory interfaces, key matrices (net-name and topology-based), isolation barriers, addressable LED chains (WS2812/SK6812/APA102)
+- **IC pinout analysis**: pin-level connectivity, IC function classification (3-tier: library prefix, part number keywords, description fallback)
 - **Power analysis**: PDN impedance (1kHz–1GHz with MLCC parasitics), power budget, power sequencing (EN/PG chains), sleep current audit (resistive paths + regulator Iq with EN detection), voltage derating, inrush estimation
-- **Design analysis**: ERC warnings, power domains, bus detection (I2C/SPI/UART/CAN with COPI/CIPO/SDI/SDO), differential pairs (suffix-pair matching for USB/LVDS/Ethernet/HDMI/MIPI/PCIe/SATA/CAN/RS-485), cross-domain signals (voltage equivalence), BOM optimization, test coverage, assembly complexity, USB compliance
+- **Design analysis**: ERC warnings, power domains, bus detection (I2C/SPI/UART/CAN/RS-485 with COPI/CIPO/SDI/SDO), differential pairs (suffix-pair matching for USB/LVDS/Ethernet/HDMI/MIPI/PCIe/SATA/CAN/RS-485), cross-domain signals (voltage equivalence), BOM optimization, test coverage, assembly complexity, USB compliance
 - **Quality checks**: annotation completeness, label validation, PWR_FLAG audit, footprint filter validation, sourcing audit, property pattern audit, generic transistor symbol detection (flags Q_NPN_*/Q_PNP_*/Q_NMOS_*/Q_PMOS_* symbols with datasheet availability check)
 - **Structural**: MCU alternate pin summary, ground domain classification, bus topology, wire geometry, spatial clustering, pin coverage, hierarchical label validation
 
 Supports modern `.kicad_sch` (KiCad 6+) and legacy `.sch` (KiCad 4/5). Hierarchical designs parsed recursively.
 
-**Legacy format:** For KiCad 5 legacy `.sch` files, the analyzer parses `.lib` files (cache libraries and project libs) to populate pin data. Pin-to-net mapping, signal analysis, and subcircuit detection all work when `.lib` files are available. Coverage is typically 92–100% — components whose `.lib` files are missing (standard KiCad system libs not in the repo) will lack pin data. Built-in fallbacks cover common symbols (R, C, L, D, LED, transistors).
+**Legacy format:** For KiCad 5 legacy `.sch` files, the analyzer parses `.lib` files (cache libraries and project libs) to populate pin data. Pin-to-net mapping, signal analysis, and subcircuit detection all work when `.lib` files are available. Coverage is typically 92–100% — components whose `.lib` files are missing (standard KiCad system libs not in the repo) will lack pin data. Built-in fallbacks cover 40+ common symbols (R, C, L, D, LED, transistors, MOSFETs, crystals, switches, polarized caps, connectors up to 20-pin, resistor packs) with mil-based pin offsets and automatic wire-snap correction for version-mismatched pin positions.
 
 ### Supplementary Data for Legacy Designs
 
@@ -157,9 +158,9 @@ Optional (present when non-empty): `text_annotations`, `alternate_pin_summary`, 
 Key nested structures:
 - `statistics`: `{total_components, unique_parts, dnp_parts, total_nets, total_wires, total_no_connects, component_types, power_rails, missing_mpn, ...}`
 - `bom[]`: `{reference, references[], value, footprint, mpn, manufacturer, datasheet, quantity, dnp, ...}`
-- `components[]`: `{reference, value, footprint, lib_id, type, mpn, datasheet, dnp, in_bom, parsed_value, ...}`
+- `components[]`: `{reference, value, footprint, lib_id, lib_name, type, category, mpn, datasheet, dnp, in_bom, parsed_value, ...}`
 - `nets{net_name}`: `{pins[], wires, labels[], ...}` — each pin: `{component, pin_number, pin_name, pin_type, ...}` (NOT `ref` or `pin`)
-- `signal_analysis`: `{power_regulators[], voltage_dividers[], rc_filters[], opamp_circuits[], transistor_circuits[], bridge_circuits[], crystal_circuits[], current_sense[], decoupling_analysis[], protection_devices[], buzzer_speaker_circuits[], design_observations[], ...}`
+- `signal_analysis`: `{power_regulators[], voltage_dividers[], rc_filters[], lc_filters[], feedback_networks[], opamp_circuits[], transistor_circuits[], bridge_circuits[], crystal_circuits[], current_sense[], decoupling_analysis[], protection_devices[], buzzer_speaker_circuits[], ethernet_interfaces[], hdmi_dvi_interfaces[], memory_interfaces[], rf_chains[], rf_matching[], bms_systems[], key_matrices[], isolation_barriers[], addressable_led_chains[], design_observations[]}`
 
 **PCB analyzer top-level keys:**
 ```
@@ -167,7 +168,7 @@ file, kicad_version, file_version, statistics, layers, setup, nets,
 board_outline, component_groups, footprints, tracks, vias, zones,
 connectivity, net_lengths
 ```
-Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `current_capacity`, `thermal_analysis`, `layer_transitions`, `placement_analysis`, `silkscreen`, `dfm`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `tombstoning_risk`, `thermal_pad_vias`, `copper_presence`, `trace_proximity`
+Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `current_capacity`, `thermal_analysis`, `layer_transitions`, `placement_analysis`, `silkscreen`, `dfm`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `tombstoning_risk`, `thermal_pad_vias`, `copper_presence`, `trace_proximity` (with `--proximity`)
 
 Key nested structures:
 - `net_lengths` is a **list** (not dict): `[{net, net_number, total_length_mm, segment_count, via_count, layers{}}, ...]` sorted by length descending

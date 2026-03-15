@@ -30,6 +30,7 @@ from sexp_parser import (
     get_value,
     parse_file,
 )
+from kicad_utils import is_ground_name, is_power_net_name
 
 
 # ---------------------------------------------------------------------------
@@ -993,33 +994,13 @@ def group_components(footprints: list[dict]) -> dict:
             for prefix, refs in sorted(groups.items())}
 
 
-def _is_power_ground_net(name: str) -> bool:
-    """Check if a net name looks like power or ground."""
-    if not name:
-        return False
-    nu = name.upper()
-    if nu in ("GND", "VSS", "AGND", "DGND", "PGND", "GNDPWR", "GNDA", "GNDD",
-              "VCC", "VDD", "AVCC", "AVDD", "DVCC", "DVDD", "VBUS",
-              "VMAIN", "VPWR", "VSYS", "VBAT", "VCORE"):
-        return True
-    if nu.startswith("+") or nu.startswith("V+"):
-        return True
-    if nu.startswith("GND") or nu.endswith("GND"):
-        return True
-    if nu.startswith("VSS"):
-        return True
-    if len(nu) >= 3 and nu[0] == "V" and nu[1].isdigit():
-        return True
-    return False
-
-
 def analyze_power_nets(footprints: list[dict], tracks: dict,
                        net_names: dict[int, str]) -> list[dict]:
     """Analyze routing of power/ground nets — track widths, via counts."""
     # Identify power/ground nets
     power_nets = {}
     for net_num, name in net_names.items():
-        if _is_power_ground_net(name):
+        if is_power_net_name(name) or is_ground_name(name):
             power_nets[net_num] = {"name": name, "widths": set(), "track_count": 0,
                                    "total_length_mm": 0.0}
 
@@ -1091,230 +1072,6 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
                 "closest_cap_mm": nearby[0]["distance_mm"],
             })
     return results
-
-
-def analyze_connectivity_uf(footprints: list[dict], tracks: dict, vias: dict,
-                            net_names: dict[int, str],
-                            zones: list[dict] | None = None) -> dict:
-    """Full union-find connectivity analysis.
-
-    Instead of just checking "does this net have any tracks?", this builds
-    actual point-to-point connectivity from pads, tracks, and vias to find
-    nets that are partially routed (some pads connected, others not).
-    """
-    # For each net, build a union-find of connected points
-    # Points are identified by (x, y, layer) tuples, snapped to 0.001mm grid
-
-    def _snap(v: float) -> int:
-        """Snap to 1µm grid to handle floating point issues."""
-        return round(v * 1000)
-
-    # Build per-net point sets
-    net_points: dict[int, dict[tuple, int]] = {}  # net -> {point_key -> uf_id}
-    net_parent: dict[int, dict[int, int]] = {}  # net -> {id -> parent}
-
-    def _find(parents: dict[int, int], x: int) -> int:
-        while parents[x] != x:
-            parents[x] = parents[parents[x]]
-            x = parents[x]
-        return x
-
-    def _union(parents: dict[int, int], a: int, b: int) -> None:
-        ra, rb = _find(parents, a), _find(parents, b)
-        if ra != rb:
-            parents[ra] = rb
-
-    def _get_id(net: int, point: tuple) -> int:
-        if net not in net_points:
-            net_points[net] = {}
-            net_parent[net] = {}
-        pts = net_points[net]
-        if point not in pts:
-            uid = len(pts)
-            pts[point] = uid
-            net_parent[net][uid] = uid
-        return pts[point]
-
-    # 1. Register pad locations
-    pad_locs: dict[int, list[tuple[str, str]]] = {}  # net -> [(ref.pad, point_key)]
-    for fp in footprints:
-        for pad in fp.get("pads", []):
-            net_num = pad.get("net_number", 0)
-            if net_num <= 0:
-                continue
-            ax = _snap(pad.get("abs_x", 0))
-            ay = _snap(pad.get("abs_y", 0))
-            # Pads connect on all their layers
-            pad_layers = pad.get("layers", [])
-            for layer in pad_layers:
-                if "Cu" in layer:
-                    pt = (ax, ay, layer)
-                    _get_id(net_num, pt)
-            # For through-hole / vias (*.Cu), register on all copper layers
-            if any(l.startswith("*.") for l in pad_layers):
-                for layer in ["F.Cu", "B.Cu"]:
-                    pt = (ax, ay, layer)
-                    _get_id(net_num, pt)
-            pad_locs.setdefault(net_num, []).append(
-                (f"{fp['reference']}.{pad['number']}", (ax, ay)))
-
-    # 2. Register and union track segments
-    for seg in tracks.get("segments", []):
-        net = seg["net"]
-        if net <= 0:
-            continue
-        p1 = (_snap(seg["x1"]), _snap(seg["y1"]), seg["layer"])
-        p2 = (_snap(seg["x2"]), _snap(seg["y2"]), seg["layer"])
-        id1 = _get_id(net, p1)
-        id2 = _get_id(net, p2)
-        _union(net_parent[net], id1, id2)
-
-    for arc in tracks.get("arcs", []):
-        net = arc["net"]
-        if net <= 0:
-            continue
-        s = arc["start"]
-        e = arc["end"]
-        p1 = (_snap(s[0]), _snap(s[1]), arc["layer"])
-        p2 = (_snap(e[0]), _snap(e[1]), arc["layer"])
-        id1 = _get_id(net, p1)
-        id2 = _get_id(net, p2)
-        _union(net_parent[net], id1, id2)
-
-    # 3. Register and union vias (connect layers at the same XY)
-    for via in vias.get("vias", []):
-        net = via["net"]
-        if net <= 0:
-            continue
-        vx = _snap(via["x"])
-        vy = _snap(via["y"])
-        via_layers = via.get("layers", ["F.Cu", "B.Cu"])
-        prev_id = None
-        for layer in via_layers:
-            pt = (vx, vy, layer)
-            vid = _get_id(net, pt)
-            if prev_id is not None:
-                _union(net_parent[net], prev_id, vid)
-            prev_id = vid
-
-    # 4. Account for zone connectivity
-    # Copper zones connect all pads on the same net within the zone area.
-    # Approximation: if a net has a zone on a layer, union ALL pads on that
-    # net+layer (assumes zone covers all pads — accurate for power/ground
-    # planes, may overcount for partial zones).
-    # NOTE: ZoneFills spatial data could improve this by checking if each
-    # pad is within the zone outline, but thermal relief clearances around
-    # pads mean point-in-fill tests would give false negatives. The zone
-    # outline polygon (not the fill polygon) would be the right test here.
-    if zones:
-        zone_nets: dict[int, set[str]] = {}  # net_num -> set of zone layers
-        for z in zones:
-            zn = z.get("net", 0)
-            if zn > 0:
-                for zl in z.get("layers", []):
-                    zone_nets.setdefault(zn, set()).add(zl)
-
-        # Build pad lookup by net for zone registration
-        _pad_by_net: dict[int, list[tuple[int, int, list[str]]]] = {}
-        for fp in footprints:
-            for pad in fp.get("pads", []):
-                pnet = pad.get("net_number", 0)
-                if pnet > 0 and pnet in zone_nets:
-                    ax = _snap(pad.get("abs_x", 0))
-                    ay = _snap(pad.get("abs_y", 0))
-                    p_layers = pad.get("layers", [])
-                    _pad_by_net.setdefault(pnet, []).append((ax, ay, p_layers))
-
-        for net_num, z_layers in zone_nets.items():
-            for zlayer in z_layers:
-                # Register and union all pads on this net that are on the zone layer
-                first_id = None
-                for (ax, ay, p_layers) in _pad_by_net.get(net_num, []):
-                    # Check if pad is on this zone layer
-                    on_layer = (zlayer in p_layers or
-                                any(l.startswith("*.") for l in p_layers))
-                    if on_layer:
-                        pt = (ax, ay, zlayer)
-                        pid = _get_id(net_num, pt)
-                        if first_id is not None:
-                            _union(net_parent[net_num], first_id, pid)
-                        else:
-                            first_id = pid
-
-                # Also union any track/via points on this layer
-                if first_id is not None and net_num in net_points:
-                    pts = net_points[net_num]
-                    for (px, py, pl), pid in pts.items():
-                        if pl == zlayer:
-                            _union(net_parent[net_num], first_id, pid)
-
-    # 5. Find unrouted / partially routed nets
-    # For each net with ≥2 pads, check how many connected components exist
-    unrouted = []
-    partially_routed = []
-    pad_nets: dict[int, list[str]] = {}
-    for fp in footprints:
-        for pad in fp.get("pads", []):
-            net_num = pad.get("net_number", 0)
-            if net_num > 0:
-                pad_nets.setdefault(net_num, []).append(
-                    f"{fp['reference']}.{pad['number']}")
-
-    routed_count = 0
-    for net_num, pads in pad_nets.items():
-        if len(pads) < 2:
-            continue
-
-        if net_num not in net_points:
-            # No routing at all for this net
-            unrouted.append({
-                "net_number": net_num,
-                "net_name": net_names.get(net_num, f"net_{net_num}"),
-                "pad_count": len(pads),
-                "pads": pads,
-                "status": "unrouted",
-            })
-            continue
-
-        # Count connected components among pad points
-        parents = net_parent[net_num]
-        pts = net_points[net_num]
-        # Find which component each pad belongs to
-        pad_components = set()
-        for pad_label, (px, py) in pad_locs.get(net_num, []):
-            # Try to find this pad in the point map (check all copper layers)
-            found = False
-            for layer in ["F.Cu", "B.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu"]:
-                pt = (px, py, layer)
-                if pt in pts:
-                    pad_components.add(_find(parents, pts[pt]))
-                    found = True
-                    break
-            if not found:
-                # Pad not connected to any routing
-                pad_components.add(-hash(pad_label))  # unique disconnected ID
-
-        if len(pad_components) <= 1:
-            routed_count += 1
-        else:
-            partially_routed.append({
-                "net_number": net_num,
-                "net_name": net_names.get(net_num, f"net_{net_num}"),
-                "pad_count": len(pads),
-                "connected_groups": len(pad_components),
-                "pads": pads,
-                "status": "partially_routed",
-            })
-
-    return {
-        "total_nets_with_pads": len(pad_nets),
-        "fully_routed": routed_count,
-        "partially_routed_count": len(partially_routed),
-        "unrouted_count": len(unrouted),
-        "routing_complete": len(unrouted) == 0 and len(partially_routed) == 0,
-        "unrouted": sorted(unrouted, key=lambda u: u["net_name"]),
-        "partially_routed": sorted(partially_routed, key=lambda u: u["net_name"]),
-    }
 
 
 def analyze_net_lengths(tracks: dict, vias: dict,
@@ -1494,7 +1251,7 @@ def analyze_trace_proximity(tracks: dict, net_names: dict[int, str],
     pair_counts: dict[tuple[str, int, int], int] = {}
     for (_layer, _gx, _gy), nets in grid.items():
         signal = sorted(n for n in nets
-                        if not _is_power_ground_net(net_names.get(n, "")))
+                        if not (is_power_net_name(net_names.get(n, "")) or is_ground_name(net_names.get(n, ""))))
         if len(signal) < 2:
             continue
         for i in range(len(signal)):
@@ -1609,7 +1366,7 @@ def analyze_current_capacity(tracks: dict, vias: dict, zones: list[dict],
         if data["min_width"] == float("inf"):
             continue
         name = net_names.get(net_num, f"net_{net_num}")
-        is_power = _is_power_ground_net(name)
+        is_power = is_power_net_name(name) or is_ground_name(name)
 
         entry = {
             "net": name,
@@ -2484,7 +2241,7 @@ def analyze_layer_transitions(tracks: dict, vias: dict,
         if len(data["layers"]) < 2:
             continue
         name = net_names.get(net_num, f"net_{net_num}")
-        if _is_power_ground_net(name):
+        if is_power_net_name(name) or is_ground_name(name):
             continue  # Power/ground layer transitions are expected
 
         entry = {
@@ -3066,8 +2823,8 @@ def analyze_tombstoning_risk(footprints: list[dict], tracks: dict,
             risk_level = "high" if sp["package"] == "0201" else "medium"
 
         # Check 2: GND net on one pad, signal on other (common tombstone cause)
-        a_is_gnd = _is_power_ground_net(net_name_a) and "GND" in net_name_a.upper()
-        b_is_gnd = _is_power_ground_net(net_name_b) and "GND" in net_name_b.upper()
+        a_is_gnd = is_ground_name(net_name_a)
+        b_is_gnd = is_ground_name(net_name_b)
         if a_is_gnd != b_is_gnd:
             gnd_pad = "pad 1" if a_is_gnd else "pad 2"
             risks.append(f"{gnd_pad} is GND (likely ground pour), "

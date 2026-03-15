@@ -278,7 +278,7 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         "R": "resistor", "RS": "resistor", "RN": "resistor_network",
         "RM": "resistor_network", "RA": "resistor_network",
         "C": "capacitor", "L": "inductor",
-        "D": "diode", "TVS": "diode", "V": "varistor",
+        "D": "diode", "TVS": "diode", "CR": "diode", "V": "varistor",
         # Semiconductors
         "Q": "transistor", "FET": "transistor",
         "U": "ic", "IC": "ic",
@@ -320,6 +320,7 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
     if result:
         val_low = value.lower() if value else ""
         lib_low = lib_id.lower() if lib_id else ""
+        fp_low = footprint.lower() if footprint else ""
         if any(x in val_low for x in ("testpad", "test_pad", "testpoint", "test_point")):
             return "test_point"
         # Crystal/oscillator override: Q-prefix crystals (Q for quartz),
@@ -331,13 +332,22 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                 return "crystal"
             if has_osc:
                 return "oscillator"
-        if result == "varistor" and ("r_pot" in lib_low or "potentiometer" in lib_low
-                                     or "potentiometer" in val_low):
-            return "resistor"
-        if result == "transformer" and any(x in lib_low or x in val_low
-                                           for x in ("mosfet", "fet", "transistor",
-                                                     "amplifier", "rf_amp", "mmic")):
-            return "ic"
+        if result == "varistor":
+            if ("r_pot" in lib_low or "pot" in lib_low or "potentiometer" in lib_low
+                    or "potentiometer" in val_low):
+                return "resistor"
+            if ("regulator" in lib_low or "regulator" in fp_low
+                    or any(x in val_low for x in ("ams1117", "lm78", "lm317",
+                                                   "ld1117", "lm1117", "ap1117"))):
+                return "ic"
+        if result == "transformer":
+            if any(x in lib_low or x in val_low or x in fp_low
+                   for x in ("mosfet", "fet", "transistor", "bjt",
+                             "q_npn", "q_pnp", "q_nmos", "q_pmos")):
+                return "transistor"
+            if any(x in lib_low or x in val_low
+                   for x in ("amplifier", "rf_amp", "mmic")):
+                return "ic"
         if result == "thermistor" and any(x in lib_low or x in val_low
                                           for x in ("fuse", "polyfuse", "pptc",
                                                     "reset fuse", "ptc fuse")):
@@ -345,7 +355,7 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         if result == "thermistor" and any(x in lib_low or x in val_low
                                           for x in ("mov", "varistor")):
             return "varistor"
-        if result == "diode" and ("led" in lib_low or "led" in val_low):
+        if result == "diode" and re.search(r'(?<![a-z])led(?![a-z])', lib_low + " " + val_low):
             return "led"
         if result == "inductor":
             if any(x in lib_low or x in val_low for x in ("ferrite", "bead")):
@@ -457,6 +467,8 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         return "diode"
     if "fuse" in lib_lower or "polyfuse" in lib_lower:
         return "fuse"
+    if "ferritebead" in lib_lower or "ferrite_bead" in lib_lower:
+        return "ferrite_bead"
     if "inductor" in lib_lower or "choke" in lib_lower:
         return "inductor"
     if "capacitor" in lib_lower:
@@ -478,17 +490,30 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                     return "diode"
                 if "test" in lib_lower or "tp" in fp_lower:
                     return "test_point"
+                if any(x in lib_lower or x in val_lower or x in fp_lower
+                       for x in ("mosfet", "fet", "transistor", "bjt",
+                                 "q_npn", "q_pnp", "q_nmos", "q_pmos")):
+                    return "transistor"
             if result == "fuse":
                 if "fiducial" in lib_lower:
                     return "fiducial"
                 if "filter" in lib_lower or "emi" in lib_lower:
                     return "filter"
+                if "ferrite" in lib_lower or "bead" in lib_lower:
+                    return "ferrite_bead"
             if result == "capacitor":
                 if "shield" in lib_lower or "clip" in lib_lower:
                     return "mechanical"
             if result == "switch":
                 if "standoff" in lib_lower or "smtso" in val_lower:
                     return "mounting_hole"
+            if result == "varistor":
+                if ("regulator" in lib_lower or "regulator" in fp_lower
+                        or any(x in val_lower for x in ("ams1117", "lm78", "lm317",
+                                                         "ld1117", "lm1117", "ap1117"))):
+                    return "ic"
+                if "pot" in lib_lower or "potentiometer" in lib_lower:
+                    return "resistor"
             if result == "ic":
                 if "bjt" in lib_lower or "transistor" in lib_lower:
                     return "transistor"

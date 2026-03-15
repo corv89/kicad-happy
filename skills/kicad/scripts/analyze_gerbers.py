@@ -19,13 +19,15 @@ Usage:
 """
 
 import json
-import math
 import re
 import sys
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+
+_POWER_KEYWORDS_GERBER = {"vcc", "vdd", "gnd", "agnd", "dgnd", "gndref",
+                          "vss", "avdd", "dvdd", "vbat", "vbus", "vin"}
 
 # ---------------------------------------------------------------------------
 # Gerber parser
@@ -752,15 +754,13 @@ def build_component_analysis(gerbers: list[dict], drills: list[dict]) -> dict | 
         return None
 
     # Classify nets
-    power_keywords = {"vcc", "vdd", "gnd", "agnd", "dgnd", "gndref",
-                      "vss", "avdd", "dvdd", "vbat", "vbus", "vin"}
     power_prefixes = ("+", "-")
     power_nets = set()
     signal_nets = set()
     unnamed_nets = 0
     for n in all_nets:
         nl = n.lower()
-        if nl in power_keywords or n.startswith(power_prefixes) or nl.startswith("vcc") or nl.startswith("vdd"):
+        if nl in _POWER_KEYWORDS_GERBER or n.startswith(power_prefixes) or nl.startswith("vcc") or nl.startswith("vdd"):
             power_nets.add(n)
         elif n.startswith("Net-(") or n.startswith("unconnected-("):
             unnamed_nets += 1
@@ -809,14 +809,12 @@ def build_net_analysis(gerbers: list[dict]) -> dict | None:
         return None
 
     # Classify
-    power_keywords = {"vcc", "vdd", "gnd", "agnd", "dgnd", "gndref",
-                      "vss", "avdd", "dvdd", "vbat", "vbus", "vin"}
     power_nets = []
     signal_nets = []
     unnamed_count = 0
     for n in sorted(all_nets):
         nl = n.lower()
-        if (nl in power_keywords or n.startswith(("+", "-"))
+        if (nl in _POWER_KEYWORDS_GERBER or n.startswith(("+", "-"))
                 or nl.startswith(("vcc", "vdd", "vss"))):
             power_nets.append(n)
         elif n.startswith("Net-(") or n.startswith("unconnected-("):
