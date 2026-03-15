@@ -64,6 +64,9 @@ def _tokenize(text: str) -> list[str]:
 
 def _parse_tokens(tokens: list[str], pos: int) -> tuple[Any, int]:
     """Recursively parse tokens starting at pos. Returns (result, new_pos)."""
+    # KH-101: Bounds check for truncated/malformed files with unbalanced parens
+    if pos >= len(tokens):
+        raise ValueError("Unexpected end of input at position %d" % pos)
     if tokens[pos] == "(":
         lst = []
         pos += 1

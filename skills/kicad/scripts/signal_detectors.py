@@ -230,8 +230,9 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
     return {"voltage_dividers": voltage_dividers, "feedback_networks": feedback_networks}
 
 
-def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict]) -> list[dict]:
-    """Detect RC filters. Takes voltage_dividers to exclude VD resistors."""
+def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
+                      crystal_circuits: list[dict] | None = None) -> list[dict]:
+    """Detect RC filters. Takes voltage_dividers/crystal_circuits to exclude."""
     results_rc: list[dict] = []
 
     resistors = [c for c in ctx.components if c["type"] == "resistor" and c["reference"] in ctx.parsed_values]
@@ -254,6 +255,18 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict]) -> lis
         vd_resistor_refs.add(vd["r_top"]["ref"])
         vd_resistor_refs.add(vd["r_bottom"]["ref"])
 
+    # KH-107: Exclude crystal circuit components (load caps + feedback resistors)
+    crystal_refs = set()
+    for xtal in (crystal_circuits or []):
+        crystal_refs.add(xtal.get("reference", ""))
+        for lc in xtal.get("load_caps", []):
+            crystal_refs.add(lc["ref"])
+        fb = xtal.get("feedback_resistor")
+        if isinstance(fb, dict):
+            crystal_refs.add(fb.get("ref", ""))
+        elif isinstance(fb, str) and fb:
+            crystal_refs.add(fb)
+
     capacitors = [c for c in ctx.components if c["type"] == "capacitor" and c["reference"] in ctx.parsed_values]
 
     # Index capacitors by net for O(n) RC pair-finding instead of O(R*C)
@@ -270,6 +283,8 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict]) -> lis
     for res in resistors:
         if res["reference"] in vd_resistor_refs:
             continue  # Skip voltage divider resistors
+        if res["reference"] in crystal_refs:
+            continue  # KH-107: Skip crystal circuit components
         if res["reference"] not in resistor_nets:
             continue
         r_n1, r_n2 = resistor_nets[res["reference"]]
@@ -283,6 +298,8 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict]) -> lis
                     candidate_caps.add(cref)
 
         for cap_ref in candidate_caps:
+            if cap_ref in crystal_refs:
+                continue  # KH-107: Skip crystal circuit components
             c_n1, c_n2 = cap_nets[cap_ref]
             c_nets = {c_n1, c_n2}
 
@@ -952,7 +969,10 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         _non_reg_exclude = ("eeprom", "flash", "spi_flash", "rtc", "uart",
                             "usb_uart", "buffer", "logic_", "encoder",
                             "w25q", "at24c", "24c0", "pcf85", "ht42b", "ch340",
-                            "cp210", "ft232", "74lvc", "74hc")
+                            "cp210", "ft232", "74lvc", "74hc",
+                            # KH-100: WiFi/BT modules with filter inductors
+                            "ap62", "ap63", "esp32", "esp8266",
+                            "cyw43", "wl18")
         if any(k in _lib_val_check for k in _non_reg_exclude):
             continue
 
@@ -1028,9 +1048,11 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         if any(k in lib_val_lower for k in _rf_exclude):
             continue
 
-        # Exclude power multiplexers/load switches (TPS2116, TPS2121, LTC4412)
+        # Exclude power multiplexers/load switches/ideal diode controllers
         _power_mux_exclude = ("power_mux", "load_switch", "tps211", "tps212",
-                              "ltc441", "ideal_diode")
+                              "ltc441", "ideal_diode",
+                              # KH-108: Ideal diode OR controllers
+                              "lm6620", "lm6610", "ltc435", "ltc430")
         if any(k in lib_val_lower for k in _power_mux_exclude):
             continue
 
@@ -1133,6 +1155,12 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         if is_inverting:
             reg_info["inverting"] = True
 
+        # KH-104: Sanity check — power rails should never be GND
+        if reg_info.get("input_rail") and _is_ground_name(reg_info["input_rail"]):
+            reg_info["input_rail"] = None
+        if reg_info.get("output_rail") and _is_ground_name(reg_info["output_rail"]):
+            reg_info["output_rail"] = None
+
         # Check for fixed-output regulator (voltage encoded in part number)
         fixed_vout, fixed_source = _lookup_regulator_vref(
             ic.get("value", ""), ic.get("lib_id", ""))
@@ -1183,6 +1211,10 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                                 }
                                 break
                     break
+
+        # KH-090: Fixed-output LDOs are never inverting
+        if reg_info.get("inverting") and reg_info.get("topology") == "LDO" and not fb_pin:
+            del reg_info["inverting"]
 
         # Negate Vout for inverting regulators
         if reg_info.get("inverting") and "estimated_vout" in reg_info:
@@ -2888,6 +2920,9 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
         "ltc681", "ltc682", "ltc683", "ltc680",
         "isl9420", "isl9421", "max1726", "max1730",
         "afe", "ip5189", "ip5306", "tp4056", "mp2639",
+        # KH-109: Single-cell linear charger ICs
+        "mcp738", "bq2104", "bq2405", "bq2407",
+        "ltc405", "max1555", "max1551",
     )
 
     bms_ics = []
@@ -3077,10 +3112,14 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
         nn = net_name.upper()
         if "I2S" in nn:
             continue
+        # KH-099: Exclude I2S audio pins (SDAT, LRCK, BCLK, WSEL)
+        if any(kw in nn for kw in ("SDAT", "LRCK", "BCLK", "WSEL")):
+            continue
         # KH-086: Exclude SPI nets — sensors with dual-function SDA/SCL pin names
         if "SPI" in nn or "MOSI" in nn or "MISO" in nn:
             continue
-        is_sda = bool(re.search(r'\bSDA\b', nn) or re.search(r'I2C.*SDA|SDA.*I2C', nn))
+        # KH-099: Tighten SDA regex to exclude SDAT (I2S serial data)
+        is_sda = bool(re.search(r'\bSDA\b(?!T)', nn) or re.search(r'I2C.*SDA|SDA.*I2C', nn))
         is_scl = bool(re.search(r'\bSCL\b', nn) or re.search(r'I2C.*SCL|SCL.*I2C', nn))
         if "SCLK" in nn or "SCK" in nn:
             is_scl = False
