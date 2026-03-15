@@ -11,6 +11,16 @@ import re
 # Coordinate matching tolerance (mm) — used across net building and connectivity analysis
 COORD_EPSILON = 0.01
 
+# Legacy .sch files use integer mils (1/1000 inch).  The conversion pipeline
+# (mil * 0.0254 → round(4) → rotate via trig → round(4)) accumulates
+# floating-point error that can exceed COORD_EPSILON.  Snapping back to the
+# nearest mil grid after all transforms eliminates the drift.
+_MIL_MM = 0.0254  # 1 mil in mm
+
+def snap_to_mil_grid(x_mm: float) -> float:
+    """Snap a mm coordinate to the nearest mil grid point."""
+    return round(x_mm / _MIL_MM) * _MIL_MM
+
 # Regulator Vref lookup table — maps part number prefixes to their internal
 # reference voltage.  Used by the feedback divider Vout estimator instead of
 # guessing from a list.  Entries are checked in order; first prefix match wins.
@@ -126,6 +136,25 @@ def lookup_regulator_vref(value: str, lib_id: str) -> tuple[float | None, str]:
     candidates = [value.upper()]
     if ":" in lib_id:
         candidates.append(lib_id.split(":")[-1].upper())
+    # Check for fixed-output voltage suffix (e.g., LM2596S-12, AMS1117-3.3,
+    # TLV1117LV-33, RT9013-18GV — patterns: -3.3, -33, -3V3, -1V8, -12)
+    for candidate in candidates:
+        m = re.search(r'[-_](\d+)V(\d+)', candidate)
+        if m:
+            return float(f"{m.group(1)}.{m.group(2)}"), "fixed_suffix"
+        m = re.search(r'[-_](\d+\.\d+)(?:V)?(?=[^0-9]|$)', candidate)
+        if m:
+            fixed_v = float(m.group(1))
+            if 0.5 <= fixed_v <= 60:
+                return fixed_v, "fixed_suffix"
+        m = re.search(r'[-_](\d{2})(?=[^0-9.]|$)', candidate)
+        if m:
+            # Two-digit suffix: interpret as voltage with implicit decimal
+            # 33 → 3.3V, 18 → 1.8V, 25 → 2.5V, 50 → 5.0V, 12 → 1.2V
+            digits = m.group(1)
+            fixed_v = float(digits[0] + "." + digits[1])
+            if 0.5 <= fixed_v <= 9.9:
+                return fixed_v, "fixed_suffix"
     for candidate in candidates:
         for prefix, vref in _REGULATOR_VREF.items():
             if candidate.startswith(prefix.upper()):
@@ -175,7 +204,13 @@ def parse_value(value_str: str) -> float | None:
 
     # Strip tolerance, voltage rating, package, and other suffixes
     # Common formats: "680K 1%", "220k/R0402", "22uF/6.3V/20%/X5R/C0603"
-    s = value_str.strip().split("/")[0].split()[0]  # take part before first "/" or space
+    # KiCad 9 uses space-separated units: "18 pF", "4.7 uF" — rejoin if
+    # the second token starts with an SI prefix letter.
+    parts = value_str.strip().split("/")[0].split()
+    if len(parts) >= 2 and parts[1] and parts[1][0] in "pnuµmkKMGRr":
+        s = parts[0] + parts[1]
+    else:
+        s = parts[0] if parts else ""
     # Strip trailing unit words (mOhm, Ohm, ohm, ohms) before single-char stripping
     s = re.sub(r'[Oo]hms?$', '', s)
     s = s.rstrip("FHΩVfhv%")         # strip trailing unit letters
@@ -249,10 +284,13 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         "U": "ic", "IC": "ic",
         # Connectors and mechanical
         "J": "connector", "P": "connector",
-        "SW": "switch", "S": "switch", "BUT": "switch",
+        "SW": "switch", "S": "switch", "BUT": "switch", "BTN": "switch", "BUTTON": "switch",
         "K": "relay",
         "F": "fuse", "FUSE": "fuse",
         "Y": "crystal",
+        # Connector prefixes that conflict with single-char fallback (LAN→L→inductor)
+        "LAN": "connector", "CON": "connector", "USB": "connector",
+        "HDMI": "connector", "RJ": "connector", "ANT": "connector",
         "BT": "battery",
         "BZ": "buzzer", "LS": "speaker", "SP": "speaker",
         "OK": "optocoupler", "OC": "optocoupler",
@@ -277,11 +315,22 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         "#PWR": "power_flag", "#FLG": "flag",
     }
 
+    # --- Full prefix match: high confidence ---
     result = type_map.get(prefix)
     if result:
-        # Override prefix-based heuristics when lib_id provides better info
         val_low = value.lower() if value else ""
         lib_low = lib_id.lower() if lib_id else ""
+        if any(x in val_low for x in ("testpad", "test_pad", "testpoint", "test_point")):
+            return "test_point"
+        # Crystal/oscillator override: Q-prefix crystals (Q for quartz),
+        # CR-prefix oscillators, or any prefix where lib_id clearly says crystal/oscillator
+        if result not in ("crystal", "oscillator"):
+            has_xtal = any(x in lib_low for x in ("crystal", "xtal"))
+            has_osc = "oscillator" in lib_low
+            if has_xtal:
+                return "crystal"
+            if has_osc:
+                return "oscillator"
         if result == "varistor" and ("r_pot" in lib_low or "potentiometer" in lib_low
                                      or "potentiometer" in val_low):
             return "resistor"
@@ -303,7 +352,9 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                 return "ferrite_bead"
         return result
 
-    # Fallback: check value/lib_id for common patterns
+    # --- No full-prefix match.  Try lib_id / value before single-char fallback ---
+    # This ordering ensures that DA1 with lib=Analog_DAC gets "ic" (not D→diode),
+    # and PS1 with lib=Regulator_Linear gets "ic" (not P→connector).
     val_lower = value.lower() if value else ""
     lib_lower = lib_id.lower() if lib_id else ""
 
@@ -329,7 +380,10 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         if any(x in val_lower for x in ["dsc6", "si5", "sg-", "asfl", "sit8", "asco"]):
             return "oscillator"
         # Passive crystals
+        # Also catch compact frequency notation like "8M", "12M", "32.768K"
         if any(x in val_lower for x in ["xtal", "crystal", "mhz", "khz", "osc"]):
+            return "crystal"
+        if re.match(r'^\d+\.?\d*[mkMK]$', value):
             return "crystal"
         if any(x in lib_lower for x in ["crystal", "xtal", "osc", "clock"]):
             return "crystal"
@@ -379,7 +433,9 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                    "HDMI", "EXT", "GPIO", "CAN", "SWD", "JTAG",
                    "ANT", "RJ", "SUPPLY"):
         return "connector"
-    if "switch" in lib_lower:
+    if "switch" in lib_lower or "button" in lib_lower:
+        return "switch"
+    if any(x in val_lower for x in ("button", "tact", "push", "t1102", "t1107", "yts-a")):
         return "switch"
     if "relay" in lib_lower:
         return "relay"
@@ -387,6 +443,14 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         return "net_tie"
     if "led" in lib_lower and "diode" in lib_lower:
         return "led"
+    # IC detection from KiCad stdlib library prefixes (Analog_ADC, MCU_*, Regulator_*, etc.)
+    _ic_lib_prefixes = ("analog_", "audio", "comparator", "converter_",
+                        "driver_", "display_", "fpga_", "interface_",
+                        "logic_", "mcu_", "memory_", "motor_",
+                        "multiplexer", "power_management", "power_supervisor",
+                        "regulator_", "sensor_", "timer", "rf_")
+    if any(lib_prefix.startswith(p) for p in _ic_lib_prefixes):
+        return "ic"
     if "transistor" in lib_lower or "mosfet" in lib_lower:
         return "transistor"
     if "diode" in lib_lower:
@@ -399,6 +463,14 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         return "capacitor"
     if "resistor" in lib_lower:
         return "resistor"
+
+    # --- Last resort: single-char prefix fallback ---
+    # Only reached when lib_id/value didn't resolve the type.
+    # Deliberately placed last so lib_id always takes priority.
+    if len(prefix) > 1:
+        result = type_map.get(prefix[0])
+        if result:
+            return result
 
     return "other"
 

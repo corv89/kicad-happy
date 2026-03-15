@@ -45,6 +45,7 @@ from kicad_utils import (
     lookup_regulator_vref as _lookup_regulator_vref,
     parse_value,
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
+    snap_to_mil_grid as _snap_mil,
 )
 from kicad_types import AnalysisContext
 
@@ -456,6 +457,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     Each detector takes an AnalysisContext and returns its detection results.
     """
     from signal_detectors import (
+        detect_addressable_leds,
         detect_bms_systems,
         detect_bridge_circuits,
         detect_buzzer_speakers,
@@ -464,6 +466,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         detect_decoupling,
         detect_design_observations,
         detect_ethernet_interfaces,
+        detect_hdmi_dvi_interfaces,
         detect_integrated_ldos,
         detect_isolation_barriers,
         detect_key_matrices,
@@ -513,16 +516,35 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
 
     # Post-processing that needs cross-detector data
     voltage_dividers, feedback_networks = postfilter_vd_and_dedup(
-        voltage_dividers, feedback_networks, transistor_circuits)
+        voltage_dividers, feedback_networks, transistor_circuits, nets=ctx.nets)
     detect_led_drivers(ctx, transistor_circuits)
     buzzer_speaker_circuits = detect_buzzer_speakers(ctx, transistor_circuits)
     key_matrices = detect_key_matrices(ctx)
     isolation_barriers = detect_isolation_barriers(ctx)
     ethernet_interfaces = detect_ethernet_interfaces(ctx)
+    hdmi_dvi_interfaces = detect_hdmi_dvi_interfaces(ctx)
     memory_interfaces = detect_memory_interfaces(ctx)
     rf_chains = detect_rf_chains(ctx)
     rf_matching = detect_rf_matching(ctx)
     bms_systems = detect_bms_systems(ctx)
+    addressable_led_chains = detect_addressable_leds(ctx)
+
+    # Remove R/C components that appear in crystal circuits from RC filter
+    # results — prevents misclassifying crystal feedback resistors + load caps
+    # as RC filters (e.g., "10M + 22pF = 723Hz RC filter").
+    if crystal_circuits and rc_filters:
+        xtal_refs = set()
+        for xc in crystal_circuits:
+            for lc in xc.get("load_caps", []):
+                xtal_refs.add(lc["ref"])
+            if "feedback_resistor" in xc:
+                xtal_refs.add(xc["feedback_resistor"])
+        if xtal_refs:
+            rc_filters = [
+                f for f in rc_filters
+                if f.get("resistor", {}).get("reference") not in xtal_refs
+                and f.get("capacitor", {}).get("reference") not in xtal_refs
+            ]
 
     results = {
         "voltage_dividers": voltage_dividers,
@@ -542,10 +564,12 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         "key_matrices": key_matrices,
         "isolation_barriers": isolation_barriers,
         "ethernet_interfaces": ethernet_interfaces,
+        "hdmi_dvi_interfaces": hdmi_dvi_interfaces,
         "memory_interfaces": memory_interfaces,
         "rf_chains": rf_chains,
         "rf_matching": rf_matching,
         "bms_systems": bms_systems,
+        "addressable_led_chains": addressable_led_chains,
     }
 
     results["design_observations"] = detect_design_observations(ctx, results)
@@ -1112,6 +1136,216 @@ def get_net_neighbors(net_info: dict, exclude_ref: str) -> list[dict]:
     return neighbors
 
 
+def _classify_ic_function(lib_id: str, value: str, description: str) -> str:
+    """Classify IC function from library ID, value, and description.
+
+    Three-tier lookup:
+    1. KiCad stdlib library prefix (most reliable)
+    2. Value/part number keyword matching
+    3. Description keyword fallback
+    """
+    lib_lower = lib_id.lower()
+    val_lower = value.lower()
+    desc_lower = description.lower()
+
+    # Skip connectors — they're analyzed for pinout but not for IC function
+    lib_prefix = lib_lower.split(":")[0] if ":" in lib_lower else ""
+    if lib_prefix.startswith("connector"):
+        return ""
+
+    # Tier 1: KiCad standard library prefix mapping
+    _LIB_PREFIX_MAP = {
+        "regulator_linear": "linear regulator",
+        "regulator_switching": "switching regulator",
+        "regulator_controller": "regulator controller",
+        "amplifier_operational": "operational amplifier",
+        "amplifier_audio": "audio amplifier",
+        "amplifier_instrumentation": "instrumentation amplifier",
+        "amplifier_difference": "difference amplifier",
+        "amplifier_current": "current sense amplifier",
+        "amplifier_buffer": "buffer amplifier",
+        "amplifier_video": "video amplifier",
+        "analog_adc": "ADC",
+        "analog_dac": "DAC",
+        "analog_switch": "analog switch",
+        "comparator": "comparator",
+        "converter_dcdc": "DC-DC converter",
+        "driver_motor": "motor driver",
+        "driver_led": "LED driver",
+        "driver_gate": "gate driver",
+        "driver_display": "display driver",
+        "driver_fet": "FET driver",
+        "interface_can_lin": "CAN/LIN transceiver",
+        "interface_ethernet": "Ethernet PHY",
+        "interface_usb": "USB interface",
+        "interface_uart": "UART interface",
+        "interface_spi": "SPI interface",
+        "interface_i2c": "I2C interface",
+        "interface_rs485": "RS-485 transceiver",
+        "interface_lvds": "LVDS interface",
+        "interface_hdmi": "HDMI interface",
+        "interface_optical": "optical interface",
+        "logic_74xx": "logic IC (74xx)",
+        "logic_4000": "logic IC (4000 series)",
+        "logic_level": "level shifter",
+        "memory_eeprom": "EEPROM",
+        "memory_flash": "flash memory",
+        "memory_ram": "RAM",
+        "memory_rom": "ROM",
+        "mcu": "microcontroller",
+        "fpga": "FPGA",
+        "cpld": "CPLD",
+        "dsp": "DSP",
+        "power_management": "power management IC",
+        "power_supervisor": "voltage supervisor",
+        "power_protection": "power protection IC",
+        "rf_amplifier": "RF amplifier",
+        "rf_mixer": "RF mixer",
+        "rf_switch": "RF switch",
+        "rf": "RF IC",
+        "sensor_temperature": "temperature sensor",
+        "sensor_pressure": "pressure sensor",
+        "sensor_humidity": "humidity sensor",
+        "sensor_current": "current sensor",
+        "sensor_motion": "motion sensor",
+        "sensor_magnetic": "magnetic sensor",
+        "sensor_optical": "optical sensor",
+        "sensor": "sensor IC",
+        "timer": "timer IC",
+        "reference_voltage": "voltage reference",
+    }
+    for prefix, func in _LIB_PREFIX_MAP.items():
+        if lib_prefix == prefix or lib_lower.startswith(prefix + ":"):
+            return func
+
+    # Tier 2: Value / part number keyword matching
+    _VALUE_KEYWORDS = [
+        # Microcontrollers
+        (("esp32", "esp8266", "esp32s", "esp32c", "esp32h"), "microcontroller (ESP)"),
+        (("stm32", "stm8"), "microcontroller (STM)"),
+        (("atmega", "attiny", "at90", "atxmega"), "microcontroller (AVR)"),
+        (("pic16", "pic18", "pic24", "pic32", "dspic"), "microcontroller (PIC)"),
+        (("rp2040", "rp2350"), "microcontroller (RP)"),
+        (("nrf51", "nrf52", "nrf53", "nrf91"), "microcontroller (nRF)"),
+        (("samd", "same", "samg", "saml", "samr"), "microcontroller (SAM)"),
+        (("msp430", "msp432"), "microcontroller (MSP)"),
+        (("efm32", "efr32"), "microcontroller (EFx32)"),
+        (("cy8c",), "microcontroller (Cypress)"),
+        (("gd32",), "microcontroller (GD32)"),
+        (("ch32",), "microcontroller (CH32)"),
+        (("kb2040",), "microcontroller (RP dev board)"),
+        # FPGAs
+        (("ice40", "ecp5", "machxo", "nexus"), "FPGA (Lattice)"),
+        (("xc7", "xc6", "xczu", "xc2", "xcku", "artix", "spartan", "kintex", "virtex", "zynq"), "FPGA (Xilinx)"),
+        (("10cl", "10m0", "5cg", "max10", "cyclone"), "FPGA (Intel)"),
+        # Regulators
+        (("lm117", "lm317", "lm337", "lm78", "lm79", "ams1117", "ap2112",
+          "mic5205", "mic5504", "xc6206", "xc6220", "tps73", "tps76", "rt9013",
+          "ld1117", "mcp1700", "mcp1703", "mcp1826", "ht7333", "ht7350"), "linear regulator"),
+        (("lm2596", "lm2576", "mc34063", "tps54", "tps56", "tps61", "tps62",
+          "tps63", "tps65", "mp1584", "mp2307", "mp2315", "mp2359",
+          "ap3012", "sy80", "mt3608"), "switching regulator"),
+        # Shift registers / logic
+        (("74hc", "74lvc", "74ahc", "74act", "74ac", "sn74"), "logic IC"),
+        (("cd4", "hef4", "mc14"), "logic IC (CMOS)"),
+        # Communication
+        (("max232", "max3232", "sp3232"), "RS-232 transceiver"),
+        (("max485", "max3485", "sn65hvd", "thvd1", "isl317"), "RS-485 transceiver"),
+        (("mcp2515", "mcp2551", "mcp2562", "sn65hvd23", "tja1"), "CAN transceiver"),
+        (("cp2102", "ch340", "ft232", "ft2232", "pl2303", "ch9102"), "USB-UART bridge"),
+        (("usb3300", "usb3320", "usb2514", "tusb"), "USB IC"),
+        (("lan87", "lan91", "lan8720", "lan8710", "ksz", "dp83", "rtl81", "ip101"), "Ethernet PHY"),
+        (("w5500", "w5100", "enc28j60"), "Ethernet controller"),
+        (("sx127", "sx126", "rfm9", "rfm6", "cc1101", "at86rf"), "radio transceiver"),
+        # Audio
+        (("max9", "ssm2", "tpa", "lm386", "tda", "pam8"), "audio amplifier"),
+        (("wm8", "es8", "ak4", "pcm51", "pcm17", "cs42", "sgtl5", "tlv320"), "audio codec"),
+        # Display / LED
+        (("ssd1306", "ssd1309", "st7735", "st7789", "ili9", "hx8357",
+          "uc1701", "nt35", "sharp_ls"), "display controller"),
+        (("ws2812", "sk6812", "apa102", "ws2813", "ws2815"), "addressable LED"),
+        (("pca9685", "tlc5940", "is31fl"), "LED driver IC"),
+        # Sensors
+        (("bme280", "bme680", "bmp280", "bmp390"), "environmental sensor"),
+        (("mpu6", "mpu9", "icm20", "lsm6", "bno0", "lis3"), "IMU/motion sensor"),
+        (("ina21", "ina22", "ina23", "ina18", "ina19"), "current sense amplifier"),
+        (("ads1", "mcp33", "mcp34", "mcp35", "max114", "max119"), "ADC"),
+        (("mcp47", "dac8", "ad56", "ad57"), "DAC"),
+        # Power management
+        (("bq24", "bq25", "bq40", "ltc40", "mcp738"), "battery management"),
+        (("tps20", "tps21", "ap22"), "power switch/load switch"),
+        # Miscellaneous
+        (("drv8", "a4988", "tmc2", "tmc5"), "motor driver"),
+        (("esd", "prtr", "usblc", "tpd", "pesd", "sp05"), "ESD protection"),
+        (("ds1307", "ds3231", "pcf8523", "rv3028", "rv8803"), "RTC"),
+        (("at24c", "24lc", "24aa", "m24c", "cat24"), "EEPROM"),
+        (("w25q", "at25", "mx25", "gd25", "is25", "sst26"), "SPI flash"),
+    ]
+    for keywords, func in _VALUE_KEYWORDS:
+        if any(val_lower.startswith(k) for k in keywords):
+            return func
+
+    # Also check lib_id part name (after colon)
+    lib_part = lib_lower.split(":")[-1] if ":" in lib_lower else ""
+    if lib_part:
+        for keywords, func in _VALUE_KEYWORDS:
+            if any(lib_part.startswith(k) for k in keywords):
+                return func
+
+    # Tier 3: Description keyword fallback
+    _DESC_KEYWORDS = [
+        ("microcontroller", "microcontroller"),
+        ("mcu", "microcontroller"),
+        ("fpga", "FPGA"),
+        ("cpld", "CPLD"),
+        ("voltage regulator", "voltage regulator"),
+        ("ldo", "linear regulator"),
+        ("buck converter", "switching regulator"),
+        ("boost converter", "switching regulator"),
+        ("dc-dc", "DC-DC converter"),
+        ("operational amplifier", "operational amplifier"),
+        ("op-amp", "operational amplifier"),
+        ("opamp", "operational amplifier"),
+        ("comparator", "comparator"),
+        ("adc", "ADC"),
+        ("dac", "DAC"),
+        ("uart", "UART interface"),
+        ("usart", "UART interface"),
+        ("spi", "SPI interface"),
+        ("i2c", "I2C interface"),
+        ("can transceiver", "CAN transceiver"),
+        ("rs-485", "RS-485 transceiver"),
+        ("rs-232", "RS-232 transceiver"),
+        ("ethernet", "Ethernet IC"),
+        ("usb", "USB IC"),
+        ("motor driver", "motor driver"),
+        ("gate driver", "gate driver"),
+        ("led driver", "LED driver"),
+        ("audio", "audio IC"),
+        ("codec", "audio codec"),
+        ("sensor", "sensor IC"),
+        ("eeprom", "EEPROM"),
+        ("flash", "flash memory"),
+        ("shift register", "shift register"),
+        ("multiplexer", "multiplexer"),
+        ("level shift", "level shifter"),
+        ("voltage reference", "voltage reference"),
+        ("timer", "timer IC"),
+        ("rtc", "RTC"),
+        ("real-time clock", "RTC"),
+        ("power supervisor", "voltage supervisor"),
+        ("watchdog", "watchdog timer"),
+        ("battery", "battery management"),
+        ("charger", "battery charger"),
+        ("rf", "RF IC"),
+    ]
+    for keyword, func in _DESC_KEYWORDS:
+        if keyword in desc_lower:
+            return func
+
+    return ""
+
+
 def analyze_ic_pinouts(components: list[dict], nets: dict, no_connects: list[dict], pin_net: dict | None = None) -> list[dict]:
     """Analyze each IC's pinout for datasheet cross-referencing.
 
@@ -1299,6 +1533,7 @@ def analyze_ic_pinouts(components: list[dict], nets: dict, no_connects: list[dic
             "mpn": ic.get("mpn", ""),
             "description": ic.get("description", ""),
             "datasheet": ic.get("datasheet", ""),
+            "function": _classify_ic_function(ic["lib_id"], ic["value"], ic.get("description", "")),
             "total_pins": len(pin_analysis),
             "unconnected_pins": len(unconnected),
             "pins": sorted(pin_analysis, key=lambda p: _pin_sort_key(p["pin_number"])),
@@ -1343,8 +1578,11 @@ def identify_subcircuits(components: list[dict], nets: dict, pin_net: dict | Non
                 ic_nets.add(net_name)
 
         # Find all components that share nets with this IC (1-hop neighbors)
+        # Skip power/ground nets — every IC shares VCC/GND, inflating neighbors
         neighbors = set()
         for net_name in ic_nets:
+            if _is_power_net_name(net_name) or _is_ground_name(net_name):
+                continue
             if net_name in nets:
                 for p in nets[net_name]["pins"]:
                     r = p["component"]
@@ -1389,66 +1627,182 @@ _LEGACY_PIN_TYPE_MAP = {
     "U": "unspecified",
 }
 
-# Built-in pin definitions for standard KiCad library symbols that won't be
-# found in project .lib files (power/device/conn libs).  Offsets are in mm,
-# matching the output of _parse_legacy_lib() after mil→mm conversion.
+# Built-in pin definitions for standard KiCad 4/5 library symbols that won't
+# be found in project .lib files (power/device/conn libs).  Offsets are in mm
+# at the connection endpoint (where wires attach), matching the output of
+# _parse_legacy_lib() after mil→mm conversion.
+#
+# Values derived from the most common pin positions across 1292 KiCad 4/5
+# cache libraries.  Different KiCad versions use slightly different offsets
+# (e.g., R/C at ±100, ±150, ±200, or ±250 mils); the wire-snap fallback
+# (_snap_pins_to_wires) handles version mismatches automatically.
+_M = 0.0254  # 1 mil in mm — shorthand for readability
+
+def _conn_1xN(n):
+    """Generate pin list for CONN_01X{n} (single-row, n pins, x=-200 mils)."""
+    half = (n - 1) * 50  # half-span in mils
+    return [{"number": str(i + 1), "name": f"P{i + 1}", "type": "passive",
+             "offset": [-200 * _M, (half - i * 100) * _M]} for i in range(n)]
+
+def _conn_2xN(n):
+    """Generate pin list for CONN_02X{n} (2-row, 2n pins, x=±250 mils)."""
+    half = (n - 1) * 50
+    pins = []
+    for i in range(n):
+        y = (half - i * 100) * _M
+        pins.append({"number": str(2 * i + 1), "name": f"P{2*i+1}", "type": "passive",
+                      "offset": [-250 * _M, y]})
+        pins.append({"number": str(2 * i + 2), "name": f"P{2*i+2}", "type": "passive",
+                      "offset": [250 * _M, y]})
+    return pins
+
 _STANDARD_LIB_PINS = {
+    # --- Passives (most common: ±150 mils vertical) ---
     "R": [
-        {"number": "1", "name": "~", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "~", "type": "passive", "offset": [1.27, 0]},
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 150 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -150 * _M]},
     ],
     "C": [
-        {"number": "1", "name": "~", "type": "passive", "offset": [0, 1.016]},
-        {"number": "2", "name": "~", "type": "passive", "offset": [0, -1.016]},
-    ],
-    "C_Small": [
-        {"number": "1", "name": "~", "type": "passive", "offset": [0, 1.016]},
-        {"number": "2", "name": "~", "type": "passive", "offset": [0, -1.016]},
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 150 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -150 * _M]},
     ],
     "L": [
-        {"number": "1", "name": "~", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "~", "type": "passive", "offset": [1.27, 0]},
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 150 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -150 * _M]},
+    ],
+    "CP": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 150 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -150 * _M]},
+    ],
+    "CP1": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 150 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -150 * _M]},
+    ],
+    "C_Polarized": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 150 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -150 * _M]},
     ],
     "INDUCTOR": [
-        {"number": "1", "name": "~", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "~", "type": "passive", "offset": [1.27, 0]},
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 300 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -300 * _M]},
     ],
-    "LED": [
-        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+    # --- Small passives (±100 mils vertical) ---
+    "C_Small": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 100 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -100 * _M]},
     ],
+    "R_Small": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 100 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -100 * _M]},
+    ],
+    "L_Small": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [0, 100 * _M]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [0, -100 * _M]},
+    ],
+    "INDUCTOR_SMALL": [
+        {"number": "1", "name": "~", "type": "passive", "offset": [-250 * _M, 0]},
+        {"number": "2", "name": "~", "type": "passive", "offset": [250 * _M, 0]},
+    ],
+    # --- Diodes (±150 mils horizontal, A=anode K=cathode) ---
     "D": [
-        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
-    ],
-    "D_Zener": [
-        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+        {"number": "1", "name": "K", "type": "passive", "offset": [-150 * _M, 0]},
+        {"number": "2", "name": "A", "type": "passive", "offset": [150 * _M, 0]},
     ],
     "D_Schottky": [
-        {"number": "1", "name": "A", "type": "passive", "offset": [-1.27, 0]},
-        {"number": "2", "name": "K", "type": "passive", "offset": [1.27, 0]},
+        {"number": "1", "name": "K", "type": "passive", "offset": [-150 * _M, 0]},
+        {"number": "2", "name": "A", "type": "passive", "offset": [150 * _M, 0]},
     ],
+    "D_Zener": [
+        {"number": "1", "name": "K", "type": "passive", "offset": [-150 * _M, 0]},
+        {"number": "2", "name": "A", "type": "passive", "offset": [150 * _M, 0]},
+    ],
+    "DIODESCH": [
+        {"number": "1", "name": "K", "type": "passive", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "A", "type": "passive", "offset": [200 * _M, 0]},
+    ],
+    "LED": [
+        {"number": "1", "name": "K", "type": "passive", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "A", "type": "passive", "offset": [200 * _M, 0]},
+    ],
+    # --- Crystals ---
+    "CRYSTAL": [
+        {"number": "1", "name": "1", "type": "passive", "offset": [-300 * _M, 0]},
+        {"number": "2", "name": "2", "type": "passive", "offset": [300 * _M, 0]},
+    ],
+    "Crystal": [
+        {"number": "1", "name": "1", "type": "passive", "offset": [-150 * _M, 0]},
+        {"number": "2", "name": "2", "type": "passive", "offset": [150 * _M, 0]},
+    ],
+    "Crystal_GND24": [
+        {"number": "1", "name": "1", "type": "passive", "offset": [-150 * _M, 0]},
+        {"number": "2", "name": "2", "type": "passive", "offset": [0, -200 * _M]},
+        {"number": "3", "name": "3", "type": "passive", "offset": [150 * _M, 0]},
+        {"number": "4", "name": "4", "type": "passive", "offset": [0, 200 * _M]},
+    ],
+    # --- Switches ---
+    "SW_PUSH": [
+        {"number": "1", "name": "1", "type": "passive", "offset": [-300 * _M, 0]},
+        {"number": "2", "name": "2", "type": "passive", "offset": [300 * _M, 0]},
+    ],
+    "SW_Push": [
+        {"number": "1", "name": "1", "type": "passive", "offset": [-300 * _M, 0]},
+        {"number": "2", "name": "2", "type": "passive", "offset": [300 * _M, 0]},
+    ],
+    # --- Transistors ---
     "Q_NPN_BEC": [
-        {"number": "1", "name": "B", "type": "input", "offset": [-2.54, 0]},
-        {"number": "2", "name": "E", "type": "passive", "offset": [1.27, -1.27]},
-        {"number": "3", "name": "C", "type": "passive", "offset": [1.27, 1.27]},
+        {"number": "1", "name": "B", "type": "input", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "E", "type": "passive", "offset": [100 * _M, -200 * _M]},
+        {"number": "3", "name": "C", "type": "passive", "offset": [100 * _M, 200 * _M]},
     ],
     "Q_PNP_BEC": [
-        {"number": "1", "name": "B", "type": "input", "offset": [-2.54, 0]},
-        {"number": "2", "name": "E", "type": "passive", "offset": [1.27, 1.27]},
-        {"number": "3", "name": "C", "type": "passive", "offset": [1.27, -1.27]},
+        {"number": "1", "name": "B", "type": "input", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "E", "type": "passive", "offset": [100 * _M, 200 * _M]},
+        {"number": "3", "name": "C", "type": "passive", "offset": [100 * _M, -200 * _M]},
+    ],
+    "Q_NMOS_GSD": [
+        {"number": "1", "name": "G", "type": "input", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "S", "type": "passive", "offset": [100 * _M, -200 * _M]},
+        {"number": "3", "name": "D", "type": "passive", "offset": [100 * _M, 200 * _M]},
+    ],
+    "Q_PMOS_GSD": [
+        {"number": "1", "name": "G", "type": "input", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "S", "type": "passive", "offset": [100 * _M, 200 * _M]},
+        {"number": "3", "name": "D", "type": "passive", "offset": [100 * _M, -200 * _M]},
     ],
     "MOSFET_N": [
-        {"number": "1", "name": "G", "type": "input", "offset": [-2.54, 0]},
-        {"number": "2", "name": "S", "type": "passive", "offset": [1.27, -1.27]},
-        {"number": "3", "name": "D", "type": "passive", "offset": [1.27, 1.27]},
+        {"number": "1", "name": "G", "type": "input", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "S", "type": "passive", "offset": [100 * _M, -200 * _M]},
+        {"number": "3", "name": "D", "type": "passive", "offset": [100 * _M, 200 * _M]},
     ],
     "MOSFET_P": [
-        {"number": "1", "name": "G", "type": "input", "offset": [-2.54, 0]},
-        {"number": "2", "name": "S", "type": "passive", "offset": [1.27, 1.27]},
-        {"number": "3", "name": "D", "type": "passive", "offset": [1.27, -1.27]},
+        {"number": "1", "name": "G", "type": "input", "offset": [-200 * _M, 0]},
+        {"number": "2", "name": "S", "type": "passive", "offset": [100 * _M, 200 * _M]},
+        {"number": "3", "name": "D", "type": "passive", "offset": [100 * _M, -200 * _M]},
     ],
+    # --- Resistor packs ---
+    "R_PACK4": [
+        {"number": str(i + 1), "name": f"P{i+1}", "type": "passive",
+         "offset": [-200 * _M, (150 - i * 100) * _M]} for i in range(4)
+    ] + [
+        {"number": str(i + 5), "name": f"R{4-i}", "type": "passive",
+         "offset": [200 * _M, (-150 + i * 100) * _M]} for i in range(4)
+    ],
+    "R_PACK8": [
+        {"number": str(i + 1), "name": f"P{i+1}", "type": "passive",
+         "offset": [-200 * _M, (350 - i * 100) * _M]} for i in range(8)
+    ] + [
+        {"number": str(i + 9), "name": f"R{8-i}", "type": "passive",
+         "offset": [200 * _M, (-350 + i * 100) * _M]} for i in range(8)
+    ],
+    # --- Single-row connectors (CONN_01X01 through CONN_01X20) ---
+    **{f"CONN_01X{n:02d}": _conn_1xN(n) for n in range(1, 21)},
+    # --- Short-form single-row connectors (CONN_1 through CONN_20) ---
+    **{f"CONN_{n}": _conn_1xN(n) for n in range(1, 21)},
+    # --- Dual-row connectors (CONN_02Xnn format) ---
+    **{f"CONN_02X{n:02d}": _conn_2xN(n) for n in range(2, 21)},
+    # --- Short-form dual-row connectors (CONN_NX2 format) ---
+    **{f"CONN_{n}X2": _conn_2xN(n) for n in range(2, 21)},
+    "CONN_5X2": _conn_2xN(5),
 }
 
 
@@ -1635,6 +1989,84 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
     return symbols
 
 
+def _snap_pins_to_wires(components: list[dict], wires: list[dict]) -> None:
+    """Snap component pins to nearby wire endpoints when positions don't match.
+
+    Legacy KiCad standard library pin offsets vary between versions (±100, ±150,
+    ±200, ±250 mils for R/C/L/D).  When the built-in fallback positions don't
+    match the actual wire endpoints, this function finds the closest wire
+    endpoint for each pin and snaps to it.
+
+    Only snaps when the computed position has no wire endpoint within
+    COORD_EPSILON, and a wire endpoint exists within _MAX_SNAP_DIST of the
+    component center (generous enough for the largest standard symbols).
+    """
+    _MAX_SNAP_DIST = 12.0  # mm (~470 mils) — covers all standard symbols
+    EPS = COORD_EPSILON
+
+    # Build per-sheet wire endpoint set for fast lookup, and list for snapping
+    wire_eps_by_sheet: dict[int, set[tuple[float, float]]] = {}
+    wire_pts_by_sheet: dict[int, list[tuple[float, float]]] = {}
+    for w in wires:
+        sheet = w.get("_sheet", 0)
+        for x, y in ((w["x1"], w["y1"]), (w["x2"], w["y2"])):
+            sx = round(x / EPS) * EPS
+            sy = round(y / EPS) * EPS
+            wire_eps_by_sheet.setdefault(sheet, set()).add((sx, sy))
+            wire_pts_by_sheet.setdefault(sheet, []).append((x, y))
+
+    for comp in components:
+        if comp.get("type") in ("power_symbol", "power_flag", "flag"):
+            continue
+        pins = comp.get("pins")
+        if not pins:
+            continue
+
+        sheet = comp.get("_sheet", 0)
+        wire_set = wire_eps_by_sheet.get(sheet, set())
+        wire_list = wire_pts_by_sheet.get(sheet, [])
+        cx, cy = comp["x"], comp["y"]
+
+        # Check which pins are already matched to wire endpoints
+        unmatched = []
+        for pin in pins:
+            sk = (round(pin["x"] / EPS) * EPS, round(pin["y"] / EPS) * EPS)
+            if sk not in wire_set:
+                unmatched.append(pin)
+
+        if not unmatched:
+            continue  # all pins already matched
+
+        # Collect nearby wire endpoints (not already claimed by another pin)
+        claimed = set()
+        for pin in pins:
+            if pin not in unmatched:
+                claimed.add((round(pin["x"] / EPS) * EPS, round(pin["y"] / EPS) * EPS))
+
+        for pin in unmatched:
+            best_dist = _MAX_SNAP_DIST
+            best_pt = None
+            for wx, wy in wire_list:
+                sk = (round(wx / EPS) * EPS, round(wy / EPS) * EPS)
+                if sk in claimed:
+                    continue
+                dx = wx - cx
+                dy = wy - cy
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist < best_dist:
+                    # Prefer wire endpoints roughly in the direction of the
+                    # original computed pin (relative to component center)
+                    opx, opy = pin["x"] - cx, pin["y"] - cy
+                    dot = dx * opx + dy * opy
+                    if dot > 0 or (opx == 0 and opy == 0):
+                        best_dist = dist
+                        best_pt = (wx, wy)
+            if best_pt is not None:
+                pin["x"] = _snap_mil(best_pt[0])
+                pin["y"] = _snap_mil(best_pt[1])
+                claimed.add((round(pin["x"] / EPS) * EPS, round(pin["y"] / EPS) * EPS))
+
+
 def _parse_legacy_single_sheet(path: str) -> tuple:
     """Parse a single legacy .sch file and return raw extracted data.
 
@@ -1695,8 +2127,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                 elif cl.startswith("P "):
                     parts = cl.split()
                     if len(parts) >= 3:
-                        comp["x"] = round(int(parts[1]) * MIL_TO_MM, 4)
-                        comp["y"] = round(int(parts[2]) * MIL_TO_MM, 4)
+                        comp["x"] = _snap_mil(int(parts[1]) * MIL_TO_MM)
+                        comp["y"] = _snap_mil(int(parts[2]) * MIL_TO_MM)
 
                 # F N "value" orientation x y size flags visibility hjustify [font [italic bold]]
                 elif cl.startswith("F "):
@@ -1790,8 +2222,7 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
 
             # Legacy power symbol detection: #PWR/#FLG refs or library named "power"
             lib_prefix = comp["lib_id"].split(":")[0].lower()
-            is_power = (comp["reference"].startswith("#PWR")
-                        or comp["reference"].startswith("#FLG")
+            is_power = (comp["reference"].startswith("#")
                         or lib_prefix == "power"
                         or lib_prefix.endswith("_power"))
             # Check value field for DNP indication
@@ -1823,10 +2254,10 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                 parts = lines[i].strip().split()
                 if len(parts) >= 4:
                     wires.append({
-                        "x1": round(int(parts[0]) * MIL_TO_MM, 4),
-                        "y1": round(int(parts[1]) * MIL_TO_MM, 4),
-                        "x2": round(int(parts[2]) * MIL_TO_MM, 4),
-                        "y2": round(int(parts[3]) * MIL_TO_MM, 4),
+                        "x1": _snap_mil(int(parts[0]) * MIL_TO_MM),
+                        "y1": _snap_mil(int(parts[1]) * MIL_TO_MM),
+                        "x2": _snap_mil(int(parts[2]) * MIL_TO_MM),
+                        "y2": _snap_mil(int(parts[3]) * MIL_TO_MM),
                     })
 
         # Junction / Connection
@@ -1834,8 +2265,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
             parts = line.split()
             if len(parts) >= 4:
                 junctions.append({
-                    "x": round(int(parts[2]) * MIL_TO_MM, 4),
-                    "y": round(int(parts[3]) * MIL_TO_MM, 4),
+                    "x": _snap_mil(int(parts[2]) * MIL_TO_MM),
+                    "y": _snap_mil(int(parts[3]) * MIL_TO_MM),
                 })
 
         # No-connect
@@ -1843,16 +2274,16 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
             parts = line.split()
             if len(parts) >= 4:
                 no_connects.append({
-                    "x": round(int(parts[2]) * MIL_TO_MM, 4),
-                    "y": round(int(parts[3]) * MIL_TO_MM, 4),
+                    "x": _snap_mil(int(parts[2]) * MIL_TO_MM),
+                    "y": _snap_mil(int(parts[3]) * MIL_TO_MM),
                 })
 
         # Labels
         elif line.startswith("Text Label "):
             parts = line.split()
             if len(parts) >= 5:
-                x = round(int(parts[2]) * MIL_TO_MM, 4)
-                y = round(int(parts[3]) * MIL_TO_MM, 4)
+                x = _snap_mil(int(parts[2]) * MIL_TO_MM)
+                y = _snap_mil(int(parts[3]) * MIL_TO_MM)
                 # Next line is the label text
                 i += 1
                 if i < len(lines):
@@ -1862,8 +2293,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
         elif line.startswith("Text GLabel "):
             parts = line.split()
             if len(parts) >= 5:
-                x = round(int(parts[2]) * MIL_TO_MM, 4)
-                y = round(int(parts[3]) * MIL_TO_MM, 4)
+                x = _snap_mil(int(parts[2]) * MIL_TO_MM)
+                y = _snap_mil(int(parts[3]) * MIL_TO_MM)
                 i += 1
                 if i < len(lines):
                     name = lines[i].strip()
@@ -1872,8 +2303,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
         elif line.startswith("Text HLabel "):
             parts = line.split()
             if len(parts) >= 5:
-                x = round(int(parts[2]) * MIL_TO_MM, 4)
-                y = round(int(parts[3]) * MIL_TO_MM, 4)
+                x = _snap_mil(int(parts[2]) * MIL_TO_MM)
+                y = _snap_mil(int(parts[3]) * MIL_TO_MM)
                 i += 1
                 if i < len(lines):
                     name = lines[i].strip()
@@ -1947,6 +2378,26 @@ def parse_legacy_schematic(path: str) -> dict:
     root_path = str(Path(path).resolve())
     lib_symbols = _resolve_legacy_libs(root_path, all_sch_lines)
 
+    # Build a reverse lookup for cache lib names: bare_symbol -> full cache name.
+    # Cache libs store "Library_Symbol" while schematics reference bare "Symbol"
+    # or "Library:Symbol".  This handles both forms.
+    _cache_suffix_map: dict[str, str] = {}
+    for sym_name in lib_symbols:
+        if "_" in sym_name:
+            bare = sym_name.rsplit("_", 1)[-1]
+            # Only map if the bare name is unique (avoid ambiguity)
+            if bare not in _cache_suffix_map:
+                _cache_suffix_map[bare] = sym_name
+            else:
+                _cache_suffix_map[bare] = None  # ambiguous — don't use
+        # Also try full name after last colon-like underscore
+        # e.g., "OLIMEX_IC_BL4054B-42TPRN(SOT23-5)" → "BL4054B-42TPRN(SOT23-5)"
+        parts = sym_name.split("_")
+        if len(parts) >= 3:
+            tail = "_".join(parts[2:])
+            if tail and tail not in _cache_suffix_map:
+                _cache_suffix_map[tail] = sym_name
+
     # Populate pin positions for each component using lib symbol data.
     # V2 format uses bare symbol names ("MIC5207-BM5"), V4 uses "Library:Symbol".
     # Cache libs use underscores ("Device_C") instead of colons ("Device:C").
@@ -1955,10 +2406,31 @@ def parse_legacy_schematic(path: str) -> dict:
         sym_def = lib_symbols.get(lib_id)
         if not sym_def and ":" in lib_id:
             # V4: try underscore form (cache lib naming) and bare symbol name
+            bare_name = lib_id.split(":", 1)[1]
             sym_def = (lib_symbols.get(lib_id.replace(":", "_"))
-                       or lib_symbols.get(lib_id.split(":", 1)[1]))
+                       or lib_symbols.get(bare_name))
+        else:
+            bare_name = lib_id
+        if not sym_def:
+            # Bare name lookup via cache suffix map (handles cache libs
+            # that store "Library_Symbol" while schematic uses bare "Symbol")
+            cache_key = _cache_suffix_map.get(bare_name)
+            if cache_key:
+                sym_def = lib_symbols.get(cache_key)
         if sym_def:
             comp["pins"] = compute_pin_positions(comp, {lib_id: sym_def})
+            # Snap pin positions to mil grid — eliminates floating-point drift
+            # from trig-based rotation so pins align with wire endpoints.
+            for pin in comp["pins"]:
+                pin["x"] = _snap_mil(pin["x"])
+                pin["y"] = _snap_mil(pin["y"])
+
+    # KH-016 fix: Snap component pins to nearby wire endpoints when the
+    # computed pin positions don't match any wire (caused by KiCad version
+    # differences in standard library pin offsets).  For each pin, if no wire
+    # endpoint is within COORD_EPSILON, find the closest wire endpoint on the
+    # same sheet within a generous radius and snap to it.
+    _snap_pins_to_wires(all_components, all_wires)
 
     # Extract power symbols (preserve _sheet so build_net_map keeps coordinate
     # spaces separate — without it, power symbols from sub-sheets all land in
@@ -2067,6 +2539,9 @@ def parse_single_sheet(path: str, instance_uuid: str = "",
 
         # Extract sheet pin stubs as hierarchical labels so parent-sheet wires
         # connecting to the sheet symbol get unioned with the child sheet's nets.
+        # Tag with _sheet_uuid so the traversal loop can namespace them per
+        # instance (KH-026: multi-instance hierarchical net isolation).
+        sheet_uuid_for_pins = get_value(sheet, "uuid") or ""
         for pin in find_all(sheet, "pin"):
             if len(pin) < 2:
                 continue
@@ -2079,6 +2554,7 @@ def parse_single_sheet(path: str, instance_uuid: str = "",
                     "x": round(at[0], 4),
                     "y": round(at[1], 4),
                     "angle": at[2] if len(at) > 2 else 0,
+                    "_sheet_uuid": sheet_uuid_for_pins,
                 })
 
     return (root, components, wires, labels, junctions, no_connects,
@@ -2201,7 +2677,7 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
     known_power_rails = set()
     for net_name, net_info in nets.items():
         for p in net_info.get("pins", []):
-            if p["component"].startswith("#PWR") or p["component"].startswith("#FLG"):
+            if p["component"].startswith("#"):
                 known_power_rails.add(net_name)
                 break
 
@@ -2288,6 +2764,31 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                 "value": ic["value"],
                 "power_rails": sorted(rails),
                 "io_rails": sorted(io_rails) if io_rails else None,
+            }
+
+    # Fallback for legacy files where pin_net may be incomplete:
+    # Match IC power pin NAMES (VCC, VDD, etc.) against known_power_rails by string.
+    _pwr_pin_to_rail = {"VCC", "VDD", "AVCC", "AVDD", "DVCC", "DVDD",
+                        "VDDIO", "VIO", "VCCA", "VCCB", "VBUS"}
+    for ic in ics:
+        ref = ic["reference"]
+        if ref in power_domains:
+            continue
+        rails = set()
+        for pin in ic.get("pins", []):
+            pname = pin.get("name", "").upper()
+            if pname not in _pwr_pin_to_rail:
+                continue
+            # Find a known power rail whose name matches this pin name
+            for rail in known_power_rails:
+                ru = rail.upper()
+                if pname == ru or pname in ru or ru.startswith(pname):
+                    rails.add(rail)
+        if rails:
+            power_domains[ref] = {
+                "value": ic["value"],
+                "power_rails": sorted(rails),
+                "io_rails": None,
             }
 
     # Group ICs by power domain
@@ -2438,7 +2939,10 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
         nu = net_name.upper()
         if "SDA" in nu or "SCL" in nu or "I2C" in nu:
             # Skip SPI signals (MISO contains no I2C keywords, but SCLK/SCK match SCL)
+            # Skip I2S signals (I2S0_RX_SDA etc. contain SDA as substring)
             if "SCLK" in nu or nu.endswith("SCK") or "SPI" in nu:
+                continue
+            if "I2S" in nu:
                 continue
             bus_id = nu.replace("SDA", "").replace("SCL", "").replace("I2C", "").replace("_", "").strip()
             i2c_nets.setdefault(bus_id, {})[nu] = net_name
@@ -2470,23 +2974,28 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                                 "ohms": r_val,
                                 "to_rail": other_net,
                             })
-            buses["i2c"].append({
-                "net": net_name,
-                "line": line,
-                "devices": devices,
-                "pull_ups": pullups,
-                "has_pull_up": len(pullups) > 0,
-            })
+            if devices:  # Skip connector-only routing with no ICs
+                buses["i2c"].append({
+                    "net": net_name,
+                    "line": line,
+                    "devices": devices,
+                    "pull_ups": pullups,
+                    "has_pull_up": len(pullups) > 0,
+                })
 
     # Also detect I2C from pin names (for nets without SDA/SCL in their name)
     for net_name, net_info in nets.items():
         if net_name in i2c_seen_nets:
             continue  # Already found by net name
-        sda_pins = [p for p in net_info["pins"] if "SDA" in p.get("pin_name", "").upper()]
+        sda_pins = [p for p in net_info["pins"]
+                    if "SDA" in p.get("pin_name", "").upper()
+                    and "I2S" not in p.get("pin_name", "").upper()]
         # Exclude SPI clock pins (SCLK, SCK) which contain "SCL" as substring
+        # Exclude I2S pins which may contain SCL as substring
         scl_pins = [p for p in net_info["pins"]
                     if "SCL" in p.get("pin_name", "").upper()
                     and "SCLK" not in p.get("pin_name", "").upper()
+                    and "I2S" not in p.get("pin_name", "").upper()
                     and p.get("pin_name", "").upper() not in ("SCK",)]
         if sda_pins or scl_pins:
             # Find pull-up resistors on this net
@@ -2511,13 +3020,14 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
             devices = [p["component"] for p in net_info["pins"]
                        if comp_lookup.get(p["component"], {}).get("type") == "ic"]
 
-            buses["i2c"].append({
-                "net": net_name,
-                "line": bus_type,
-                "devices": devices,
-                "pull_ups": pullups,
-                "has_pull_up": len(pullups) > 0,
-            })
+            if devices:  # Skip connector-only routing with no ICs
+                buses["i2c"].append({
+                    "net": net_name,
+                    "line": bus_type,
+                    "devices": devices,
+                    "pull_ups": pullups,
+                    "has_pull_up": len(pullups) > 0,
+                })
 
     # SPI: look for MOSI/MISO/SCK/CS patterns (and newer COPI/CIPO/SDI/SDO)
     # Build a set of nets already identified as SPI to guard I2C pin-name
@@ -2557,17 +3067,25 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
 
     for bus_id, signals in spi_signals.items():
         if len(signals) >= 2:  # At least 2 SPI signals to count as a bus
+            # Skip if no ICs on any signal net (connector-only routing)
+            has_ic = any(s.get("devices") for s in signals.values())
+            if not has_ic:
+                continue
             buses["spi"].append({
                 "bus_id": bus_id,
                 "signals": signals,
             })
 
-    # UART: look for TX/RX pairs (exclude CAN/SPI/I2C signals that happen to contain TX/RX)
+    # UART: look for TX/RX pairs (exclude other protocols that happen to contain TX/RX)
+    _uart_exclude = ("CAN", "SPI", "I2C", "MOSI", "MISO", "SCL", "SDA",
+                     "RMII", "MII", "EMAC", "ENET", "ETH",
+                     "PCIE", "PCI_", "HDMI", "LVDS", "MIPI",
+                     "CLK", "CLOCK", "USB_D", "USBDM", "USBDP", "I2S")
     uart_nets = {}
     for net_name, net_info in nets.items():
         nu = net_name.upper()
         # Skip nets that belong to other bus types
-        if any(kw in nu for kw in ("CAN", "SPI", "I2C", "MOSI", "MISO", "SCL", "SDA")):
+        if any(kw in nu for kw in _uart_exclude):
             continue
         if any(kw in nu for kw in ("UART", "TX", "RX", "TXD", "RXD")):
             # Identify which devices connect
@@ -2687,6 +3205,78 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
     if can_nets_found:
         buses["can"] = list(can_nets_found.values())
 
+    # RS-485/RS-422: detect transceiver ICs by part number
+    _rs485_kw = ("max485", "max3485", "max13485", "max14840", "max22500",
+                 "sn65hvd7", "sn65hvd3", "sn75176", "sn75lbc",
+                 "thvd14", "thvd15", "thvd16",
+                 "isl317", "isl318", "isl319",
+                 "sp3485", "sp3481", "sp3082", "sp485",
+                 "adm485", "adm2485", "adm2587", "adm3485",
+                 "ltc285", "ltc248", "ltc249",
+                 "st3485", "st485")
+    for comp in components:
+        if comp["type"] != "ic":
+            continue
+        val_lib = (comp.get("value", "") + " " + comp.get("lib_id", "")).lower()
+        if not any(k in val_lib for k in _rs485_kw):
+            continue
+        ref = comp["reference"]
+        # Map known pin functions
+        a_net = b_net = di_net = ro_net = de_net = re_net = None
+        for pin in comp.get("pins", []):
+            pn = pin.get("name", "").upper()
+            net_name, _ = pin_net.get((ref, pin["number"]), (None, None))
+            if not net_name:
+                continue
+            if pn in ("A", "A/Y"):
+                a_net = net_name
+            elif pn in ("B", "B/Z"):
+                b_net = net_name
+            elif pn in ("DI", "D", "TXD", "DIN"):
+                di_net = net_name
+            elif pn in ("RO", "R", "RXD", "DOUT"):
+                ro_net = net_name
+            elif pn in ("DE",):
+                de_net = net_name
+            elif pn in ("RE", "~RE", "~{RE}", "/RE"):
+                re_net = net_name
+        entry = {
+            "transceiver": ref,
+            "value": comp.get("value", ""),
+        }
+        if a_net:
+            entry["a_net"] = a_net
+        if b_net:
+            entry["b_net"] = b_net
+        if di_net:
+            entry["di_net"] = di_net
+        if ro_net:
+            entry["ro_net"] = ro_net
+        if de_net:
+            entry["de_net"] = de_net
+        if re_net:
+            entry["re_net"] = re_net
+        buses.setdefault("rs485", []).append(entry)
+
+    # SPI enrichment: add chip_select count and bus_mode
+    for spi_entry in buses.get("spi", []):
+        sigs = spi_entry.get("signals", {})
+        # Count CS/SS nets for this bus
+        cs_nets = []
+        bus_id = spi_entry.get("bus_id", "")
+        for net_name in nets:
+            nu = net_name.upper()
+            if any(kw in nu for kw in ("CS", "SS", "NSS", "SPI_CS", "SPI_SS")):
+                if bus_id in ("0", "") or bus_id in nu.replace("_", ""):
+                    cs_nets.append(net_name)
+        spi_entry["chip_select_count"] = len(cs_nets)
+        has_mosi = "MOSI" in sigs
+        has_miso = "MISO" in sigs
+        if has_mosi and has_miso:
+            spi_entry["bus_mode"] = "full_duplex"
+        elif has_mosi or has_miso:
+            spi_entry["bus_mode"] = "half_duplex"
+
     # ---- Differential Pair Detection ----
     diff_pairs = []
 
@@ -2740,6 +3330,11 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                     neg_real = net_names_upper[neg_candidate]
                     pair_key = (min(pos_real, neg_real), max(pos_real, neg_real))
                     if pair_key in found_pairs:
+                        continue
+                    # Skip power/ground nets (V+/V-, IN+/IN- on power rails)
+                    if _is_power_net_name(pos_real) or _is_power_net_name(neg_real):
+                        continue
+                    if _is_ground_name(pos_real) or _is_ground_name(neg_real):
                         continue
                     found_pairs.add(pair_key)
 
@@ -3043,6 +3638,10 @@ def audit_pwr_flags(components: list[dict], nets: dict, known_power_rails: set) 
         has_power_in = "power_in" in pin_types
 
         if has_power_in and not has_power_out:
+            # Skip well-known power/ground names — these are nearly always driven
+            # globally via power symbols on another sheet
+            if _is_power_net_name(net_name) or _is_ground_name(net_name):
+                continue
             warnings.append({
                 "net": net_name,
                 "message": f"Power rail '{net_name}' has power_in pins but no power_out or PWR_FLAG — ERC will flag this",
@@ -4549,8 +5148,7 @@ def analyze_power_sequencing(components: list[dict], nets: dict,
                 drivers = [
                     p for p in en_pins
                     if p["component"] != ref
-                    and not p["component"].startswith("#PWR")
-                    and not p["component"].startswith("#FLG")
+                    and not p["component"].startswith("#")
                 ]
                 if not drivers:
                     dep_entry["en_source"] = "floating"
@@ -4598,8 +5196,7 @@ def analyze_power_sequencing(components: list[dict], nets: dict,
                     pg_targets = [
                         p["component"] for p in nets[net]["pins"]
                         if p["component"] != ref
-                        and not p["component"].startswith("#PWR")
-                        and not p["component"].startswith("#FLG")
+                        and not p["component"].startswith("#")
                     ]
                     if pg_targets:
                         pg_entry["connected_to"] = pg_targets
@@ -5407,6 +6004,32 @@ def analyze_schematic(path: str) -> dict:
         for j in junctions:
             j["_sheet"] = sheet_idx
 
+        # KH-026: Namespace hierarchical labels per instance to prevent
+        # multi-instance sub-sheets from merging unrelated nets.
+        # Pin stubs (parent-side, tagged with _sheet_uuid) get prefixed with
+        # inst_path + "/" + _sheet_uuid so they match the child instance's
+        # labels.  Actual hierarchical_labels (child-side, no _sheet_uuid)
+        # get prefixed with inst_path so they match their parent's pin stub.
+        # Global labels are left unchanged; local labels are already scoped
+        # by _sheet index.
+        if inst_path:  # not root sheet
+            for lbl in labels:
+                if lbl["type"] == "hierarchical_label":
+                    suuid = lbl.pop("_sheet_uuid", None)
+                    if suuid:
+                        # Pin stub on parent side — prefix with child instance path
+                        lbl["name"] = inst_path + "/" + suuid + "/" + lbl["name"]
+                    else:
+                        # Actual hierarchical label inside the child sheet
+                        lbl["name"] = inst_path + "/" + lbl["name"]
+        else:
+            # Root sheet — only pin stubs need prefixing (with child UUID)
+            for lbl in labels:
+                if lbl["type"] == "hierarchical_label":
+                    suuid = lbl.pop("_sheet_uuid", None)
+                    if suuid:
+                        lbl["name"] = "/" + suuid + "/" + lbl["name"]
+
         all_components.extend(components)
         all_wires.extend(wires)
         all_labels.extend(labels)
@@ -5502,8 +6125,9 @@ def analyze_schematic(path: str) -> dict:
     usb_compliance = analyze_usb_compliance(all_components, nets, signal_analysis, pin_net)
     inrush_analysis = analyze_inrush_current(all_components, nets, signal_analysis, pin_net)
 
-    # Add parsed numeric values to all passive components
+    # Add parsed numeric values to all passive components and category field
     for comp in all_components:
+        comp["category"] = comp.get("type")
         if comp["type"] in ("resistor", "capacitor", "inductor", "ferrite_bead", "crystal"):
             pv = parse_value(comp.get("value", ""))
             if pv is not None:
