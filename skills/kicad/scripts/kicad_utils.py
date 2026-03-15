@@ -261,7 +261,7 @@ def parse_value(value_str: str) -> float | None:
         return None
 
 
-def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False) -> str:
+def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False, footprint: str = "") -> str:
     """Classify component type from reference designator and library."""
     if is_power or lib_id.startswith("power:"):
         return "power_symbol"
@@ -467,9 +467,33 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
     # --- Last resort: single-char prefix fallback ---
     # Only reached when lib_id/value didn't resolve the type.
     # Deliberately placed last so lib_id always takes priority.
+    # KH-079: After single-char match, check lib_id/footprint/value for
+    # contradicting evidence that overrides the single-char classification.
     if len(prefix) > 1:
         result = type_map.get(prefix[0])
         if result:
+            fp_lower = footprint.lower() if footprint else ""
+            if result == "transformer":
+                if "tvs" in lib_lower or "tvs" in val_lower:
+                    return "diode"
+                if "test" in lib_lower or "tp" in fp_lower:
+                    return "test_point"
+            if result == "fuse":
+                if "fiducial" in lib_lower:
+                    return "fiducial"
+                if "filter" in lib_lower or "emi" in lib_lower:
+                    return "filter"
+            if result == "capacitor":
+                if "shield" in lib_lower or "clip" in lib_lower:
+                    return "mechanical"
+            if result == "switch":
+                if "standoff" in lib_lower or "smtso" in val_lower:
+                    return "mounting_hole"
+            if result == "ic":
+                if "bjt" in lib_lower or "transistor" in lib_lower:
+                    return "transistor"
+                if "transformer" in lib_lower:
+                    return "transformer"
             return result
 
     return "other"
