@@ -141,6 +141,7 @@ def extract_lib_symbols(root: list) -> dict:
         desc = get_property(sym, "Description") or ""
         ki_keywords = get_property(sym, "ki_keywords") or ""
         ki_fp_filters = get_property(sym, "ki_fp_filters") or ""
+        lib_value = get_property(sym, "Value") or ""
 
         # Check for (power) flag — marks this as a power symbol regardless of lib name
         is_power = any(
@@ -166,6 +167,7 @@ def extract_lib_symbols(root: list) -> dict:
         symbols[name] = {
             "pins": all_pins,
             "unit_pins": unit_pins if unit_pins else None,
+            "value": lib_value,
             "description": desc,
             "keywords": ki_keywords,
             "is_power": is_power,
@@ -189,7 +191,9 @@ def apply_rotation(px: float, py: float, angle_deg: float) -> tuple[float, float
 def compute_pin_positions(component: dict, lib_symbols: dict) -> list[dict]:
     """Compute absolute pin positions for a placed component."""
     lib_id = component.get("lib_id", "")
-    sym_def = lib_symbols.get(lib_id)
+    lib_name = component.get("lib_name", "")
+    # KH-083: Try lib_name first (KiCad 7+ local name), then lib_id
+    sym_def = (lib_symbols.get(lib_name) if lib_name else None) or lib_symbols.get(lib_id)
     if not sym_def:
         return []
 
@@ -305,6 +309,9 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         lib_id = get_value(sym, "lib_id")
         if not lib_id:
             continue
+        # KH-083: KiCad 7+ uses (lib_name X) when the local symbol name
+        # differs from the library's lib_id (e.g., after Eagle import)
+        lib_name = get_value(sym, "lib_name") or ""
 
         at = get_at(sym)
         x, y, angle = at if at else (0, 0, 0)
@@ -320,6 +327,11 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
 
         ref = get_property(sym, "Reference") or ""
         value = get_property(sym, "Value") or ""
+        # KH-088: Eagle-imported schematics often have empty instance Value.
+        # Fall back to the lib_symbol's Value property.
+        if not value:
+            sym_def_val = lib_symbols.get(lib_id, {})
+            value = sym_def_val.get("value", "")
         footprint = get_property(sym, "Footprint") or ""
         datasheet = get_property(sym, "Datasheet") or ""
         description = get_property(sym, "Description") or ""
@@ -413,6 +425,7 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
             "reference": ref,
             "value": value,
             "lib_id": lib_id,
+            "lib_name": lib_name,
             "footprint": footprint,
             "datasheet": datasheet,
             "description": description,
@@ -436,9 +449,10 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         }
 
         # Determine component type from reference prefix, lib_id, and lib_symbol flags
-        sym_def = lib_symbols.get(lib_id, {})
+        # KH-083: Try lib_name first for correct lib_symbol lookup
+        sym_def = (lib_symbols.get(lib_name) if lib_name else None) or lib_symbols.get(lib_id, {})
         is_power_sym = sym_def.get("is_power", False)
-        comp["type"] = classify_component(ref, lib_id, value, is_power_sym)
+        comp["type"] = classify_component(ref, lib_id, value, is_power_sym, footprint)
         # Store ki_keywords for downstream analysis (e.g., P-channel detection)
         comp["keywords"] = sym_def.get("keywords", "")
 
@@ -2228,7 +2242,7 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
             # Check value field for DNP indication
             if not comp["dnp"] and comp["value"].upper() in ("DNP", "DO NOT POPULATE", "DO NOT PLACE", "NP"):
                 comp["dnp"] = True
-            comp["type"] = classify_component(comp["reference"], comp["lib_id"], comp["value"], is_power)
+            comp["type"] = classify_component(comp["reference"], comp["lib_id"], comp["value"], is_power, comp.get("footprint", ""))
             components.append(comp)
 
         # Hierarchical sheet block — extract subsheet filename
@@ -2940,7 +2954,8 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
         if "SDA" in nu or "SCL" in nu or "I2C" in nu:
             # Skip SPI signals (MISO contains no I2C keywords, but SCLK/SCK match SCL)
             # Skip I2S signals (I2S0_RX_SDA etc. contain SDA as substring)
-            if "SCLK" in nu or nu.endswith("SCK") or "SPI" in nu:
+            # KH-086: Also exclude MOSI/MISO nets (SPI data lines on dual-function ICs)
+            if "SCLK" in nu or nu.endswith("SCK") or "SPI" in nu or "MOSI" in nu or "MISO" in nu:
                 continue
             if "I2S" in nu:
                 continue
@@ -2987,6 +3002,10 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
     for net_name, net_info in nets.items():
         if net_name in i2c_seen_nets:
             continue  # Already found by net name
+        # KH-086: Exclude SPI nets — sensors with dual-function SDA/SCL pin names
+        nn_upper = net_name.upper()
+        if "SPI" in nn_upper or "MOSI" in nn_upper or "MISO" in nn_upper:
+            continue
         sda_pins = [p for p in net_info["pins"]
                     if "SDA" in p.get("pin_name", "").upper()
                     and "I2S" not in p.get("pin_name", "").upper()]

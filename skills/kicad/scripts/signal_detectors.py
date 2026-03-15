@@ -942,6 +942,20 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
 
     for ic in [c for c in ctx.components if c["type"] == "ic"]:
         ref = ic["reference"]
+
+        # KH-089: Skip components with no mapped pins (title blocks, graphics)
+        if not ic.get("pins"):
+            continue
+
+        # KH-089: Skip known non-regulator IC families
+        _lib_val_check = (ic.get("lib_id", "") + " " + ic.get("value", "")).lower()
+        _non_reg_exclude = ("eeprom", "flash", "spi_flash", "rtc", "uart",
+                            "usb_uart", "buffer", "logic_", "encoder",
+                            "w25q", "at24c", "24c0", "pcf85", "ht42b", "ch340",
+                            "cp210", "ft232", "74lvc", "74hc")
+        if any(k in _lib_val_check for k in _non_reg_exclude):
+            continue
+
         ic_pins = {}  # pin_name -> (net_name, pin_number)
         for pkey, (net_name, _) in ctx.pin_net.items():
             if pkey[0] == ref:
@@ -1069,6 +1083,12 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 reg_info["inductor"] = inductor_ref
                 if boot_pin:
                     reg_info["has_bootstrap"] = True
+                # KH-084/KH-087: Trace through inductor to find output rail
+                if inductor_ref and not vout_pin:
+                    ind_n1, ind_n2 = ctx.get_two_pin_nets(inductor_ref)
+                    out_rail = ind_n2 if ind_n1 == sw_net else ind_n1
+                    if out_rail and out_rail != sw_net:
+                        reg_info["output_rail"] = out_rail
             else:
                 reg_info["topology"] = "switching"  # SW pin but no inductor found
         elif vout_pin and not sw_pin:
@@ -1182,6 +1202,27 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
 
         if is_regulator and any(k in reg_info for k in ("topology", "input_rail", "output_rail", "estimated_vout")):
             power_regulators.append(reg_info)
+
+    # KH-084: Cross-reference feedback dividers with regulators.
+    # For dividers whose top_net matches a regulator's output_rail, mark as feedback.
+    for reg in power_regulators:
+        fb_net = reg.get("fb_net")
+        if not fb_net or reg.get("feedback_divider"):
+            continue
+        # Check if FB net connects to divider top_net (FB-at-top topology)
+        for vd in voltage_dividers:
+            if vd["top_net"] == fb_net:
+                ratio = vd["ratio"]
+                # In FB-at-top, Vout = Vfb (the top of the divider IS the output)
+                reg["feedback_divider"] = {
+                    "r_top": vd["r_top"]["ref"],
+                    "r_bottom": vd["r_bottom"]["ref"],
+                    "ratio": ratio,
+                    "topology": "fb_at_top",
+                }
+                if not reg.get("output_rail"):
+                    reg["output_rail"] = fb_net
+                break
 
     return power_regulators
 
@@ -3035,6 +3076,9 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
     for net_name, net_info in ctx.nets.items():
         nn = net_name.upper()
         if "I2S" in nn:
+            continue
+        # KH-086: Exclude SPI nets — sensors with dual-function SDA/SCL pin names
+        if "SPI" in nn or "MOSI" in nn or "MISO" in nn:
             continue
         is_sda = bool(re.search(r'\bSDA\b', nn) or re.search(r'I2C.*SDA|SDA.*I2C', nn))
         is_scl = bool(re.search(r'\bSCL\b', nn) or re.search(r'I2C.*SCL|SCL.*I2C', nn))
