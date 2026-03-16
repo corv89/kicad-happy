@@ -432,7 +432,7 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         # KH-083: Try lib_name first for correct lib_symbol lookup
         sym_def = (lib_symbols.get(lib_name) if lib_name else None) or lib_symbols.get(lib_id, {})
         is_power_sym = sym_def.get("is_power", False)
-        comp["type"] = classify_component(ref, lib_id, value, is_power_sym, footprint)
+        comp["type"] = classify_component(ref, lib_id, value, is_power_sym, footprint, in_bom=in_bom)
         # Store ki_keywords for downstream analysis (e.g., P-channel detection)
         comp["keywords"] = sym_def.get("keywords", "")
 
@@ -476,6 +476,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         detect_transistor_circuits,
         detect_voltage_dividers,
         postfilter_vd_and_dedup,
+        _merge_series_dividers,
     )
 
     if pin_net is None:
@@ -493,6 +494,8 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     # Run detectors in dependency order
     vd_result = detect_voltage_dividers(ctx)
     voltage_dividers = vd_result["voltage_dividers"]
+    # KH-105/KH-115: Merge series resistors in divider chains
+    voltage_dividers = _merge_series_dividers(voltage_dividers, ctx)
     feedback_networks = vd_result["feedback_networks"]
 
     lc_filters = detect_lc_filters(ctx)
@@ -595,6 +598,9 @@ def extract_labels(root: list) -> list[dict]:
     for label_type in ["label", "global_label", "hierarchical_label"]:
         for lbl in find_all(root, label_type):
             name = lbl[1] if len(lbl) > 1 else ""
+            # KH-078: Malformed s-expressions can yield a list instead of string
+            if isinstance(name, list):
+                name = str(name[0]) if name else ""
             at = get_at(lbl)
             x, y, angle = at if at else (0, 0, 0)
             # Shape field exists on global_label and hierarchical_label
@@ -896,18 +902,22 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
     label_keys: dict[str, list] = {}  # label_name -> list of coordinate keys
     for lbl in labels:
         sheet = lbl.get("_sheet", 0)
+        # KH-078: Defensive coercion — malformed labels can have list names
+        lbl_name = lbl["name"]
+        if isinstance(lbl_name, list):
+            lbl_name = str(lbl_name[0]) if lbl_name else ""
         k = add_point(lbl["x"], lbl["y"], {
             "source": "label",
-            "name": lbl["name"],
+            "name": lbl_name,
             "label_type": lbl["type"],
         }, sheet)
         # Only global labels and power symbols connect across sheets.
         # Local labels only connect within the same sheet (handled by wire union).
         if lbl["type"] in ("global_label", "hierarchical_label"):
-            label_keys.setdefault(lbl["name"], []).append(k)
+            label_keys.setdefault(lbl_name, []).append(k)
         else:
             # Local labels: union same-name labels within this sheet only
-            local_key = (lbl["name"], sheet)
+            local_key = (lbl_name, sheet)
             label_keys.setdefault(local_key, []).append(k)
         union_with_overlapping_wires(k, lbl["x"], lbl["y"], sheet)
 

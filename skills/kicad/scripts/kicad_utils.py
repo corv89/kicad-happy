@@ -218,6 +218,11 @@ def parse_value(value_str: str) -> float | None:
         s = parts[0] + parts[1]
     else:
         s = parts[0] if parts else ""
+    # KH-112: Ferrite bead impedance notation (600R/200mA, 120R@100MHz)
+    # is not a parseable component value — return None to avoid nonsensical results
+    if re.search(r'\d+[Rr]\s*[/@]\s*\d', s):
+        return None
+
     # Strip trailing unit words (mOhm, Ohm, ohm, ohms) before single-char stripping
     s = re.sub(r'[Oo]hms?$', '', s)
     s = s.rstrip("FHΩVfhv%")         # strip trailing unit letters
@@ -268,9 +273,11 @@ def parse_value(value_str: str) -> float | None:
         return None
 
 
-def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False, footprint: str = "") -> str:
+def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False, footprint: str = "", in_bom: bool = False) -> str:
     """Classify component type from reference designator and library."""
-    if is_power or lib_id.startswith("power:"):
+    # KH-080: Components with in_bom=yes are real parts, not power symbols,
+    # even if placed in the power: library (e.g., DD4012SA buck converter)
+    if (is_power or lib_id.startswith("power:")) and not in_bom:
         return "power_symbol"
 
     prefix = ""
@@ -370,8 +377,17 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
             return "varistor"
         if result == "diode" and re.search(r'(?<![a-z])led(?![a-z])', lib_low + " " + val_low):
             return "led"
+        # KH-122: Addressable LEDs (SK6812, WS2812) with D prefix
+        if result == "diode" and any(k in val_low or k in lib_low
+                                     for k in ("ws2812", "ws2813", "ws2815",
+                                               "sk6812", "apa102", "apa104",
+                                               "sk9822", "ws2811", "neopixel")):
+            return "led"
         if result == "inductor":
             if any(x in lib_low or x in val_low for x in ("ferrite", "bead")):
+                return "ferrite_bead"
+            # KH-112: Ferrite bead impedance notation (600R/200mA, 120R@100MHz)
+            if re.search(r'\d+[Rr]\s*[/@]\s*\d', value):
                 return "ferrite_bead"
         # KH-106: MX/Cherry/Kailh keyboard switches (K prefix maps to relay)
         if result == "relay":
