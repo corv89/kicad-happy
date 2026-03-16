@@ -579,7 +579,7 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
             is_bootstrap = False
             if cap_other_net and cap_other_net in ctx.nets:
                 for p in ctx.nets[cap_other_net]["pins"]:
-                    pn = p.get("pin_name", "").upper().rstrip("0123456789")
+                    pn = p.get("pin_name", "").upper().rstrip("0123456789").rstrip("_")
                     pn_parts = {pp.strip() for pp in pn.split("/")}
                     if pn_parts & {"BST", "BOOT", "BOOTSTRAP", "CBST"}:
                         is_bootstrap = True
@@ -1126,7 +1126,7 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
                 _val_lower2 = (ic_comp.get("value", "") + " " + ic_comp.get("lib_id", "")).lower()
                 if any(kw in _val_lower2 for kw in _SENSE_IC_EXCLUDE):
                     continue
-                pn = p.get("pin_name", "").upper().rstrip("0123456789")
+                pn = p.get("pin_name", "").upper().rstrip("0123456789").rstrip("_")
                 if pn in _integrated_csa_pins:
                     current_sense.append({
                         "shunt": {
@@ -1198,7 +1198,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
 
         for pname, (net, pnum) in ic_pins.items():
             # Use startswith for pins that may have numeric suffixes (FB1, SW2, etc.)
-            pn_base = pname.rstrip("0123456789")  # Strip trailing digits
+            pn_base = pname.rstrip("0123456789").rstrip("_")  # Strip trailing digits and underscores (FB_1→FB)
             # Split composite pin names like "FB/VOUT" into parts
             pn_parts = {p.strip() for p in pname.split("/")} | {pn_base}
             if pn_parts & {"FB", "VFB", "ADJ", "VADJ"}:
@@ -1211,7 +1211,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 if not sw_pin:
                     sw_pin = (pname, net)
             elif pname in ("EN", "ENABLE", "ON", "~{SHDN}", "SHDN", "~{EN}") or \
-                 (pn_base == "EN" and len(pname) <= 3):
+                 (pn_base == "EN" and len(pname) <= 4):
                 en_pin = (pname, net)
             elif pn_parts & {"VIN", "VI", "IN", "PVIN", "AVIN", "INPUT"}:
                 vin_pin = (pname, net)
@@ -1518,9 +1518,18 @@ def detect_integrated_ldos(ctx: AnalysisContext, power_regulators: list[dict]) -
     existing_refs = {r["ref"] for r in power_regulators}
     integrated = []
 
+    # KH-127: Non-regulator ICs with VREG decoupling pins
+    _non_reg_ic_keywords = ("usb_hub", "hub", "cy7c65", "usb2512", "usb2514",
+                            "tusb8", "usb3503", "fe1.1", "gl850",
+                            "fpga", "cpld", "mcu", "microcontroller",
+                            "stm32", "esp32", "nrf5", "atmega", "pic",
+                            "ethernet", "phy", "codec", "audio")
     for ic in [c for c in ctx.components if c["type"] == "ic"]:
         ref = ic["reference"]
         if ref in existing_refs:
+            continue
+        lib_val_lower = (ic.get("lib_id", "") + " " + ic.get("value", "")).lower()
+        if any(k in lib_val_lower for k in _non_reg_ic_keywords):
             continue
         for (pref, pnum), (net_name, _) in ctx.pin_net.items():
             if pref != ref or not net_name:
@@ -1582,12 +1591,15 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 net_name, _ = ctx.pin_net.get((comp["reference"], pin["number"]), (None, None))
                 if net_name and not ctx.is_power_net(net_name) and not ctx.is_ground(net_name):
                     protected.append(net_name)
-            for net_name in set(protected):
+            # KH-126: One entry per component, collect all protected nets
+            if protected:
+                sorted_nets = sorted(set(protected))
                 protection_devices.append({
                     "ref": comp["reference"],
                     "value": comp.get("value", ""),
                     "type": "esd_ic",
-                    "protected_net": net_name,
+                    "protected_net": sorted_nets[0],
+                    "protected_nets": sorted_nets,
                     "clamp_net": None,
                 })
             continue
@@ -1700,12 +1712,15 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
             net_name, _ = ctx.pin_net.get((comp["reference"], pin["number"]), (None, None))
             if net_name and not ctx.is_power_net(net_name) and not ctx.is_ground(net_name):
                 protected.append(net_name)
-        for net_name in set(protected):
+        # KH-126: One entry per component, collect all protected nets
+        if protected:
+            sorted_nets = sorted(set(protected))
             protection_devices.append({
                 "ref": comp["reference"],
                 "value": comp.get("value", ""),
                 "type": "esd_ic",
-                "protected_net": net_name,
+                "protected_net": sorted_nets[0],
+                "protected_nets": sorted_nets,
                 "clamp_net": None,
             })
 
@@ -1719,6 +1734,7 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
     opamp_value_keywords = ("opa", "lm358", "lm324", "mcp6", "ad8", "tl07", "tl08",
                             "ne5532", "lf35", "lt623", "ths", "ada4",
                             "ina10", "ina11", "ina12", "ina13",
+                            "ina2", "ina8",
                             "ncs3", "lmc7", "lmv3", "max40", "max44",
                             "tsc10", "mcp60", "mcp61", "mcp65")
 
@@ -1731,7 +1747,7 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
         match_sources = [val, lib_part]
         if not (any(k in lib for k in opamp_lib_keywords) or
                 any(s.startswith(k) for k in opamp_value_keywords for s in match_sources) or
-                any(k in desc for k in ("opamp", "op-amp", "op amp", "operational amplifier"))):
+                any(k in desc for k in ("opamp", "op-amp", "op amp", "operational amplifier", "instrumentation"))):
             continue
 
         ref = ic["reference"]
@@ -1791,6 +1807,17 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
                         pos_in = (pin_name, net, pnum)
                     elif not neg_in:
                         neg_in = (pin_name, net, pnum)
+
+        # KH-125: Legacy format fallback — no pin data but keyword match confirmed
+        if pos_in is None and neg_in is None and out_pin is None:
+            opamp_circuits.append({
+                "reference": ref,
+                "value": ic.get("value", ""),
+                "lib_id": ic.get("lib_id", ""),
+                "configuration": "unknown",
+                "unit": unit,
+            })
+            continue
 
         if not out_pin or not neg_in:
             continue
@@ -1949,7 +1976,7 @@ def detect_bridge_circuits(ctx: AnalysisContext) -> tuple[list[dict], set, dict]
                 for p in ctx.nets[net]["pins"]:
                     if p["component"] == ref and p["pin_number"] == pnum:
                         pn = p.get("pin_name", "").upper()
-                        pn_base = pn.rstrip("0123456789")  # G1→G, D2→D
+                        pn_base = pn.rstrip("0123456789").rstrip("_")  # G1→G, D2→D, G_1→G
                         if "GATE" in pn or pn_base == "G":
                             pins["gate"] = net
                         elif "DRAIN" in pn or pn_base == "D":
@@ -2071,8 +2098,21 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
 
         # Gate drive analysis
         gate_comps = _get_net_components(ctx, gate_net, ref) if gate_net else []
-        gate_resistors = [c for c in gate_comps if c["type"] == "resistor"]
         gate_ics = [c for c in gate_comps if c["type"] == "ic"]
+
+        # KH-139: When gate is on a power rail, don't enumerate all resistors
+        # on that rail — only include resistors connecting to drain/source/ground.
+        if gate_net and ctx.is_power_net(gate_net):
+            gate_resistors = []
+            for gc in gate_comps:
+                if gc["type"] != "resistor":
+                    continue
+                r_n1, r_n2 = ctx.get_two_pin_nets(gc["reference"])
+                other = r_n2 if r_n1 == gate_net else r_n1
+                if other in (drain_net, source_net) or ctx.is_ground(other):
+                    gate_resistors.append(gc)
+        else:
+            gate_resistors = [c for c in gate_comps if c["type"] == "resistor"]
 
         if not gate_resistors and gate_net and gate_net in ctx.nets:
             gate_pin_count = len(ctx.nets[gate_net].get("pins", []))
