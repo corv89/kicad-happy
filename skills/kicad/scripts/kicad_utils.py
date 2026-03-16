@@ -275,9 +275,13 @@ def parse_value(value_str: str) -> float | None:
 
 def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False, footprint: str = "", in_bom: bool = False) -> str:
     """Classify component type from reference designator and library."""
-    # KH-080: Components with in_bom=yes are real parts, not power symbols,
-    # even if placed in the power: library (e.g., DD4012SA buck converter)
-    if (is_power or lib_id.startswith("power:")) and not in_bom:
+    # Power symbols: trust the lib_symbol (power) flag unconditionally.
+    # KH-080: Components in the power: library WITHOUT the (power) flag
+    # (e.g., DD4012SA buck converter) are real parts, not power symbols —
+    # only treat them as power symbols if they're not in BOM.
+    if is_power:
+        return "power_symbol"
+    if lib_id.startswith("power:") and not in_bom:
         return "power_symbol"
 
     prefix = ""
