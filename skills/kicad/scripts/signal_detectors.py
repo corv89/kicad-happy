@@ -345,8 +345,9 @@ def _merge_series_dividers(voltage_dividers: list[dict], ctx: AnalysisContext) -
 
 
 def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
-                      crystal_circuits: list[dict] | None = None) -> list[dict]:
-    """Detect RC filters. Takes voltage_dividers/crystal_circuits to exclude."""
+                      crystal_circuits: list[dict] | None = None,
+                      opamp_circuits: list[dict] | None = None) -> list[dict]:
+    """Detect RC filters. Takes voltage_dividers/crystal_circuits/opamp_circuits to exclude."""
     results_rc: list[dict] = []
 
     resistors = [c for c in ctx.components if c["type"] == "resistor" and c["reference"] in ctx.parsed_values]
@@ -368,6 +369,20 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
     for vd in voltage_dividers:
         vd_resistor_refs.add(vd["r_top"]["ref"])
         vd_resistor_refs.add(vd["r_bottom"]["ref"])
+
+    # KH-145: Exclude opamp feedback resistors, capacitors, and input resistors
+    opamp_exclude_refs = set()
+    for oa in (opamp_circuits or []):
+        fb_r = oa.get("feedback_resistor")
+        if isinstance(fb_r, dict):
+            opamp_exclude_refs.add(fb_r.get("ref", ""))
+        fb_c = oa.get("feedback_capacitor")
+        if isinstance(fb_c, dict):
+            opamp_exclude_refs.add(fb_c.get("ref", ""))
+        inp_r = oa.get("input_resistor")
+        if isinstance(inp_r, dict):
+            opamp_exclude_refs.add(inp_r.get("ref", ""))
+    opamp_exclude_refs.discard("")
 
     # KH-107: Exclude crystal circuit components (load caps + feedback resistors)
     crystal_refs = set()
@@ -402,6 +417,8 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
             continue  # Skip voltage divider resistors
         if res["reference"] in crystal_refs:
             continue  # KH-107: Skip crystal circuit components
+        if res["reference"] in opamp_exclude_refs:
+            continue  # KH-145: Skip opamp feedback/input resistors
         if res["reference"] not in resistor_nets:
             continue
         r_n1, r_n2 = resistor_nets[res["reference"]]
@@ -417,6 +434,8 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
         for cap_ref in candidate_caps:
             if cap_ref in crystal_refs:
                 continue  # KH-107: Skip crystal circuit components
+            if cap_ref in opamp_exclude_refs:
+                continue  # KH-145: Skip opamp feedback capacitors
 
             # KH-121: Skip if this R-C pair was already found from the other direction
             rc_pair = frozenset((res["reference"], cap_ref))
@@ -1156,7 +1175,8 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
     """Detect power regulator topology. Takes voltage_dividers for feedback matching."""
     power_regulators: list[dict] = []
 
-    for ic in [c for c in ctx.components if c["type"] == "ic"]:
+    # KH-148: Deduplicate multi-unit ICs
+    for ic in list({c["reference"]: c for c in ctx.components if c["type"] == "ic"}.values()):
         ref = ic["reference"]
 
         # KH-089: Skip components with no mapped pins (title blocks, graphics)
@@ -1629,6 +1649,9 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 protected_net = d_n1
 
         if protected_net:
+            # KH-143: Deduplicate multi-unit TVS arrays (same ref, different units)
+            if any(p["ref"] == comp["reference"] for p in protection_devices):
+                continue
             protection_devices.append({
                 "ref": comp["reference"],
                 "value": comp.get("value", ""),
@@ -1836,9 +1859,12 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             for fb_ref in fb_resistors:
                 comp = ctx.comp_lookup.get(fb_ref)
                 if comp and comp["type"] == "resistor" and fb_ref in ctx.parsed_values:
-                    rf_ref = fb_ref
-                    rf_val = ctx.parsed_values[fb_ref]
-                    break
+                    # KH-149: Verify direct connection — one pin on out_net, other on neg_net
+                    fb_n1, fb_n2 = ctx.get_two_pin_nets(fb_ref)
+                    if {fb_n1, fb_n2} == {out_net, neg_net}:
+                        rf_ref = fb_ref
+                        rf_val = ctx.parsed_values[fb_ref]
+                        break
 
             # Capacitor feedback (integrator/compensator)
             cf_ref = None
@@ -1847,9 +1873,12 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             for fb_cref in fb_caps:
                 comp = ctx.comp_lookup.get(fb_cref)
                 if comp and comp["type"] == "capacitor" and fb_cref in ctx.parsed_values:
-                    cf_ref = fb_cref
-                    cf_val = ctx.parsed_values[fb_cref]
-                    break
+                    # KH-149: Verify direct connection
+                    fb_n1, fb_n2 = ctx.get_two_pin_nets(fb_cref)
+                    if {fb_n1, fb_n2} == {out_net, neg_net}:
+                        cf_ref = fb_cref
+                        cf_val = ctx.parsed_values[fb_cref]
+                        break
 
             # 2-hop feedback
             if not rf_ref:
@@ -1861,7 +1890,8 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
                     if not o_n1 or not o_n2:
                         continue
                     mid = o_n2 if o_n1 == out_net else o_n1
-                    if mid == out_net or ctx.is_ground(mid) or ctx.is_power_net(mid):
+                    # KH-149: Also skip if mid == neg_net (degenerate 2-hop = direct path)
+                    if mid in (out_net, neg_net) or ctx.is_ground(mid) or ctx.is_power_net(mid):
                         continue
                     if mid in ctx.nets:
                         mid_comps = {p["component"] for p in ctx.nets[mid]["pins"]
@@ -2089,7 +2119,7 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
         val_lower = comp.get("value", "").lower()
         kw_lower = comp.get("keywords", "").lower()
         is_pchannel = any(k in lib_lower for k in
-                         ("pmos", "p-channel", "p_channel", "pchannel", "q_pmos"))
+                         ("pmos", "p-channel", "p_channel", "pchannel", "q_pmos", "p_jfet"))
         if not is_pchannel:
             is_pchannel = "p-channel" in kw_lower or "pchannel" in kw_lower
         if not is_pchannel:
@@ -2220,11 +2250,18 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
                 topology = "level_shifter"
                 load_type = "level_shifter"
 
+        # KH-146: Detect JFET from lib_id/value
+        _jfet_kw = ("jfet", "n_jfet", "p_jfet", "q_jfet",
+                     "j310", "j271", "j270", "j174", "j175", "j176",
+                     "mmbfj", "bf545", "bf546", "bf244", "bf256",
+                     "2n5457", "2n5458", "2n5459", "2n3819", "2n4416")
+        is_jfet = any(k in lib_lower or k in val_lower for k in _jfet_kw)
+
         circuit = {
             "reference": ref,
             "value": comp.get("value", ""),
             "lib_id": comp.get("lib_id", ""),
-            "type": "mosfet",
+            "type": "jfet" if is_jfet else "mosfet",
             "is_pchannel": is_pchannel,
             "gate_net": gate_net,
             "drain_net": drain_net,
@@ -2381,6 +2418,10 @@ def detect_led_drivers(ctx: AnalysisContext, transistor_circuits: list[dict]) ->
         for dc in load_comps:
             if dc["type"] != "resistor":
                 continue
+            # KH-147: Reject resistors that are too large for current limiting
+            r_ohms = ctx.parsed_values.get(dc["reference"])
+            if r_ohms is not None and r_ohms > 100e3:
+                continue
             # Follow the resistor to its other net
             r_n1, r_n2 = ctx.get_two_pin_nets(dc["reference"])
             other_net = r_n2 if r_n1 == load_net else r_n1
@@ -2390,9 +2431,12 @@ def detect_led_drivers(ctx: AnalysisContext, transistor_circuits: list[dict]) ->
             other_comps = _get_net_components(ctx, other_net, dc["reference"])
             for oc in other_comps:
                 if oc["type"] == "led":
+                    # KH-147: Verify LED actually has a pin on other_net
+                    led_n1, led_n2 = ctx.get_two_pin_nets(oc["reference"])
+                    if led_n1 != other_net and led_n2 != other_net:
+                        continue
                     led_comp = ctx.comp_lookup.get(oc["reference"], {})
                     # Find what power rail the LED's other pin connects to
-                    led_n1, led_n2 = ctx.get_two_pin_nets(oc["reference"])
                     led_other = led_n2 if led_n1 == other_net else led_n1
                     led_power = led_other if led_other and ctx.is_power_net(led_other) else None
                     tc["led_driver"] = {
@@ -2523,7 +2567,10 @@ def detect_key_matrices(ctx: AnalysisContext) -> list[dict]:
     # Topology-based detection: find switch-diode pairs and group by shared nets
     # to identify rows/columns regardless of net naming.
     if not key_matrices:
-        switches = [c for c in ctx.components if c["type"] == "switch"]
+        # KH-152: Exclude solar cells and similar power-generation components
+        switches = [c for c in ctx.components if c["type"] == "switch"
+                    and "solar" not in c.get("lib_id", "").lower()
+                    and "solar_cell" not in c.get("value", "").lower()]
         if len(switches) >= 4:
             # For each switch, find if either net has a diode (switch-diode pair)
             switch_diode_pairs = []
@@ -2556,6 +2603,11 @@ def detect_key_matrices(ctx: AnalysisContext) -> list[dict]:
                 for pair in switch_diode_pairs:
                     topo_row_nets.add(pair["row_net"])
                     topo_col_nets.add(pair["col_net"])
+                # KH-152: Reject if row/col nets are power rails
+                topo_row_nets = {n for n in topo_row_nets
+                                 if not ctx.is_power_net(n) and not ctx.is_ground(n)}
+                topo_col_nets = {n for n in topo_col_nets
+                                 if not ctx.is_power_net(n) and not ctx.is_ground(n)}
                 if len(topo_row_nets) >= 2 and len(topo_col_nets) >= 2:
                     key_matrices.append({
                         "rows": len(topo_row_nets),
@@ -3204,6 +3256,16 @@ def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
                     if not comp:
                         continue
                     if comp["type"] in ("capacitor", "inductor", "ferrite_bead"):
+                        # KH-150: Skip ferrite beads (EMI filtering, not RF matching)
+                        _comp_desc = (comp.get("description", "") + " " +
+                                      comp.get("keywords", "") + " " +
+                                      comp.get("value", "")).lower()
+                        if any(k in _comp_desc for k in ("ferrite", "bead", "emi")):
+                            visited_refs.add(cref)
+                            continue
+                        if comp["type"] == "ferrite_bead":
+                            visited_refs.add(cref)
+                            continue
                         visited_refs.add(cref)
                         matching_components.append({
                             "ref": cref,
@@ -3225,6 +3287,22 @@ def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
 
         if not matching_components:
             continue
+
+        # KH-150: Require target IC to be RF-related
+        if target_ic:
+            _target_comp = ctx.comp_lookup.get(target_ic, {})
+            _target_check = (_target_comp.get("value", "") + " " +
+                             _target_comp.get("lib_id", "") + " " +
+                             _target_comp.get("description", "") + " " +
+                             _target_comp.get("keywords", "")).lower()
+            _rf_keywords = ("rf", "transceiver", "mixer", "lna", "wireless",
+                            "radio", "bluetooth", "wifi", "zigbee", "lora",
+                            "sx127", "cc1101", "nrf", "esp32", "at86",
+                            "si446", "rfm", "ra0", "wl18", "antenna",
+                            "433", "868", "915", "2.4g", "uwb", "gps",
+                            "gnss", "amplifier_rf", "rf_amplifier")
+            if not any(kw in _target_check for kw in _rf_keywords):
+                continue
 
         # RF matching networks require at least one inductor — pure C networks
         # are decoupling/filtering, not impedance matching
@@ -3420,8 +3498,11 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 connector_nets.add(net_name)
     protected_nets = {p["protected_net"] for p in results.get("protection_devices", [])}
 
+    # KH-148: Deduplicate multi-unit ICs (same ref, different units)
+    unique_ics = list({c["reference"]: c for c in ctx.components if c["type"] == "ic"}.values())
+
     # 1. IC power pin decoupling status
-    for ic in [c for c in ctx.components if c["type"] == "ic"]:
+    for ic in unique_ics:
         ref = ic["reference"]
         ic_power_nets = set()
         for (pref, pnum), (net, _) in ctx.pin_net.items():
@@ -3533,7 +3614,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
             })
 
     # 5. Reset pin configuration
-    for ic in [c for c in ctx.components if c["type"] == "ic"]:
+    for ic in unique_ics:
         ref = ic["reference"]
         for (pref, pnum), (net, _) in ctx.pin_net.items():
             if pref != ref or not net or net.startswith("__unnamed_"):
