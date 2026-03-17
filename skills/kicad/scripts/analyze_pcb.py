@@ -1436,20 +1436,30 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
         if net > 0:
             via_by_net.setdefault(net, []).append(via)
 
-    # Zone stitching analysis
-    stitching = []
+    # Aggregate zone polygons by net before computing stitching density
+    net_zones: dict[int, dict] = {}
     for zb in zone_bounds:
         net = zb["net"]
+        if net not in net_zones:
+            net_zones[net] = {
+                "net_name": zb["net_name"],
+                "layers": set(),
+                "total_area_mm2": 0,
+            }
+        net_zones[net]["layers"].update(zb["layers"])
+        net_zones[net]["total_area_mm2"] += zb.get("area_mm2", 0)
+
+    # Zone stitching analysis — one entry per net
+    stitching = []
+    for net, info in net_zones.items():
         net_vias = via_by_net.get(net, [])
         if not net_vias:
             continue
-        # Compute via spacing statistics
-        via_positions = [(v["x"], v["y"]) for v in net_vias]
-        area = zb.get("area_mm2", 0)
+        area = info["total_area_mm2"]
 
         entry = {
-            "net": zb["net_name"],
-            "zone_layers": zb["layers"],
+            "net": info["net_name"],
+            "zone_layers": sorted(info["layers"]),
             "zone_area_mm2": round(area, 1) if area else None,
             "via_count": len(net_vias),
         }
@@ -1488,6 +1498,10 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
         smd_pad_areas = []
         for pad in fp.get("pads", []):
             if pad.get("type") == "smd":
+                # Skip paste-only pads (stencil apertures with no copper)
+                pad_layers = pad.get("layers", [])
+                if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
+                    continue
                 pw = pad.get("width", 0)
                 ph = pad.get("height", 0)
                 pa = pw * ph
@@ -1512,11 +1526,19 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
             #   and are almost always connected to GND or a power plane)
             if pad.get("type") != "smd" or pad_area <= 4.0:
                 continue
+            # Skip paste-only pads (stencil apertures with no copper)
+            pad_layers = pad.get("layers", [])
+            if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
+                continue
             if not (is_ep or pad_area > 9.0):
                 continue
             if avg_pad_area > 0 and pad_area < avg_pad_area * 2.0:
                 continue
+            # Must have a net — structural/shield pads with no net are not thermal
             net_name = pad.get("net_name", "")
+            pad_net_num = pad.get("net_number", -1)
+            if not net_name or pad_net_num <= 0:
+                continue
             net_upper = net_name.upper()
             is_power_or_gnd = (
                 net_upper in ("GND", "VSS", "AGND", "DGND", "PGND", "VCC", "VDD",
@@ -2274,7 +2296,7 @@ def compute_statistics(footprints: list[dict], tracks: dict, vias: dict,
     """Compute summary statistics."""
     # Resolve copper layer names from declarations
     if layers:
-        copper_layer_names = {l["name"] for l in layers if l["type"] in ("signal", "power", "mixed", "user")}
+        copper_layer_names = {l["name"] for l in layers if "Cu" in l["name"]}
         front_copper = next((l["name"] for l in layers if l["number"] == 0), "F.Cu")
         back_copper = next((l["name"] for l in layers if l["number"] == 31), "B.Cu")
     else:
@@ -2935,6 +2957,10 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
         for pad in pads:
             if pad.get("type") != "smd":
                 continue
+            # Skip paste-only pads (stencil apertures with no copper)
+            pad_layers = pad.get("layers", [])
+            if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
+                continue
             w = pad.get("width", 0)
             h = pad.get("height", 0)
             area = w * h
@@ -2963,8 +2989,13 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             if avg_pad_area > 0 and area < avg_pad_area * 2.0:
                 continue
 
-            # Must be on a ground or power net (thermal pads dissipate heat)
+            # Must have a net — structural/shield pads with no net are not thermal
             pad_net_name = pad.get("net_name", "")
+            pad_net_num = pad.get("net_number", -1)
+            if not pad_net_name or pad_net_num <= 0:
+                continue
+
+            # Must be on a ground or power net (thermal pads dissipate heat)
             net_upper = pad_net_name.upper()
             is_power_or_gnd = (
                 net_upper in ("GND", "VSS", "AGND", "DGND", "PGND", "VCC", "VDD",
@@ -3006,6 +3037,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             half_w = w / 2.0
             half_h = h / 2.0
             vias_in_pad = 0
+            effective_vias_in_pad = 0.0
             vias_tented = 0
             vias_untented = 0
 
@@ -3019,6 +3051,9 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 if (abs(dx) <= half_w * 1.1 and
                         abs(dy) <= half_h * 1.1):
                     vias_in_pad += 1
+                    # Weight by drill cross-section relative to 0.3mm standard
+                    drill = via.get("drill", 0.3)
+                    effective_vias_in_pad += (drill / 0.3) ** 2
                     # Check tenting
                     tenting = via.get("tenting", [])
                     if len(tenting) > 0:
@@ -3030,6 +3065,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             # — these are footprint-embedded thermal vias (common in
             # QFN/BGA footprints like ESP32-S3-WROOM-1)
             footprint_via_pads = 0
+            effective_fp_vias = 0.0
             for other_pad in pads:
                 if other_pad is pad:
                     continue
@@ -3037,13 +3073,18 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                         other_pad.get("net_number", -2) == net_num and
                         net_num >= 0):
                     footprint_via_pads += 1
+                    fp_drill = other_pad.get("drill", 0.3)
+                    if isinstance(fp_drill, dict):
+                        fp_drill = fp_drill.get("diameter", 0.3)
+                    effective_fp_vias += (fp_drill / 0.3) ** 2
 
             total_thermal_vias = vias_in_pad + footprint_via_pads
+            effective_thermal_vias = effective_vias_in_pad + effective_fp_vias
 
-            # Compute density using total thermal vias
+            # Compute density using drill-weighted effective via count
             density = 0.0
             if pad_area > 0:
-                density = total_thermal_vias / pad_area
+                density = effective_thermal_vias / pad_area
 
             # Recommendations based on pad area
             # Rule of thumb: ~1 via per 1-2mm² of thermal pad area
@@ -3060,10 +3101,10 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 recommended_min = max(9, int(pad_area * 0.5))
                 recommended_ideal = max(16, int(pad_area * 0.8))
 
-            # Assess adequacy using total (standalone + footprint-embedded)
-            if total_thermal_vias >= recommended_ideal:
+            # Assess adequacy using drill-weighted effective via count
+            if effective_thermal_vias >= recommended_ideal:
                 adequacy = "good"
-            elif total_thermal_vias >= recommended_min:
+            elif effective_thermal_vias >= recommended_min:
                 adequacy = "adequate"
             elif total_thermal_vias > 0:
                 adequacy = "insufficient"
@@ -3080,6 +3121,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 "pad_area_mm2": round(pad_area, 2),
                 "net": pad.get("net_name", ""),
                 "via_count": total_thermal_vias,
+                "effective_via_count": round(effective_thermal_vias, 1),
                 "standalone_vias": vias_in_pad,
                 "footprint_via_pads": footprint_via_pads,
                 "via_density_per_mm2": round(density, 3),
