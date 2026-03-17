@@ -592,6 +592,9 @@ def is_power_net_name(net_name: str | None, power_rails: set[str] | None = None)
         return False
     if power_rails and net_name in power_rails:
         return True
+    # Strip hierarchical sheet path prefix (e.g., "/Power Supply/VCC" → "VCC")
+    if "/" in net_name:
+        net_name = net_name.rsplit("/", 1)[-1]
     nu = net_name.upper()
     # Explicit known names
     if nu in ("GND", "VSS", "AGND", "DGND", "PGND", "GNDPWR", "GNDA", "GNDD",
@@ -625,6 +628,9 @@ def is_ground_name(net_name: str | None) -> bool:
     """Check if a net name looks like a ground rail."""
     if not net_name:
         return False
+    # Strip hierarchical sheet path prefix (e.g., "/Power Supply/GND" → "GND")
+    if "/" in net_name:
+        net_name = net_name.rsplit("/", 1)[-1]
     nu = net_name.upper()
     # Exact matches
     if nu in ("GND", "VSS", "AGND", "DGND", "PGND", "GNDPWR", "GNDA", "GNDD"):

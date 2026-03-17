@@ -397,15 +397,16 @@ def point_in_bbox(x, y, cx, cy, half_w, half_h, angle_deg=0):
 Some components require careful copper management on both layers. Use the analyzer's `copper_presence` data to verify these — don't infer from zone outlines.
 
 **Capacitive touch pads** (TP prefix, or pad-only footprints on touch nets):
-- Need NO copper on the opposite layer — ground planes under touch pads drastically reduce sensitivity by adding parasitic capacitance
-- Need controlled clearance in same-layer ground pour (typically ≥1mm, check the controller's app note)
-- Trace to the controller should be thin (narrow reduces parasitic capacitance) and direct (no unnecessary length)
+- Need NO copper on the opposite layer — ground planes under touch pads drastically reduce sensitivity by adding parasitic capacitance. But confirming copper absence isn't enough: check that **keepout zones** (rule areas) enforce this on the opposite layer. Without a keepout zone, the copper absence is accidental and one zone refill after a routing change could break touch sensitivity. If no keepout zones exist, flag as WARNING.
+- Need controlled clearance in same-layer ground pour (typically ≥1mm, check the controller's app note). Measure the actual clearance and compare against the spec minimum — if it's at the exact minimum, note the sensitivity margin concern and recommend increasing to 1.5× the minimum.
+- Trace to the controller should be thin (narrow reduces parasitic capacitance) and direct (no unnecessary length). Compare trace lengths across ALL touch pads — asymmetry >1.5× means different parasitic capacitance per channel, shifting baseline readings even with firmware calibration. Report the ratio.
 - Hatched ground pour around the pad is sometimes used instead of solid clearance — check the fill type
+- Report physical details for each pad: diameter/size, position, GND clearance (measured vs spec), trace width, trace length to controller
 
-**Antennas** (ANT prefix, or antenna footprints):
-- PCB trace antennas need copper keep-out on the opposite layer for the antenna area
+**Antennas** (ANT prefix, antenna footprints, or wireless modules with PCB/integrated antennas like ESP32, nRF):
+- PCB trace antennas and module antennas need copper keep-out on ALL relevant layers for the antenna area — verify keepout zones exist and report their coordinates and layer coverage (e.g., "Keepout zone on F.Cu+B.Cu: (8.49, 98.05) to (29.49, 146.05)")
 - Ground plane should end at the antenna feed point, not extend under the radiating element
-- Check manufacturer's reference design for ground plane requirements — some antennas need a specific ground plane size/shape
+- Check manufacturer's reference design for ground plane requirements — the module vendor's layout guide is the authoritative source for keepout dimensions. Always cite the reference when verifying: "Correct per Espressif guidelines"
 
 **RF components** (matching networks, baluns near antenna):
 - Controlled impedance traces need consistent ground reference

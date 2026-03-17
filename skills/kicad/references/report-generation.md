@@ -52,7 +52,7 @@ Use this template. Include sections that are relevant to the design — skip sec
 ## Analyzer Verification
 [Spot-checks proving the analyzer data is trustworthy]
 ### Component Count — [N/N match status]
-### Component Pinout Verification — [Table: ALL components verified against raw schematic + datasheets: Ref | Value | lib_id | Footprint | Pin Count | All Pins Verified | Datasheet Cross-checked | Match. Every component must be checked — not just ICs. Include connectors, transistors, diodes, and critical passives.]
+### Component Pinout Verification — [Table: ALL components verified against raw schematic + **manufacturer PDF datasheets** (not KiCad library symbols): Ref | Value | lib_id | Footprint | Pin Count | All Pins Verified | Datasheet Cross-checked | Match. Every component must be checked — not just ICs. Include connectors, transistors, diodes, and critical passives. The "Datasheet Cross-checked" column must reference the actual PDF datasheet with page/section number — not the `.kicad_sym` library file. Verifying against the library symbol is circular (it's the source of the potential error). If no datasheet was available for a component, mark as "NOT VERIFIED — no datasheet" rather than relying on the library symbol. Custom library symbols (e.g., `sacmap:TPS61023`) are highest priority for datasheet verification because there's no upstream KiCad library as a secondary check.]
 ### Pinout Ambiguity & Plausibility — [Components where the symbol's pin assignment depends on the specific MPN. Table: Ref | lib_id | Footprint | MPN | Assumed Pinout | Datasheet Pinout | Plausibility | Status. When verification is possible (MPN + datasheet), verify directly. When it isn't, assess plausibility: does the assumed pinout match the dominant convention for this device type and package? Report confidence: "matches most common convention," "plausible but multiple variants exist," or "unusual — most parts in this category use a different pinout." Flag CRITICAL when no MPN is specified AND the assumed pinout is uncommon or genuinely ambiguous.]
 ### Net Tracing — [All power rails + critical signal nets traced end-to-end: list all pins, verify connectivity, confirm correctness]
 ### PCB Verification — [If PCB analyzed: footprint count match, pad-net spot-check, board dimensions confirmed]
@@ -204,11 +204,15 @@ Use this template. Include sections that are relevant to the design — skip sec
 ### Signal Integrity
 [Layer transitions per net, ground return path assessment, trace proximity/crosstalk (with --proximity flag)]
 
+Differential pair length matching: For each detected differential pair (USB D+/D-, Ethernet TX+/TX-, etc.), compute the length delta between the two traces and cite the protocol-specific tolerance. The delta and tolerance are more useful than the raw lengths alone — they tell the designer whether there's margin or a problem. Example format: "D+=75.8mm, D-=75.2mm (delta=0.6mm — within USB 2.0 FS tolerance of ±25mm)." For interfaces with tighter requirements: USB 3.x ±3mm, HDMI ±2mm, DDR ±0.5mm.
+
 ### Power & Ground
 [Power net routing summary (width, length, current capacity), ground domain identification (AGND/DGND/PGND), zone stitching via density]
 
 ### Thermal Analysis
 [Thermal pad detection, via counting and adequacy for QFN/DFN packages, zone stitching density, thermal relief settings, tombstoning risk assessment (0201/0402 thermal asymmetry). Cross-reference thermal via count and pad area against each IC's datasheet thermal management section — check recommended via count, via diameter, and exposed pad connection. Verify θJA assumptions match the datasheet's specified board conditions (e.g., JEDEC 2s2p vs actual layer count).]
+
+For every IC with an exposed/thermal pad, explicitly report the via count and adequacy in this format: "[Ref] pad [N] ([net]) connected through [count] thermal vias (recommended range: [min]–[max] per datasheet) — [adequate/insufficient]." Example: "U1 pad 41 (GND thermal pad) connected through 12 thermal vias (recommended range: 9–16) — adequate." The thermal via count is one of the most common QFN/DFN layout errors and is always worth calling out with a specific number, even when adequate — it confirms the designer got it right.
 
 ### Copper Presence
 [Zone copper at component pad locations — from `copper_presence` section. Focus on `no_opposite_layer_copper` list: which components lack zone copper on the opposite layer? Verify this is intentional for capacitive touch pads and antennas (need isolation) vs unexpected for other components (might indicate a zone gap). Also note `same_layer_foreign_zones` — pads sitting on zones they're not connected to, which is normal for tightly-packed power island zones but worth flagging if unexpected.]
@@ -216,18 +220,22 @@ Use this template. Include sections that are relevant to the design — skip sec
 ### Capacitive Touch Pads
 [Include when TP-prefixed components or pad-only footprints appear in `copper_presence.no_opposite_layer_copper`, or when touch controller ICs are detected]
 
-| Pad | Position | Opposite-Layer Copper | Same-Layer Ground Pour Clearance | Trace Width to Controller |
-|-----|----------|----------------------|----------------------------------|--------------------------|
-| [ref] | [x, y] | [none (correct) / present (CRITICAL)] | [distance mm — check against controller app note, typically ≥1mm] | [width mm — narrow preferred to minimize parasitic C] |
+| Pad | Diameter/Size | Position | Opposite-Layer Copper | Keepout Zone? | GND Pour Clearance | Trace Width | Trace Length to Controller |
+|-----|--------------|----------|----------------------|---------------|-------------------|-------------|--------------------------|
+| [ref] | [mm] | [x, y] | [none / present (CRITICAL)] | [yes — (x1,y1) to (x2,y2) / NO — flag WARNING] | [distance mm vs app note min] | [mm] | [mm — compare across pads] |
 
-[Verify keepout zones exist under each touch pad on opposite layer. If no keepout zones are defined, recommend adding them — ground planes under touch pads drastically reduce sensitivity. Check controller datasheet for specific clearance and trace routing requirements.]
+Copper absence vs keepout enforcement: Confirming "no copper" under a touch pad is necessary but not sufficient. That absence could be accidental — a routing change or zone adjustment could fill in copper and kill touch sensitivity. A keepout zone is a DRC rule that prevents this permanently. Check the PCB file for explicit keepout/rule-area objects on the opposite layer under each touch pad. If none exist, flag as WARNING: "no explicit keepout zone under [ref] — copper absence is not enforced by a DRC rule."
+
+Trace length asymmetry: Compute the trace length from each touch pad to the controller IC and compare across all pads. Significant asymmetry (>1.5×) means different parasitic capacitance per channel, which shifts baseline readings and may reduce dynamic range even with firmware calibration. Report the ratio: "TOUCH_2 (41.6mm) is 1.75× longer than TOUCH_1 (23.7mm)."
+
+GND pour clearance: Measure the actual clearance between each touch pad and the nearest same-layer ground copper. Compare against the touch controller's recommended minimum (typically 1.0mm for Espressif, check the specific controller's app note). If the clearance is exactly at the minimum, note this: "GND clearance is 1.0mm — exactly the Espressif minimum. Consider increasing to 1.5mm if sensitivity is marginal."
 
 ### Antenna Layout
-[Include when ANT-prefixed footprints, antenna lib_id patterns, or RF antenna footprints are detected]
-- Keepout zone verification: check that copper keepout zones exist on the opposite layer under the antenna element, matching the manufacturer's reference layout dimensions
+[Include when ANT-prefixed footprints, antenna lib_id patterns, or RF antenna footprints are detected, OR when wireless modules (ESP32, nRF, etc.) with integrated/PCB antennas are present]
+- Keepout zone verification: check that copper keepout zones exist on ALL relevant layers under the antenna element. Report the keepout zone coordinates and layer coverage explicitly: "Keepout zone on F.Cu+B.Cu: (x1, y1) to (x2, y2)." Cross-reference dimensions against the manufacturer's reference layout — many antenna datasheets/app notes specify exact keepout areas.
 - Ground plane termination: verify the ground plane ends at the antenna feed point and does not extend under the radiating element
 - Matching network placement: components between antenna and RF IC should be close to the antenna with controlled-impedance traces
-[If no keepout zones are defined around the antenna, flag as WARNING and recommend adding them per the antenna manufacturer's datasheet/app note. Reference the specific antenna part number's layout guide when available.]
+[If no keepout zones are defined around the antenna, flag as WARNING. For wireless modules (ESP32, nRF, etc.), the module vendor's reference design is the authoritative source for keepout dimensions — these are often the single most important layout constraint for RF performance. Always cite the specific antenna/module reference when verifying keepout adequacy: "Correct per Espressif guidelines" or "Matches nRF52840 reference layout."]
 
 ### Decoupling Placement
 [Cap-to-IC distances for critical components, flag caps too far from IC power pins. Verify capacitor values and placement distances against each IC's datasheet requirements — many ICs specify maximum distance, minimum capacitance, and ESR limits for input/output decoupling. Flag any deviation from datasheet recommendations.]
@@ -248,6 +256,7 @@ Use this template. Include sections that are relevant to the design — skip sec
 [Include when both schematic and PCB were analyzed — this catches the most dangerous bugs]
 ### Component Count Match — [Schematic (excl. power symbols) vs PCB footprint count]
 ### Pin-Net Verification — [ALL components: schematic pin mapping vs PCB pad mapping. Table: Ref | Pins | All Match | Mismatches. Do not sample — verify every component including connectors, transistors, diodes.]
+This verification must happen at the PCB pad level, not just the schematic pin level. The schematic tells you pin 1 connects to net X; the PCB tells you pad 1 connects to net X. If the library footprint has pad numbering that doesn't match the symbol's pin numbering, the schematic and PCB will be internally consistent but the board will be wrong. For each IC, transistor, and connector, verify both directions: schematic pin N → net X, AND PCB pad N → net X, AND the physical pad position matches the datasheet's pin diagram for that specific package. Example format: "Q1: 1=G(MAP_RED), 2=S(GND), 3=D(+5V)." This catches the most dangerous class of bug — a library footprint with wrong pad numbering passes all consistency checks but produces a non-functional board.
 ### Footprint Match — [Schematic Footprint property vs actual PCB footprint]
 ### Value/MPN Consistency — [Spot-check values and MPNs between schematic and PCB]
 ### DNP Consistency — [Components marked DNP in schematic should not have routing on PCB]
@@ -285,12 +294,13 @@ Use this template. Include sections that are relevant to the design — skip sec
 [Components likely simulatable vs needing SPICE models, coverage percentage]
 
 ### Ordering Notes
-[Practical manufacturing summary for ordering:]
-- Layer count: [N] layers, surface finish: [HASL/ENIG/OSP], solder mask color: [green/black/etc.]
+[Practical manufacturing summary for ordering — this section bridges the design review and the fabrication order. Extract surface finish from the PCB stackup (`copper_finish` field in setup section), solder mask color from board setup, and board thickness from the stackup layer sum. Designers use this to configure their PCB order, so always include it when a PCB was analyzed.]
+- Layer count: [N] layers, surface finish: [HASL/ENIG/OSP — from PCB stackup `copper_finish`], solder mask color: [green/black/etc. — from board setup]
 - Stencil: [recommend if SMD components present, note if fine-pitch requires frameless stencil]
-- Board thickness: [standard 1.6mm or custom]
+- Board thickness: [standard 1.6mm or custom — from stackup total thickness]
 - DFM tier: [standard vs advanced capability requirements based on min trace/space/drill from DFM section]
-- Copper weight: [1oz/2oz based on current requirements]
+- Copper weight: [1oz/2oz based on current requirements — from stackup copper layer thickness, 0.035mm = 1oz]
+- Assembly notes: [reflow profile considerations, mixed SMD/THT implications]
 - Special requirements: [impedance control, via-in-pad, castellated edges, etc. if applicable]
 
 ## All Issues & Suggestions
@@ -476,11 +486,11 @@ Focus on: power sequencing (EN/PG chains from analyzer), input protection (TVS, 
 
 ## Cross-Referencing with Raw Schematic
 
-The analyzer can silently produce plausible but incorrect results. Cross-reference against the raw `.kicad_sch` to catch these. The full verification procedure is in SKILL.md — the key checks are:
+The analyzer can silently produce plausible but incorrect results. Cross-reference against the raw `.kicad_sch` AND manufacturer PDF datasheets to catch these. Internal consistency checks (schematic matches PCB matches analyzer) are necessary but not sufficient — they only prove the design agrees with itself, not that it matches the real-world parts. The full verification procedure is in SKILL.md — the key checks are:
 
 1. **Component count**: Analyzer total vs `grep -c '(lib_id' file.kicad_sch` (subtract power symbols)
-2. **Pin-to-net mapping**: Verify against raw schematic for each component. Cross-reference IC pin assignments against datasheets.
-3. **Physical correctness**: For components with package-dependent pinouts (transistors in SOT-23 etc.), verify symbol assumptions against the MPN's datasheet — consistency checks alone don't catch wrong pinout assumptions.
+2. **Pin-to-net mapping**: Verify against raw schematic for each component. Cross-reference IC pin assignments against **manufacturer PDF datasheets** (not KiCad library symbols — the library is the potential source of error). Cite datasheet page/section numbers.
+3. **Physical correctness**: For components with package-dependent pinouts (transistors in SOT-23 etc.), verify symbol assumptions against the MPN's datasheet — consistency checks alone don't catch wrong pinout assumptions. Custom/community library symbols are highest risk.
 4. **Net connectivity**: Trace power rails and critical signal nets end-to-end.
 5. **Signal analysis**: Confirm detected subcircuit topologies against the raw schematic.
 6. **Hierarchical sheets**: Verify all sub-sheets were parsed (`grep -c '(sheet ' file.kicad_sch`).

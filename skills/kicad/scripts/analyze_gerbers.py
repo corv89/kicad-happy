@@ -386,13 +386,15 @@ def parse_drill(path: str) -> dict:
     name_lower = Path(path).name.lower()
     if "NonPlated" in file_func or "npth" in name_lower:
         result["type"] = "NPTH"
+    elif "MixedPlating" in file_func:
+        result["type"] = "mixed"
     elif "Plated" in file_func or "pth" in name_lower:
         result["type"] = "PTH"
     else:
         result["type"] = "unknown"
 
     # Extract layer span from FileFunction (e.g., "Plated,1,4,PTH" → layers 1-4)
-    ff_match = re.match(r"(?:Non)?Plated,(\d+),(\d+)", file_func)
+    ff_match = re.match(r"(?:(?:Non)?Plated|MixedPlating),(\d+),(\d+)", file_func)
     if ff_match:
         result["layer_span"] = [int(ff_match.group(1)), int(ff_match.group(2))]
 
@@ -562,9 +564,25 @@ def classify_drill_tools(drills: list[dict]) -> dict:
             aper = tool_info.get("aper_function", "")
 
             if d.get("type") == "NPTH":
-                mounting_count += count
-                if count > 0:
-                    mounting_tools.append({"diameter_mm": dia, "count": count, "type": "NPTH"})
+                # Check per-tool X2 aper_function first
+                if "ViaDrill" in aper:
+                    via_count += count
+                    if count > 0:
+                        via_tools.append({"diameter_mm": dia, "count": count})
+                elif "ComponentDrill" in aper:
+                    component_count += count
+                    if count > 0:
+                        component_tools.append({"diameter_mm": dia, "count": count, "type": "NPTH"})
+                else:
+                    # NPTH heuristic: small holes are component alignment pins
+                    if dia <= 2.0:
+                        component_count += count
+                        if count > 0:
+                            component_tools.append({"diameter_mm": dia, "count": count, "type": "NPTH"})
+                    else:
+                        mounting_count += count
+                        if count > 0:
+                            mounting_tools.append({"diameter_mm": dia, "count": count, "type": "NPTH"})
                 continue
 
             if "ViaDrill" in aper:
@@ -625,8 +643,8 @@ def check_completeness(gerbers: list[dict], drills: list[dict],
             "expected_layers": sorted(expected_from_job),
             "missing": sorted(missing),
             "extra": sorted(extra),
-            "has_pth_drill": any(d.get("type") == "PTH" for d in drills),
-            "has_npth_drill": any(d.get("type") == "NPTH" for d in drills),
+            "has_pth_drill": any(d.get("type") in ("PTH", "mixed") for d in drills),
+            "has_npth_drill": any(d.get("type") in ("NPTH", "mixed") for d in drills),
             "complete": len(missing) == 0,
             "source": "gbrjob",
         }
@@ -639,9 +657,10 @@ def check_completeness(gerbers: list[dict], drills: list[dict],
         "found_layers": sorted(found_layers),
         "missing_required": sorted(required - found_layers),
         "missing_recommended": sorted(recommended - found_layers),
-        "has_pth_drill": any(d.get("type") == "PTH" for d in drills),
-        "has_npth_drill": any(d.get("type") == "NPTH" for d in drills),
-        "complete": len(required - found_layers) == 0 and any(d.get("type") == "PTH" for d in drills),
+        "has_pth_drill": any(d.get("type") in ("PTH", "mixed") for d in drills),
+        "has_npth_drill": any(d.get("type") in ("NPTH", "mixed") for d in drills),
+        "complete": len(required - found_layers) == 0 and any(
+            d.get("type") in ("PTH", "mixed", "unknown") for d in drills),
         "source": "defaults",
     }
 
@@ -670,12 +689,17 @@ def check_alignment(gerbers: list[dict], drills: list[dict]) -> dict:
     widths = [r["width"] for r in alignment_layers.values() if r["width"] > 0]
     heights = [r["height"] for r in alignment_layers.values() if r["height"] > 0]
 
+    # Use relative threshold: 5% of Edge.Cuts dimension, minimum 2.0mm
+    edge = alignment_layers.get("Edge.Cuts")
+    threshold_w = max(2.0, edge["width"] * 0.05) if edge and edge["width"] > 0 else 2.0
+    threshold_h = max(2.0, edge["height"] * 0.05) if edge and edge["height"] > 0 else 2.0
+
     aligned = True
     issues = []
-    if widths and max(widths) - min(widths) > 2.0:
+    if widths and max(widths) - min(widths) > threshold_w:
         aligned = False
         issues.append(f"Width varies by {max(widths) - min(widths):.1f}mm across copper/edge layers")
-    if heights and max(heights) - min(heights) > 2.0:
+    if heights and max(heights) - min(heights) > threshold_h:
         aligned = False
         issues.append(f"Height varies by {max(heights) - min(heights):.1f}mm across copper/edge layers")
 
@@ -1062,6 +1086,12 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
         span = d.get("layer_span")
         if span:
             layer_count = max(layer_count, span[1])
+    # Infer layer count from X2 FileFunction Ln designation (e.g., "Copper,L4,Bot")
+    for g in gerbers:
+        ff = g.get("x2_attributes", {}).get("FileFunction", "")
+        ln_match = re.search(r"Copper,L(\d+)", ff, re.IGNORECASE)
+        if ln_match:
+            layer_count = max(layer_count, int(ln_match.group(1)))
 
     # Run checks
     completeness = check_completeness(gerbers, drills, job_info)

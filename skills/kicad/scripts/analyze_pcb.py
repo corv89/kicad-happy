@@ -2297,11 +2297,10 @@ def compute_statistics(footprints: list[dict], tracks: dict, vias: dict,
     # Resolve copper layer names from declarations
     if layers:
         copper_layer_names = {l["name"] for l in layers if "Cu" in l["name"]}
-        front_copper = next((l["name"] for l in layers if l["number"] == 0), "F.Cu")
-        back_copper = next((l["name"] for l in layers if l["number"] == 31), "B.Cu")
     else:
         copper_layer_names = None
-        front_copper, back_copper = "F.Cu", "B.Cu"
+    # F.Cu/B.Cu names are invariant across all KiCad versions (5-9)
+    front_copper, back_copper = "F.Cu", "B.Cu"
 
     # Component side distribution
     front = sum(1 for fp in footprints if fp["layer"] == front_copper)
