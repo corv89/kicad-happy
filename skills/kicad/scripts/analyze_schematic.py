@@ -500,15 +500,17 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
 
     lc_filters = detect_lc_filters(ctx)
     crystal_circuits = detect_crystal_circuits(ctx)
+    # KH-145: Detect opamps BEFORE RC filters so feedback components can be excluded
+    opamp_circuits = detect_opamp_circuits(ctx)
     # KH-107: Pass crystal_circuits to exclude crystal R/C from RC filter detection
-    rc_filters = detect_rc_filters(ctx, voltage_dividers, crystal_circuits)
+    # KH-145: Pass opamp_circuits to exclude feedback R+C from RC filter detection
+    rc_filters = detect_rc_filters(ctx, voltage_dividers, crystal_circuits, opamp_circuits)
     decoupling_analysis = detect_decoupling(ctx)
     current_sense = detect_current_sense(ctx)
     power_regulators = detect_power_regulators(ctx, voltage_dividers)
     integrated_ldos = detect_integrated_ldos(ctx, power_regulators)
     power_regulators.extend(integrated_ldos)
     protection_devices = detect_protection_devices(ctx)
-    opamp_circuits = detect_opamp_circuits(ctx)
     bridge_circuits, matched_fets, fet_pins = detect_bridge_circuits(ctx)
     transistor_circuits = detect_transistor_circuits(ctx, matched_fets, fet_pins)
 
@@ -1829,6 +1831,7 @@ def _parse_legacy_lib(path: str) -> dict:
     MIL_TO_MM = _MIL_MM
     symbols = {}
     current_name = None
+    current_aliases = []  # KH-142: track ALIAS names
     current_pins = []
     current_unit_pins = {}
     current_datasheet = ""
@@ -1841,10 +1844,15 @@ def _parse_legacy_lib(path: str) -> dict:
             parts = line.split()
             if len(parts) >= 2:
                 current_name = parts[1].lstrip("~")
+                current_aliases = []
                 current_pins = []
                 current_unit_pins = {}
                 current_datasheet = ""
                 in_draw = False
+
+        elif line.startswith("ALIAS ") and current_name is not None:
+            # KH-142: Parse ALIAS directives — alternate names for this symbol
+            current_aliases.extend(line.split()[1:])
 
         elif line.startswith("F3 ") and current_name is not None:
             m = re.match(r'F3\s+"([^"]*)"', line)
@@ -1887,7 +1895,7 @@ def _parse_legacy_lib(path: str) -> dict:
             non_zero_units = {u for u in current_unit_pins if u != 0}
             has_multi_unit = len(non_zero_units) > 1
 
-            symbols[current_name] = {
+            sym_def = {
                 "pins": current_pins,
                 "unit_pins": current_unit_pins if has_multi_unit else None,
                 "description": "",
@@ -1897,7 +1905,11 @@ def _parse_legacy_lib(path: str) -> dict:
                 "alternates": None,
             }
             if current_datasheet:
-                symbols[current_name]["datasheet"] = current_datasheet
+                sym_def["datasheet"] = current_datasheet
+            symbols[current_name] = sym_def
+            # KH-142: Register same definition under each alias name
+            for alias in current_aliases:
+                symbols[alias.lstrip("~")] = sym_def
             current_name = None
 
     return symbols
@@ -1932,6 +1944,43 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
                     "alternates": None,
                 }
         return symbols
+
+    # Strategy 2.5: Parse sym-lib-table for legacy library paths (KH-141)
+    # KiCad 5 file version 4 uses sym-lib-table instead of LIBS: header directives
+    sym_lib_table = base_dir / "sym-lib-table"
+    if sym_lib_table.exists():
+        slt_symbols = {}
+        try:
+            slt_root = parse_file(str(sym_lib_table))
+            for lib_entry in find_all(slt_root, "lib"):
+                lib_type = ""
+                lib_uri = ""
+                for child in lib_entry:
+                    if isinstance(child, list) and len(child) >= 2:
+                        if child[0] == "type":
+                            lib_type = str(child[1])
+                        elif child[0] == "uri":
+                            lib_uri = str(child[1])
+                if lib_type != "Legacy" or not lib_uri:
+                    continue
+                # Resolve ${KIPRJMOD} to project directory
+                lib_uri = lib_uri.replace("${KIPRJMOD}", str(base_dir))
+                lib_path = Path(lib_uri)
+                if lib_path.exists():
+                    parsed = _parse_legacy_lib(str(lib_path))
+                    slt_symbols.update(parsed)
+        except Exception:
+            pass  # Don't crash on malformed sym-lib-table
+        if slt_symbols:
+            # Add standard library fallbacks
+            for name, pins in _STANDARD_LIB_PINS.items():
+                if name not in slt_symbols:
+                    slt_symbols[name] = {
+                        "pins": pins, "unit_pins": None, "description": "",
+                        "keywords": "", "is_power": False, "ki_fp_filters": "",
+                        "alternates": None,
+                    }
+            return slt_symbols
 
     # Strategy 2: collect LIBS: directives from all parsed sheets
     lib_names = []
@@ -2674,7 +2723,7 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
     comp_lookup = {c["reference"]: c for c in components}
     parsed_values = {}
     for c in components:
-        pv = parse_value(c.get("value", ""))
+        pv = parse_value(c.get("value", ""), component_type=c.get("type"))
         if pv is not None:
             parsed_values[c["reference"]] = pv
 
@@ -5393,7 +5442,9 @@ def analyze_test_coverage(components: list[dict], nets: dict, pin_net: dict) -> 
         fp = comp.get("footprint", "").lower()
         is_tp = (ref.startswith("TP") or
                  "testpoint" in fp or "test_point" in fp or
-                 comp.get("value", "").lower() in ("testpoint", "test_point", "tp"))
+                 "testpad" in fp or "test_pad" in fp or
+                 comp.get("value", "").lower() in ("testpoint", "test_point", "tp",
+                                                    "testpad", "test_pad"))
         if is_tp:
             # Find what net it's on
             for pkey, (net_name, _) in pin_net.items():

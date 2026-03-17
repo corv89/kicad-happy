@@ -37,7 +37,7 @@ class AnalysisContext:
             self.comp_lookup = {c["reference"]: c for c in self.components}
         if not self.parsed_values:
             for c in self.components:
-                val = parse_value(c.get("value", ""))
+                val = parse_value(c.get("value", ""), component_type=c.get("type"))
                 if val is not None:
                     self.parsed_values[c["reference"]] = val
         if not self.known_power_rails:

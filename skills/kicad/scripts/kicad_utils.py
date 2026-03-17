@@ -200,11 +200,14 @@ def format_frequency(hz: float) -> str:
         return f"{hz:.2f} Hz"
 
 
-def parse_value(value_str: str) -> float | None:
+def parse_value(value_str: str, component_type: str | None = None) -> float | None:
     """Parse an engineering-notation component value to a float.
 
     Handles: 10K, 4.7u, 100n, 220p, 1M, 2.2m, 47R, 0R1, 4K7, 1R0, etc.
     Returns None if unparseable.
+
+    If component_type is "capacitor" and the result is a bare integer >=1.0
+    (no unit suffix), treat it as picofarads (KH-153: legacy KiCad 5 convention).
     """
     if not value_str:
         return None
@@ -268,7 +271,11 @@ def parse_value(value_str: str) -> float | None:
 
     # Plain number: "100", "47", "0.1"
     try:
-        return float(s)
+        result = float(s)
+        # KH-153: Bare integers for capacitors are picofarads in legacy schematics
+        if component_type == "capacitor" and result >= 1.0:
+            result *= 1e-12
+        return result
     except ValueError:
         return None
 
@@ -295,7 +302,7 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         # Passive components
         "R": "resistor", "RS": "resistor", "RN": "resistor_network",
         "RM": "resistor_network", "RA": "resistor_network",
-        "C": "capacitor", "L": "inductor",
+        "C": "capacitor", "VC": "capacitor", "L": "inductor",
         "D": "diode", "TVS": "diode", "CR": "diode", "V": "varistor",
         # Semiconductors
         "Q": "transistor", "FET": "transistor",
@@ -339,7 +346,8 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         val_low = value.lower() if value else ""
         lib_low = lib_id.lower() if lib_id else ""
         fp_low = footprint.lower() if footprint else ""
-        if any(x in val_low for x in ("testpad", "test_pad", "testpoint", "test_point")):
+        if any(x in val_low or x in lib_low or x in fp_low
+               for x in ("testpad", "test_pad", "testpoint", "test_point")):
             return "test_point"
         # Crystal/oscillator override: Q-prefix crystals (Q for quartz),
         # CR-prefix oscillators, or any prefix where lib_id clearly says crystal/oscillator
@@ -418,7 +426,7 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         return "mounting_hole"
     if any(x in lib_lower for x in ["fiducial"]):
         return "fiducial"
-    if any(x in lib_lower for x in ["test_point", "testpoint"]):
+    if any(x in lib_lower for x in ["test_point", "testpoint", "testpad", "test_pad"]):
         return "test_point"
 
     # X prefix: crystal or oscillator if value/lib suggests it, otherwise connector
