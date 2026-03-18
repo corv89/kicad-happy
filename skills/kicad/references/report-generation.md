@@ -155,7 +155,7 @@ Use this template. Include sections that are relevant to the design — skip sec
 [Via annular ring analysis, fab capability vs IPC minimums]
 
 ### Via Protection (IPC-4761)
-[Only for via-in-pad designs: protection type, BGA/QFN thermal pad vias]
+[Only for via-in-pad designs: protection type, BGA/QFN thermal pad vias. The `thermal_pad_vias` output uses an `effective_via_count` that weights each via by `(drill/0.3mm)²` — see pcb-layout-analysis.md "Thermal via effective count methodology" for the full formula and thresholds. Designs using 0.2mm vias by intent (module footprints) may show "insufficient" adequacy despite adequate thermal performance — always cross-reference the datasheet before flagging.]
 
 ## Design Analysis
 
@@ -401,7 +401,7 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `ground_domains` | Power & Ground | AGND/DGND domains, multi-domain components |
 | `current_capacity` | Current Capacity | per-net capacity vs load |
 | `thermal_analysis` | Thermal Analysis | zone stitching density |
-| `thermal_pad_vias` | Thermal Analysis | per-footprint thermal pad via count and adequacy |
+| `thermal_pad_vias` | Thermal Analysis | per-footprint thermal pad via count and adequacy; `effective_via_count` weights by `(drill/0.3)²` — see pcb-layout-analysis.md for methodology |
 | `decoupling_placement` | Decoupling Placement | cap-to-IC distances |
 | `placement_analysis` | Footprint Placement | density, courtyard overlaps, edge clearance |
 | `layer_transitions` | Signal Integrity | per-net layer change tracking |

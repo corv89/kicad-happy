@@ -1037,7 +1037,7 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
 
     Helps verify decoupling caps are placed close to IC power pins.
     """
-    ics = [fp for fp in footprints if re.match(r'^U\d', fp.get("reference", ""))]
+    ics = [fp for fp in footprints if re.match(r'^(U|IC)\d', fp.get("reference", ""))]
     caps = [fp for fp in footprints if re.match(r'^C\d', fp.get("reference", ""))]
 
     if not ics or not caps:
@@ -1508,6 +1508,9 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
                 if pa > 0:
                     smd_pad_areas.append(pa)
         avg_pad_area = sum(smd_pad_areas) / len(smd_pad_areas) if smd_pad_areas else 0
+        # Compute median for area-ratio EP detection
+        sorted_smd_areas = sorted(smd_pad_areas)
+        median_smd_area = sorted_smd_areas[len(sorted_smd_areas) // 2] if sorted_smd_areas else 0
 
         for pad in fp.get("pads", []):
             pad_num = str(pad.get("number", ""))
@@ -1517,20 +1520,31 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
             h = pad.get("height", 0)
             pad_area = w * h
 
+            # DFN/QFN variants use highest-numbered pad as EP — detect by
+            # area ratio (pad ≥3x the median signal pad area)
+            if not is_ep and median_smd_area > 0:
+                other_areas = sorted(a for a in smd_pad_areas if a != pad_area)
+                if not other_areas:
+                    other_areas = sorted_smd_areas
+                if other_areas:
+                    median_signal = other_areas[len(other_areas) // 2]
+                    if median_signal > 0 and pad_area >= median_signal * 3.0:
+                        is_ep = True
+
             # Only flag SMD pads that are genuine thermal pads:
             # - Must be SMD type
-            # - Must be large enough (>4mm² if EP/0, >9mm² otherwise)
+            # - Must be large enough (>=2mm² if EP/0, >6mm² otherwise)
             # - Must be at least 2x the average pad area for this component
             #   (thermal pads are distinctly larger than signal pads)
             # - Must be on a ground or power net (thermal pads dissipate heat
             #   and are almost always connected to GND or a power plane)
-            if pad.get("type") != "smd" or pad_area <= 4.0:
+            if pad.get("type") != "smd" or pad_area < 2.0:
                 continue
             # Skip paste-only pads (stencil apertures with no copper)
             pad_layers = pad.get("layers", [])
             if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
                 continue
-            if not (is_ep or pad_area > 9.0):
+            if not (is_ep or pad_area > 6.0):
                 continue
             if avg_pad_area > 0 and pad_area < avg_pad_area * 2.0:
                 continue
@@ -2974,13 +2988,25 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
 
         # Find thermal pads
         thermal_pads_found: list[tuple[dict, float]] = []
+        # Compute median signal pad area for area-ratio EP detection
+        all_areas_sorted = sorted(a for _, a in pad_areas)
+        median_pad_area = all_areas_sorted[len(all_areas_sorted) // 2] if all_areas_sorted else 0
         for pad, area in pad_areas:
             pad_num = str(pad.get("number", ""))
             is_ep = pad_num in ("0", "EP", "")
+            # DFN/QFN variants use highest-numbered pad as EP — detect by
+            # area ratio (pad ≥3x the median signal pad area)
+            if not is_ep and median_pad_area > 0:
+                other_areas = sorted(a for p, a in pad_areas
+                                     if str(p.get("number", "")) != pad_num)
+                if other_areas:
+                    median_signal = other_areas[len(other_areas) // 2]
+                    if median_signal > 0 and area >= median_signal * 3.0:
+                        is_ep = True
 
-            # Thermal pad: explicitly named EP/0 with area > 4mm²,
-            # or any pad with area > 9mm² (large enough to need thermal vias)
-            if not ((is_ep and area > 4.0) or area > 9.0):
+            # Thermal pad: explicitly named EP/0 with area >= 2mm²,
+            # or any pad with area > 6mm² (large enough to need thermal vias)
+            if not ((is_ep and area >= 2.0) or area > 6.0):
                 continue
 
             # Must be at least 2x the average pad area (thermal pads are
@@ -3037,6 +3063,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             half_h = h / 2.0
             vias_in_pad = 0
             effective_vias_in_pad = 0.0
+            drill_sum = 0.0
             vias_tented = 0
             vias_untented = 0
 
@@ -3046,12 +3073,15 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 dx, dy = vx - ax, vy - ay
                 if total_angle != 0:
                     dx, dy = dx * cos_a - dy * sin_a, dx * sin_a + dy * cos_a
-                # Check if via is within the pad area (with small margin)
-                if (abs(dx) <= half_w * 1.1 and
-                        abs(dy) <= half_h * 1.1):
+                # Check if via is within the pad area (with margin for
+                # manufacturing grid offsets and vias placed just outside
+                # the pad boundary — matches thermal_analysis 1.5x radius)
+                if (abs(dx) <= half_w * 1.5 and
+                        abs(dy) <= half_h * 1.5):
                     vias_in_pad += 1
                     # Weight by drill cross-section relative to 0.3mm standard
                     drill = via.get("drill", 0.3)
+                    drill_sum += drill
                     effective_vias_in_pad += (drill / 0.3) ** 2
                     # Check tenting
                     tenting = via.get("tenting", [])
@@ -3065,6 +3095,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             # QFN/BGA footprints like ESP32-S3-WROOM-1)
             footprint_via_pads = 0
             effective_fp_vias = 0.0
+            fp_drill_sum = 0.0
             for other_pad in pads:
                 if other_pad is pad:
                     continue
@@ -3075,6 +3106,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                     fp_drill = other_pad.get("drill", 0.3)
                     if isinstance(fp_drill, dict):
                         fp_drill = fp_drill.get("diameter", 0.3)
+                    fp_drill_sum += fp_drill
                     effective_fp_vias += (fp_drill / 0.3) ** 2
 
             total_thermal_vias = vias_in_pad + footprint_via_pads
@@ -3110,6 +3142,16 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             else:
                 adequacy = "none"
 
+            # Raw adequacy based on actual via count (ignoring drill weighting)
+            if total_thermal_vias >= recommended_ideal:
+                raw_adequacy = "good"
+            elif total_thermal_vias >= recommended_min:
+                raw_adequacy = "adequate"
+            elif total_thermal_vias > 0:
+                raw_adequacy = "insufficient"
+            else:
+                raw_adequacy = "none"
+
             entry: dict = {
                 "component": ref,
                 "value": fp.get("value", ""),
@@ -3129,12 +3171,25 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 "recommended_min_vias": recommended_min,
                 "recommended_ideal_vias": recommended_ideal,
                 "adequacy": adequacy,
+                "raw_adequacy": raw_adequacy,
             }
 
             if vias_untented > 0:
                 entry["tenting_note"] = (
                     f"{vias_untented} via(s) are not tented — solder may wick "
                     f"through during reflow, creating voids under the thermal pad"
+                )
+
+            if (raw_adequacy in ("adequate", "good") and
+                    adequacy in ("insufficient", "none") and
+                    total_thermal_vias > 0):
+                avg_drill = (drill_sum + fp_drill_sum) / total_thermal_vias
+                entry["small_via_note"] = (
+                    f"{total_thermal_vias} vias present (avg drill "
+                    f"{avg_drill:.2f}mm) but effective count "
+                    f"({effective_thermal_vias:.1f}) is below threshold "
+                    f"({recommended_min}) due to small drill size — "
+                    f"design may follow manufacturer's recommended via pattern"
                 )
 
             results.append(entry)

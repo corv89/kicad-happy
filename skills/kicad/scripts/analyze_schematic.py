@@ -3701,10 +3701,6 @@ def audit_pwr_flags(components: list[dict], nets: dict, known_power_rails: set) 
         has_power_in = "power_in" in pin_types
 
         if has_power_in and not has_power_out:
-            # Skip well-known power/ground names — these are nearly always driven
-            # globally via power symbols on another sheet
-            if _is_power_net_name(net_name) or _is_ground_name(net_name):
-                continue
             warnings.append({
                 "net": net_name,
                 "message": f"Power rail '{net_name}' has power_in pins but no power_out or PWR_FLAG — ERC will flag this",
