@@ -2241,12 +2241,12 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                                     comp["lcsc"] = field_val
                                 elif fl in _ELEMENT14_KEYS:
                                     comp["element14"] = field_val
-                                elif fu == "DNP":
+                                elif fl == "dnp":
                                     comp["dnp"] = field_val.strip() not in ("", "0", "false")
-                                elif fu in ("NOTE", "NOTES", "COMMENT"):
+                                elif fl in ("note", "notes", "comment"):
                                     if any(dnp_kw in field_val.upper() for dnp_kw in ("DNP", "DO NOT POPULATE", "DO NOT PLACE")):
                                         comp["dnp"] = True
-                                elif fu in ("DESCRIPTION", "DESC"):
+                                elif fl in ("description", "desc"):
                                     comp["description"] = field_val
                             # Track generic-named fields for positional fallback
                             if re.match(r'^Field\d+$', fname):
