@@ -595,3 +595,44 @@ When standards checking is triggered, add this section to the report (after the 
 - Do not require Class 3 tolerances on hobby/prototype boards unless specifically requested
 - Do not flag conductor spacing on low-voltage designs (<15V) unless traces are below the absolute minimum (0.05mm internal, 0.1mm external)
 - Do not apply IPC-2152 for low-current digital signals — the classic IPC-2221A formula is adequate for non-critical traces
+
+---
+
+## Fab House Capabilities (DFM Tier Classification)
+
+Canonical reference for DFM tier determination. The analyzer (`analyze_pcb.py`) uses these values in its `LIMITS_STD` and `LIMITS_ADV` constants. Report generation must cite values from this table — do not substitute values from training data.
+
+**Source:** JLCPCB capabilities page (verified 2025-01), PCBWay capabilities page (verified 2025-01).
+
+### JLCPCB
+
+| Parameter | Standard Tier | Advanced Tier |
+|-----------|---------------|---------------|
+| Min trace width | 0.127 mm (5 mil) | 0.1 mm (4 mil) |
+| Min trace spacing | 0.127 mm (5 mil) | 0.1 mm (4 mil) |
+| Min PTH drill | 0.2 mm | 0.15 mm |
+| Min via annular ring | 0.125 mm | 0.1 mm |
+| Min NPTH drill | 0.5 mm | 0.5 mm |
+| Min via diameter (drill+ring) | 0.45 mm | 0.35 mm |
+| Max copper weight | 2 oz | 2 oz |
+| Max layers | 20 | 20 |
+| Min solder mask bridge | 0.1 mm | 0.075 mm |
+| Min silkscreen width | 0.15 mm | 0.1 mm |
+| Board size (no surcharge) | ≤100×100 mm | ≤100×100 mm |
+| Min board dimension | 10 mm | 10 mm |
+
+**Tier determination:** If any metric falls below the standard tier limit, classify as "advanced". If any metric falls below the advanced tier limit, classify as "challenging" (may require manual review or alternative fab).
+
+### PCBWay
+
+| Parameter | Standard |
+|-----------|----------|
+| Min trace width | 0.1 mm (4 mil) |
+| Min trace spacing | 0.1 mm (4 mil) |
+| Min PTH drill | 0.2 mm |
+| Min annular ring | 0.1 mm |
+| Min NPTH drill | 0.8 mm |
+| Max copper weight | 6 oz |
+| Max layers | 14 |
+| Min solder mask bridge | 0.1 mm |
+| Board size (no surcharge) | ≤100×100 mm |

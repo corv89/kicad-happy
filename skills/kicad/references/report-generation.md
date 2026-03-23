@@ -244,7 +244,7 @@ GND pour clearance: Measure the actual clearance between each touch pad and the 
 [Per-net trace/via current capacity vs estimated load, narrow signal net warnings]
 
 ### DFM Assessment
-[JLCPCB standard/advanced tier determination, DFM metrics (min trace width, min clearance, min drill, min annular ring), violation list]
+[JLCPCB standard/advanced tier determination, DFM metrics (min trace width, min clearance, min drill, min annular ring), violation list. All threshold values MUST come from the "Fab House Capabilities" table in standards-compliance.md — do not substitute from memory.]
 
 ### Silkscreen
 [Board text count, reference designator visibility, documentation warnings, values on silk]
