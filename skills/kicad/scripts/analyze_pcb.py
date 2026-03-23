@@ -1032,12 +1032,19 @@ def analyze_power_nets(footprints: list[dict], tracks: dict,
     return result
 
 
+_ESD_TVS_PREFIXES = ("esd", "prtr", "usblc", "tpd", "pesd", "sp05",
+                     "rclamp", "nup", "lesd", "ip4", "dt104")
+
+
 def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     """For each IC, find nearby capacitors and report distances.
 
     Helps verify decoupling caps are placed close to IC power pins.
     """
-    ics = [fp for fp in footprints if re.match(r'^(U|IC)\d', fp.get("reference", ""))]
+    ics = [fp for fp in footprints
+           if re.match(r'^(U|IC)\d', fp.get("reference", ""))
+           and not any(fp.get("value", "").lower().startswith(p)
+                       for p in _ESD_TVS_PREFIXES)]
     caps = [fp for fp in footprints if re.match(r'^C\d', fp.get("reference", ""))]
 
     if not ics or not caps:
@@ -2007,10 +2014,15 @@ def extract_silkscreen(root: list, footprints: list[dict]) -> dict:
         })
 
     # Check for revision marking
-    has_revision = any(
-        any(kw in t.upper() for kw in ("REV", "V1", "V2", "V3", "R0", "R1", "VER"))
-        for t in all_silk_text
-    )
+    # KH-166: check title block rev field first (authoritative source)
+    tb = find_first(root, "title_block")
+    tb_rev = get_value(tb, "rev") if tb else None
+    has_revision = bool(tb_rev)
+
+    if not has_revision:
+        rev_pattern = re.compile(r'\b(?:REV|VER|VERSION)\b|(?<!\w)[RV]\d', re.IGNORECASE)
+        has_revision = any(rev_pattern.search(t) for t in all_silk_text)
+
     if not has_revision:
         documentation_warnings.append({
             "type": "missing_revision",
@@ -2539,21 +2551,23 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
         design_rules: Optional design rules from setup extraction.
     """
     # JLCPCB standard process limits (mm)
+    # Source: JLCPCB capabilities page, verified 2025-01.
+    # Canonical table in references/standards-compliance.md "Fab House Capabilities"
     LIMITS_STD = {
-        "min_track_width": 0.127,      # 5 mil
-        "min_track_spacing": 0.127,     # 5 mil
-        "min_drill": 0.2,              # PTH drill
-        "min_annular_ring": 0.125,     # via annular ring
-        "max_board_width": 100.0,      # pricing threshold
+        "min_track_width": 0.127,      # 5 mil — JLCPCB standard tier
+        "min_track_spacing": 0.127,     # 5 mil — JLCPCB standard tier
+        "min_drill": 0.2,              # PTH drill — JLCPCB standard tier
+        "min_annular_ring": 0.125,     # via annular ring — JLCPCB standard tier
+        "max_board_width": 100.0,      # pricing threshold (>100mm costs more)
         "max_board_height": 100.0,
         "min_board_dim": 10.0,         # handling minimum
     }
-    # Advanced process limits
+    # JLCPCB advanced process limits (mm)
     LIMITS_ADV = {
-        "min_track_width": 0.1,        # 4 mil
-        "min_track_spacing": 0.1,      # 4 mil
-        "min_drill": 0.15,
-        "min_annular_ring": 0.1,
+        "min_track_width": 0.1,        # 4 mil — JLCPCB advanced tier
+        "min_track_spacing": 0.1,      # 4 mil — JLCPCB advanced tier
+        "min_drill": 0.15,             # JLCPCB advanced tier
+        "min_annular_ring": 0.1,       # JLCPCB advanced tier
     }
 
     violations = []

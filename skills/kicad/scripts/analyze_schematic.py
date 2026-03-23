@@ -4894,23 +4894,35 @@ def analyze_sleep_current(components: list[dict], nets: dict, pin_net: dict,
     if not rail_currents:
         return {}
 
-    # Summarize per rail
+    # Summarize per rail — split always-on vs conditional (pull-ups)
     result_rails = {}
-    total_sleep_uA = 0.0
+    always_on_uA = 0.0
+    conditional_uA = 0.0
     for rail, entries in rail_currents.items():
-        rail_total_uA = sum(e["current_uA"] for e in entries)
-        total_sleep_uA += rail_total_uA
+        rail_always = sum(e["current_uA"] for e in entries if e["type"] != "pull_up")
+        rail_cond = sum(e["current_uA"] for e in entries if e["type"] == "pull_up")
+        always_on_uA += rail_always
+        conditional_uA += rail_cond
         result_rails[rail] = {
             "current_paths": entries,
-            "total_uA": round(rail_total_uA, 2),
+            "total_uA": round(rail_always + rail_cond, 2),
+            "always_on_uA": round(rail_always, 2),
+            "conditional_uA": round(rail_cond, 2),
         }
+
+    observations = [
+        f"Always-on current: {always_on_uA:.1f} uA ({always_on_uA / 1000:.2f} mA)"
+    ]
+    if conditional_uA > 0:
+        observations.append(
+            f"Conditional current (pull-ups, worst-case): {conditional_uA:.1f} uA ({conditional_uA / 1000:.2f} mA)"
+        )
 
     return {
         "rails": result_rails,
-        "total_estimated_sleep_uA": round(total_sleep_uA, 2),
-        "observations": [
-            f"Total estimated always-on current: {total_sleep_uA:.1f} uA ({total_sleep_uA / 1000:.2f} mA)"
-        ],
+        "total_estimated_sleep_uA": round(always_on_uA, 2),
+        "conditional_pull_up_uA": round(conditional_uA, 2),
+        "observations": observations,
     }
 
 
