@@ -230,7 +230,7 @@ The schematic symbol property is the best place for per-component notes, but pro
 
 4. **Existing BOM CSV Notes column** — if a `bom.csv` already exists, read the Notes column. The user may have added notes there that aren't in the schematic.
 
-5. **CLAUDE.md or project-level config** — project instructions may specify BOM conventions, preferred distributors, or special ordering rules.
+5. **Project-level config** (`CLAUDE.md` / `AGENTS.md`) — project instructions may specify BOM conventions, preferred distributors, or special ordering rules.
 
 6. **Schematic symbol Description field** — sometimes used for assembly notes rather than part description (e.g., "100nF bypass - place close to U3 pin 4").
 
@@ -345,7 +345,7 @@ rm -rf bom/orders/
 # Remove schematic backups
 rm -f *.bak
 
-# Remove KiCad analyzer/report files (filenames vary — check project CLAUDE.md)
+# Remove KiCad analyzer/report files (filenames vary — check project CLAUDE.md/AGENTS.md)
 ```
 
 ### Suggested .gitignore additions

@@ -32,7 +32,7 @@ These PDFs are invaluable because they represent tested, working circuits — of
 
 ## Reading PDF Schematics
 
-Use the Read tool with the `pages` parameter to read specific pages of the PDF. Schematics are visual — Claude can interpret the circuit diagrams directly from the rendered PDF pages.
+Read specific pages of the PDF using page range selection. Schematics are visual — multimodal LLMs can interpret the circuit diagrams directly from the rendered PDF pages.
 
 ### Strategy for multi-page schematics
 

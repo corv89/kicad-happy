@@ -245,7 +245,7 @@ If the project includes a PDF export of the schematic (or if you can visually co
 
 ### How to Use
 
-Read the PDF pages with the Read tool (using the `pages` parameter), then correlate visual observations with the analyzer output. Focus on:
+Read the PDF pages (using page range selection if available), then correlate visual observations with the analyzer output. Focus on:
 1. Key IC connections (power, signal, control pins)
 2. Subcircuit boundaries (which passives belong to which IC)
 3. Net labels and power symbols

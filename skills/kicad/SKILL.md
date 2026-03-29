@@ -38,7 +38,7 @@ For deep validation of extracted circuits against datasheets (verifying values, 
 
 This skill includes Python scripts that extract comprehensive structured JSON from KiCad files in a single pass. Run these first, then reason about the output.
 
-Read analyzer JSON output directly with the Read tool rather than writing ad-hoc extraction scripts. The JSON schema has specific field names (documented below and in `references/output-schema.md`) that are easy to get wrong in custom code. To extract a specific section: `python3 -c "import json; d=json.load(open('file.json')); print(json.dumps(d['key'], indent=2))"`.
+Read analyzer JSON output directly rather than writing ad-hoc extraction scripts. The JSON schema has specific field names (documented below and in `references/output-schema.md`) that are easy to get wrong in custom code. To extract a specific section: `python3 -c "import json; d=json.load(open('file.json')); print(json.dumps(d['key'], indent=2))"`.
 
 **Before writing any ad-hoc Python to process analyzer output**, run `--schema` to see the exact field names and types:
 ```bash
@@ -134,8 +134,8 @@ All scripts output JSON to stdout by default. Use `--output file.json` to write 
 The analysis workflow creates files in the project tree. Analyzer JSON and design review reports use user-chosen filenames, so track what you create:
 
 1. **Tell the user** what files were created and where
-2. **Record them** in the project's `CLAUDE.md` under a "Generated files" section (create one if needed) so future sessions can find or clean them up
-3. **When the user asks to clean up**, remove generated reports and analyzer JSON. Check `CLAUDE.md` for the file list — filenames vary per session.
+2. **Record them** in the project's `CLAUDE.md` or `AGENTS.md` under a "Generated files" section (create one if needed) so future sessions can find or clean them up
+3. **When the user asks to clean up**, remove generated reports and analyzer JSON. Check `CLAUDE.md`/`AGENTS.md` for the file list — filenames vary per session.
 
 | File Type | Example | Regenerable? | Commit to git? |
 |-----------|---------|-------------|----------------|
