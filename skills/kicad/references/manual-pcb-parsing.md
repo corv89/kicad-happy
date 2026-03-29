@@ -56,13 +56,15 @@ for line in lines:
             m_e = re.search(r'\(end\s+([\d.-]+)\s+([\d.-]+)\)', buf)
             m_w = re.search(r'\(width\s+([\d.]+)\)', buf)
             m_l = re.search(r'\(layer\s+"([^"]+)"\)', buf)
-            m_n = re.search(r'\(net\s+(\d+)\)', buf)
+            # KiCad ≤9: (net 7), KiCad 10: (net "NetName")
+            m_n = re.search(r'\(net\s+(\d+)\)', buf) or re.search(r'\(net\s+"([^"]+)"\)', buf)
             if all([m_s, m_e, m_w, m_l, m_n]):
+                net_val = m_n.group(1)
                 segments.append({
                     'sx': float(m_s.group(1)), 'sy': float(m_s.group(2)),
                     'ex': float(m_e.group(1)), 'ey': float(m_e.group(2)),
                     'w': float(m_w.group(1)), 'layer': m_l.group(1),
-                    'net': int(m_n.group(1))
+                    'net': int(net_val) if net_val.isdigit() else net_val
                 })
             buf = None
 ```
@@ -105,7 +107,7 @@ for line in lines:
 
 ## Net Extraction
 
-Net declarations are simple single-line entries near the top of the file:
+**KiCad ≤9:** Net declarations are single-line entries near the top of the file:
 
 ```python
 nets = {}
@@ -115,7 +117,11 @@ for line in lines:
         nets[int(m.group(1))] = m.group(2)
 ```
 
-Net 0 is always the unconnected net (empty name). Power nets typically have names like `GND`, `+3V3`, `+5V`, `VBUS`.
+Net 0 is always the unconnected net (empty name).
+
+**KiCad 10:** No net declarations section. Nets are referenced by name string directly in pads, tracks, vias, and zones. Collect unique net names from those elements instead.
+
+Power nets typically have names like `GND`, `+3V3`, `+5V`, `VBUS`.
 
 ---
 
@@ -125,13 +131,14 @@ After extracting footprint blocks with depth-tracking (see above), extract pads 
 
 ```python
 for ref, fp in footprints.items():
+    # KiCad ≤9: (net 5 "+3V3"), KiCad 10: (net "+3V3")
     pads = re.findall(
         r'\(pad\s+"([^"]+)"\s+(\w+)\s+\w+\s+'
         r'\(at\s+([\d.-]+)\s+([\d.-]+).*?\)'
         r'\s+\(size\s+([\d.-]+)\s+([\d.-]+)\).*?'
-        r'\(net\s+(\d+)\s+"([^"]*)"',
+        r'\(net\s+(?:(\d+)\s+)?"([^"]*)"',
         fp['block'], re.DOTALL)
-    # pads: list of (pad_num, type, rel_x, rel_y, size_w, size_h, net_id, net_name)
+    # pads: list of (pad_num, type, rel_x, rel_y, size_w, size_h, net_id_or_empty, net_name)
 ```
 
 ### Absolute Pad Positions
