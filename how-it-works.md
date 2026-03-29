@@ -1,17 +1,17 @@
 # How It Works
 
-This document explains the full design review workflow — what happens when you ask Claude to analyze your KiCad project, how the analysis scripts work, where the data comes from, what Claude actually does with it, and where the limitations are.
+This document explains the full design review workflow — what happens when you ask the AI agent to analyze your KiCad project, how the analysis scripts work, where the data comes from, what the agent actually does with it, and where the limitations are.
 
 ## The core idea
 
 The analysis scripts are **data extraction tools**, not AI. They're deterministic Python that parses KiCad's S-expression file format into structured JSON — component lists, net connectivity, detected subcircuits, board dimensions, DFM measurements. No machine learning, no heuristics that change between runs, no cloud calls. You can run them yourself and read the output.
 
-Claude reads that JSON, reads your datasheets, and writes a design review. The AI part is the *reasoning about* the data — not the data itself.
+The agent reads that JSON, reads your datasheets, and writes a design review. The AI part is the *reasoning about* the data — not the data itself.
 
 This separation matters because it means:
 
 - **The data is auditable.** Run the script, read the JSON, verify any claim.
-- **The reasoning is transparent.** Claude shows its work — calculations, pin traces, datasheet references. You can check every conclusion.
+- **The reasoning is transparent.** The agent shows its work — calculations, pin traces, datasheet references. You can check every conclusion.
 - **Nothing is hidden.** There's no model making invisible decisions about your design. The analysis scripts are open source, the methodology is documented, and the JSON output is "human-readable."
 
 ## What happens when you say "analyze my board"
@@ -52,13 +52,13 @@ The PCB analyzer (`analyze_pcb.py`) and Gerber analyzer (`analyze_gerbers.py`) f
 
 ### Step 2: Gather datasheets
 
-Claude downloads datasheets for every component with an MPN, using the distributor API skills (DigiKey, Mouser, LCSC, element14). PDFs are stored locally in a `datasheets/` directory with an index manifest.
+The agent downloads datasheets for every component with an MPN, using the distributor API skills (DigiKey, Mouser, LCSC, element14). PDFs are stored locally in a `datasheets/` directory with an index manifest.
 
 This step is critical. Without datasheets, a review can only check that a design is *self-consistent* (the schematic agrees with itself). With datasheets, it can check that the design is *correct* (component values match manufacturer recommendations, absolute maximum ratings aren't exceeded, reference circuits are followed).
 
 ### Step 3: Cross-reference and review
 
-Claude reads the analysis JSON and datasheets together, then:
+The agent reads the analysis JSON and datasheets together, then:
 
 - **Verifies the analysis data.** Spot-checks component counts against the raw schematic, traces critical nets pin-by-pin, confirms the analyzer's pin-to-net mapping for ICs.
 - **Validates against datasheets.** Checks feedback divider Vout against the regulator's actual Vref. Verifies filter cutoff frequencies match the application note. Confirms current sense resistor power dissipation is within rating.
@@ -90,7 +90,7 @@ Being honest about limitations is more useful than pretending they don't exist.
 
 **Things the analyzer cannot detect:**
 
-- **Wrong component choice.** If you picked an LDO that can't handle the dropout voltage in your application, or a MOSFET with insufficient Vgs threshold for your gate drive — the analyzer sees the circuit topology but doesn't know your operating conditions. Claude will flag when datasheet parameters look marginal, but it requires the right datasheet and explicit operating specs.
+- **Wrong component choice.** If you picked an LDO that can't handle the dropout voltage in your application, or a MOSFET with insufficient Vgs threshold for your gate drive — the analyzer sees the circuit topology but doesn't know your operating conditions. The agent will flag when datasheet parameters look marginal, but it requires the right datasheet and explicit operating specs.
 
 - **Timing and dynamic behavior.** The analysis is static — it sees component values and connectivity, not waveforms. It can compute filter cutoff frequencies and time constants, and it traces enable chains and power_good sequencing dependencies, but it can't simulate transient response or oscillation stability.
 
@@ -118,11 +118,11 @@ Valid concern. Here's how this system is different from "paste your schematic in
 
 1. **The analysis data is deterministic.** The Python scripts produce the same JSON output every time for the same input. There's no model in the extraction loop. You can run the scripts, read the JSON, and verify any fact independently.
 
-2. **Claude's reasoning is grounded in data.** It's not generating circuit analysis from training data — it's reading your specific component list, your specific net connections, your specific trace widths, and cross-referencing against your specific datasheets. When it says "R3 and R4 form a voltage divider with ratio 0.234," that came from parsing the actual resistor values on the actual net.
+2. **The reasoning is grounded in data.** It's not generating circuit analysis from training data — it's reading your specific component list, your specific net connections, your specific trace widths, and cross-referencing against your specific datasheets. When it says "R3 and R4 form a voltage divider with ratio 0.234," that came from parsing the actual resistor values on the actual net.
 
-3. **The review is verifiable.** Every finding includes the path to verify it — which components, which nets, which datasheet page. If Claude says your thermal vias are insufficient, it tells you the via count, the pad area, and the IPC recommendation. You can check.
+3. **The review is verifiable.** Every finding includes the path to verify it — which components, which nets, which datasheet page. If the agent says your thermal vias are insufficient, it tells you the via count, the pad area, and the IPC recommendation. You can check.
 
-4. **Hallucination risk is bounded by the data.** Claude can misinterpret analyzer data or draw wrong conclusions from datasheets — the same mistakes a human reviewer can make. But it can't invent components that aren't in your schematic or fabricate net connections that don't exist, because the analysis JSON constrains what it's working with.
+4. **Hallucination risk is bounded by the data.** The agent can misinterpret analyzer data or draw wrong conclusions from datasheets — the same mistakes a human reviewer can make. But it can't invent components that aren't in your schematic or fabricate net connections that don't exist, because the analysis JSON constrains what it's working with.
 
 Is it perfect? No. That's why step 4 is "you review the review." But it's a lot better than skipping the review entirely — which is what happens on most projects when time runs out before tapeout.
 
@@ -138,7 +138,7 @@ If you're a senior EE who already does thorough design reviews, this saves you t
 
 ### "I don't want AI touching my design files"
 
-It doesn't. The analysis scripts *read* your KiCad files — they never modify them. The BOM management scripts can write symbol properties back (distributor part numbers, MPNs), but only with explicit `--write` flags and they support `--dry-run` to preview changes. Claude itself has no ability to modify your KiCad files directly.
+It doesn't. The analysis scripts *read* your KiCad files — they never modify them. The BOM management scripts can write symbol properties back (distributor part numbers, MPNs), but only with explicit `--write` flags and they support `--dry-run` to preview changes. The agent itself has no ability to modify your KiCad files directly.
 
 Your design files, your git repo, your control.
 
@@ -160,7 +160,7 @@ python3 -c "import json; d=json.load(open('analysis.json')); [print(f'{vd[\"r_to
 python3 -c "import json; d=json.load(open('analysis.json')); net=d['nets'].get('+3V3',{}); print(f'Pins on +3V3: {len(net.get(\"pins\",[]))}'); [print(f'  {p[\"component\"]}.{p[\"pin_number\"]} ({p[\"pin_name\"]})') for p in net.get('pins',[])]"
 ```
 
-The JSON is the truth. Everything Claude says should trace back to it. If it doesn't, that's a Claude reasoning error — flag it.
+The JSON is the truth. Everything the agent says should trace back to it. If it doesn't, that's an AI reasoning error — flag it.
 
 ### "Open source analysis scripts are a liability — what if they have bugs?"
 
@@ -193,7 +193,7 @@ The methodology documentation ([schematic](skills/kicad/scripts/methodology_sche
                                                              ▼
                            5. REVIEW                   6. DECIDE
                            ┌──────────────┐           ┌──────────────┐
-                           │ Claude reads │           │ Engineer     │
+                           │ Agent reads  │           │ Engineer     │
                            │ JSON + PDFs  │──report─▶ │ reviews      │
                            │ Cross-refs   │           │ verifies     │
                            │ Validates    │           │ decides      │
@@ -214,7 +214,7 @@ The harness uses three complementary layers, each catching things the others mis
 
 **Layer 2: Assertions.** Assertions are machine-checkable facts about specific files — "cynthion aux_port.kicad_sch has 29–37 components," "hackrf-one has decoupling analysis detected," "this board has at least 5 capacitors." They live in `data/assertions/` and provide permanent regression protection. If an analyzer change breaks a known-good result, the assertion fails immediately. Assertions support operators like `range`, `min_count`, `exists`, `contains_match`, and more.
 
-**Layer 3: LLM review.** Review packets pair source KiCad files with their analyzer output, and Claude independently verifies the analysis quality — checking whether detected subcircuits make sense, whether component classifications are correct, whether the signal analysis missed anything obvious. Findings from these reviews get tracked and, once confirmed, promoted into permanent assertions (layer 2). This is how the assertion set grows over time.
+**Layer 3: LLM review.** Review packets pair source KiCad files with their analyzer output, and an LLM independently verifies the analysis quality — checking whether detected subcircuits make sense, whether component classifications are correct, whether the signal analysis missed anything obvious. Findings from these reviews get tracked and, once confirmed, promoted into permanent assertions (layer 2). This is how the assertion set grows over time.
 
 ### What gets exercised
 
@@ -230,7 +230,7 @@ The harness uses three complementary layers, each catching things the others mis
 2. Run the analyzers against the corpus
 3. Diff against the baseline — review what changed
 4. Run assertions — catch any regressions
-5. Generate review packets for changed files — have Claude verify the changes make sense
+5. Generate review packets for changed files — have the LLM verify the changes make sense
 6. Promote confirmed findings to assertions
 7. Create a new baseline
 

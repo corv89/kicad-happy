@@ -1,6 +1,6 @@
 # KiCad Analysis Scripts — Developer Reference
 
-This directory contains three analysis scripts, shared utilities, and a parser. Each script outputs structured JSON for Claude to consume during design reviews.
+This directory contains three analysis scripts, shared utilities, and a parser. Each script outputs structured JSON for the AI agent to consume during design reviews.
 
 | Script | Input | Size | Purpose |
 |--------|-------|------|---------|

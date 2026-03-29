@@ -1,10 +1,10 @@
 # ⚡ kicad-happy
 
-**[Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills for electronics design with KiCad.** Analyze schematics, review PCB layouts, download datasheets, source components, and prepare boards for fabrication — all from your terminal.
+**AI coding agent skills for electronics design with KiCad.** Analyze schematics, review PCB layouts, download datasheets, source components, and prepare boards for fabrication — all from your terminal.
 
-> 🛠️ **Requires Claude Code** — Anthropic's agentic coding tool that lives in your terminal. Skills like these let you extend it into entirely new domains beyond software.
+> 🛠️ **Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenAI Codex](https://github.com/openai/codex)** — AI coding agents that live in your terminal. Skills like these extend them into entirely new domains beyond software.
 
-These skills turn Claude Code into a full-fledged electronics design assistant that understands your KiCad projects at a deep level: parses schematics and PCB layouts into structured data, cross-references component values against datasheets, detects common design errors, and walks you through the full prototype-to-production workflow.
+These skills turn your AI coding agent into a full-fledged electronics design assistant that understands your KiCad projects at a deep level: parses schematics and PCB layouts into structured data, cross-references component values against datasheets, detects common design errors, and walks you through the full prototype-to-production workflow.
 
 ## 📦 What's included
 
@@ -21,15 +21,18 @@ These skills turn Claude Code into a full-fledged electronics design assistant t
 
 ## 🚀 Install
 
-The easiest way — just ask Claude Code:
+The easiest way — just ask your agent:
 
 > Clone https://github.com/aklofas/kicad-happy and install all the skills
 
 And keep up to date with the latest as we use our [test harness](https://github.com/aklofas/kicad-happy-testharness) to validate against a [corpus](https://github.com/aklofas/kicad-happy-testharness/blob/main/repos.md) of open source projects.
 
-> Claude, pull the latest changes for kicad-happy and update my skills
+> Pull the latest changes for kicad-happy and update my skills
 
 Or do it manually:
+
+<details>
+<summary><strong>Claude Code</strong></summary>
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
@@ -43,6 +46,24 @@ done
 ```
 
 You can also install individually — symlink any skill folder from `skills/` into `~/.claude/skills/`. For project-specific installs, use `.claude/skills/` in your project root instead.
+</details>
+
+<details>
+<summary><strong>OpenAI Codex</strong></summary>
+
+```bash
+git clone https://github.com/aklofas/kicad-happy.git
+cd kicad-happy
+
+# Install all skills (symlinks into ~/.codex/skills/)
+mkdir -p ~/.codex/skills
+for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway; do
+  ln -sf "$(pwd)/skills/$skill" ~/.codex/skills/$skill
+done
+```
+
+You can also install individually — symlink any skill folder from `skills/` into `~/.codex/skills/`. For project-specific installs, use `.codex/skills/` in your project root instead.
+</details>
 
 The **kicad** skill is the core — the others enhance it with sourcing, datasheets, and manufacturing workflows.
 
@@ -56,9 +77,9 @@ The analysis scripts are pure Python 3 with no required dependencies. Optional e
 
 ### API keys (optional)
 
-The distributor skills work best with API credentials, but none are strictly required — Claude falls back to web search for component lookups and datasheet downloads.
+The distributor skills work best with API credentials, but none are strictly required — the agent falls back to web search for component lookups and datasheet downloads.
 
-> "Claude, help me set up API keys for the distributor skills"
+> "Help me set up API keys for the distributor skills"
 
 | Distributor   | Env variables                                | How to get                                                                                             |
 | ------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -71,7 +92,7 @@ The distributor skills work best with API credentials, but none are strictly req
 
 > "Analyze my KiCad project at `hardware/rev2/`"
 
-Claude runs the analysis scripts, reads datasheets, and produces a full design review. Here's a condensed example from a real project — a 6-layer BLDC motor controller (187 components):
+The agent runs the analysis scripts, reads datasheets, and produces a full design review. Here's a condensed example from a real project — a 6-layer BLDC motor controller (187 components):
 
 **Power tree** — every regulator traced from input to output, feedback dividers identified, output voltage computed:
 
@@ -133,7 +154,7 @@ The analysis covers every domain in the design:
 
 ### 📚 How the analysis works
 
-The analysis scripts parse KiCad's S-expression file format directly into structured JSON — component lists, net connectivity, detected subcircuits, board dimensions, DFM measurements. Claude then reads that JSON alongside your datasheets to cross-reference values, trace signal paths, and write a design review with every conclusion shown and verifiable. For the full end-to-end walkthrough from S-expression parsing through signal detection, datasheet cross-referencing, design review, and discussion of limitations — see **[How It Works](how-it-works.md)**. Detailed methodology documentation for each analyzer:
+The analysis scripts parse KiCad's S-expression file format directly into structured JSON — component lists, net connectivity, detected subcircuits, board dimensions, DFM measurements. The agent then reads that JSON alongside your datasheets to cross-reference values, trace signal paths, and write a design review with every conclusion shown and verifiable. For the full end-to-end walkthrough from S-expression parsing through signal detection, datasheet cross-referencing, design review, and discussion of limitations — see **[How It Works](how-it-works.md)**. Detailed methodology documentation for each analyzer:
 
 - **[Schematic analysis methodology](skills/kicad/scripts/methodology_schematic.md)** — parsing pipeline, multi-sheet net building, component classification heuristics, and all 21 signal path detectors (voltage dividers, regulators, RC/LC filters, op-amp circuits, transistor switches, protection devices, bridge circuits, bus detection, and more)
 - **[PCB layout analysis methodology](skills/kicad/scripts/methodology_pcb.md)** — footprint extraction, union-find connectivity, DFM scoring, thermal/placement/signal integrity analysis
@@ -141,7 +162,7 @@ The analysis scripts parse KiCad's S-expression file format directly into struct
 
 ### 🖐️ Ask about specific circuits
 
-You don't have to ask for a full design review — just point Claude at whatever you're working on:
+You don't have to ask for a full design review — just point the agent at whatever you're working on:
 
 > "Check the two capacitive touch buttons on my PCB for routing or placement issues"
 
@@ -151,7 +172,7 @@ You don't have to ask for a full design review — just point Claude at whatever
 
 > "Are the differential pairs on my USB routed correctly?"
 
-Claude runs the analysis scripts, then autonomously digs deeper — tracing nets, analyzing zone fills, calculating clearances, reading datasheets.
+The agent runs the analysis scripts, then autonomously digs deeper — tracing nets, analyzing zone fills, calculating clearances, reading datasheets.
 
 ### 📏 Standards compliance (IPC/IEC)
 
@@ -183,7 +204,7 @@ Datasheet sync complete:
   Output: hardware/rev2/datasheets/
 ```
 
-Creates a `datasheets/` directory with human-readable filenames and an `index.json` manifest. Subsequent runs only download new or changed parts. Each PDF is verified against the expected MPN. Claude then reads these datasheets during design review to validate component values against manufacturer recommendations.
+Creates a `datasheets/` directory with human-readable filenames and an `index.json` manifest. Subsequent runs only download new or changed parts. Each PDF is verified against the expected MPN. The agent then reads these datasheets during design review to validate component values against manufacturer recommendations.
 
 ### 📋 BOM management — from schematic to order
 
@@ -191,7 +212,7 @@ Creates a `datasheets/` directory with human-readable filenames and an `index.js
 
 This is where things get *really* good. The BOM skill manages the entire lifecycle of your bill of materials — and it all lives in your KiCad schematic as the single source of truth. No separate spreadsheets to keep in sync, no copy-pasting between tabs.
 
-Claude analyzes your schematic to detect which distributor fields are populated (and which naming convention you're using — it handles dozens of variants like `Digi-Key_PN`, `DigiKey Part Number`, `DK`, etc.), identifies gaps, searches distributors to fill them, validates every match against the footprint and specs, and exports per-supplier order files in the exact upload format each distributor expects.
+The agent analyzes your schematic to detect which distributor fields are populated (and which naming convention you're using — it handles dozens of variants like `Digi-Key_PN`, `DigiKey Part Number`, `DK`, etc.), identifies gaps, searches distributors to fill them, validates every match against the footprint and specs, and exports per-supplier order files in the exact upload format each distributor expects.
 
 **The workflow:**
 
@@ -202,7 +223,7 @@ Claude analyzes your schematic to detect which distributor fields are populated 
 
 > "I need a 3.3V LDO that can do 500mA in SOT-223, under $1"
 
-Claude searches DigiKey via API, filters by your specs, and returns pricing and stock:
+The agent searches DigiKey via API, filters by your specs, and returns pricing and stock:
 
 ```
 AZ1117CH-3.3TRG1 — Arizona Microdevices
@@ -216,24 +237,24 @@ AP2114H-3.3TRG1 — Diodes Incorporated
   In stock: 42,000+
 ```
 
-Pick one, and Claude searches Mouser and LCSC for the same MPN to fill in alternate suppliers. One prompt, all suppliers populated, ready for your tracking CSV.
+Pick one, and the agent searches Mouser and LCSC for the same MPN to fill in alternate suppliers. One prompt, all suppliers populated, ready for your tracking CSV.
 
 ### 🏭 Prepare for manufacturing
 
 > "Generate the BOM for JLCPCB assembly"
 
-Claude extracts the BOM from your schematic, cross-references LCSC part numbers, formats it to JLCPCB's exact spec, and flags basic vs extended parts. CPL files are exported from KiCad directly — Claude handles the BOM side.
+The agent extracts the BOM from your schematic, cross-references LCSC part numbers, formats it to JLCPCB's exact spec, and flags basic vs extended parts. CPL files are exported from KiCad directly — the agent handles the BOM side.
 
 > "Generate order files for 10 boards with 2 spares per line"
 
-Claude exports per-supplier upload files — DigiKey bulk-add CSV, Mouser cart format, LCSC BOM — with quantities already computed. It'll flag any parts where your chosen supplier is out of stock and suggest the alternate.
+The agent exports per-supplier upload files — DigiKey bulk-add CSV, Mouser cart format, LCSC BOM — with quantities already computed. It'll flag any parts where your chosen supplier is out of stock and suggest the alternate.
 
 ## 🗺️ Workflow overview
 
 1. **Design** your board in KiCad
-2. **Sync datasheets** for all components — builds a local library Claude uses for validation
+2. **Sync datasheets** for all components — builds a local library the agent uses for validation
 3. **Analyze** the schematic and PCB with the analysis scripts
-4. **Review** the design — Claude cross-references the analysis with datasheets
+4. **Review** the design — the agent cross-references the analysis with datasheets
 5. **Source components** — search DigiKey/Mouser (prototype) or LCSC (production)
 6. **Export** BOM tracking CSV + per-supplier order files + CPL for your assembler
 7. **Order** boards from JLCPCB or PCBWay
@@ -248,7 +269,7 @@ The analyzers are validated against **1,000+ open-source projects** across 25 ca
 | -------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
 | **Baselines**  | Output drift between analyzer versions    | Snapshot/diff of JSON outputs across the full corpus                                    |
 | **Assertions** | Hard regressions on known-good results    | Machine-checkable facts per file (component counts, detected subcircuits, signal paths) |
-| **LLM review** | Semantic issues deterministic checks miss | Claude reviews source + output pairs, findings get promoted to assertions               |
+| **LLM review** | Semantic issues deterministic checks miss | LLM reviews source + output pairs, findings get promoted to assertions                  |
 
 **What gets tested:** All three analyzers (schematic, PCB, Gerber) against every file in the corpus, MPN extraction and validation across all four distributor APIs, the datasheet download pipeline, the BOM manager end-to-end, and legacy KiCad 5 format support.
 
@@ -258,11 +279,11 @@ This project exists because **KiCad is absolutely incredible** — and we're not
 
 But what makes KiCad truly special for AI-assisted design — and the entire reason this project can exist — is its **beautifully open file format**. Every schematic, PCB layout, symbol, and footprint is stored as clean, human-readable S-expressions. No proprietary binary blobs. No vendor lock-in. No reverse engineering. No $500 "export plugin" just to read your own data.
 
-This means Claude can read your KiCad files directly, understand every component, trace every net, and reason about your design at the same level a human engineer would. The analysis scripts parse raw `.kicad_sch` and `.kicad_pcb` files into structured JSON, and Claude takes it from there — cross-referencing datasheets, computing filter cutoffs, checking thermal via adequacy, flagging missing pull-ups. No plugins, no export steps, no intermediary formats. Just your KiCad project and a terminal.
+This means your AI agent can read your KiCad files directly, understand every component, trace every net, and reason about your design at the same level a human engineer would. The analysis scripts parse raw `.kicad_sch` and `.kicad_pcb` files into structured JSON, and the agent takes it from there — cross-referencing datasheets, computing filter cutoffs, checking thermal via adequacy, flagging missing pull-ups. No plugins, no export steps, no intermediary formats. Just your KiCad project and a terminal.
 
 Try doing that with Altium or OrCAD. 😉
 
-KiCad + Claude Code is the most powerful electronics design workflow you can set up today, and it costs exactly $0 for the EDA tool. The future of hardware design is open, and it's here.
+KiCad + an AI coding agent is the most powerful electronics design workflow you can set up today, and it costs exactly $0 for the EDA tool. The future of hardware design is open, and it's here.
 
 ## ✅ KiCad version support
 
