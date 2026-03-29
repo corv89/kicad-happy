@@ -7,13 +7,13 @@ Guide for producing comprehensive design review reports from analyzer output + r
 | Section | Line | Purpose |
 |---------|------|---------|
 | Report Structure | ~18 | Full report template (copy and fill in) |
-| Analyzer Output Field Reference | ~248 | Maps every JSON output field to its report section — use as checklist |
-| Severity Definitions | ~350 | CRITICAL / WARNING / SUGGESTION criteria |
-| Writing Principles | ~358 | How to write actionable findings |
-| Handling Different Design Domains | ~391 | Domain-specific focus areas (IoT, motor, RF, analog, industrial) |
-| Cross-Referencing with Raw Schematic | ~408 | Mandatory verification steps |
-| Known Analyzer Limitations | ~418 | What the tool can and can't catch |
-| Report Length Guidelines | ~445 | Target report sizes by complexity |
+| Analyzer Output Field Reference | ~342 | Maps every JSON output field to its report section — use as checklist |
+| Severity Definitions | ~446 | CRITICAL / WARNING / SUGGESTION criteria |
+| Writing Principles | ~454 | How to write actionable findings |
+| Handling Different Design Domains | ~490 | Domain-specific focus areas (IoT, motor, RF, analog, industrial) |
+| Cross-Referencing with Raw Schematic | ~507 | Mandatory verification steps |
+| Known Analyzer Limitations | ~518 | What the tool can and can't catch |
+| Report Length Guidelines | ~529 | Target report sizes by complexity |
 
 ## Report Structure
 
@@ -28,6 +28,17 @@ Use this template. Include sections that are relevant to the design — skip sec
 
 ## Overview
 [2-4 sentence description of the board: MCU, power architecture, key peripherals, domain (IoT/motor control/RF/instrumentation/etc.), form factor context]
+
+## Previous Review Delta
+[**Optional — include only when a prior design review file exists in the project directory.** Read the previous review and diff against the current findings.]
+
+| Status | Count |
+|--------|-------|
+| Fixed since last review | N |
+| Still open | N |
+| New findings | N |
+
+[List fixed items briefly as positive findings ("Thermal via count on U3 increased from 14 to 18 — now meets IPC recommendation"). List still-open items with their original severity. New findings go into their normal sections below. This section helps the designer see progress and avoid re-investigating known issues.]
 
 ## Critical Findings
 [**This section comes first** so the designer sees the most important issues immediately. Move here after completing the full analysis.]
@@ -257,6 +268,15 @@ GND pour clearance: Measure the actual clearance between each touch pad and the 
 ### Component Count Match — [Schematic (excl. power symbols) vs PCB footprint count]
 ### Pin-Net Verification — [ALL components: schematic pin mapping vs PCB pad mapping. Table: Ref | Pins | All Match | Mismatches. Do not sample — verify every component including connectors, transistors, diodes.]
 This verification must happen at the PCB pad level, not just the schematic pin level. The schematic tells you pin 1 connects to net X; the PCB tells you pad 1 connects to net X. If the library footprint has pad numbering that doesn't match the symbol's pin numbering, the schematic and PCB will be internally consistent but the board will be wrong. For each IC, transistor, and connector, verify both directions: schematic pin N → net X, AND PCB pad N → net X, AND the physical pad position matches the datasheet's pin diagram for that specific package. Example format: "Q1: 1=G(MAP_RED), 2=S(GND), 3=D(+5V)." This catches the most dangerous class of bug — a library footprint with wrong pad numbering passes all consistency checks but produces a non-functional board.
+### Connector Pinout Tables — [For connectors with >2 pins (debug headers, programming headers, multi-pin interfaces), include a pin mapping table]
+
+| Connector | Pin | Net | Function |
+|-----------|-----|-----|----------|
+| J1 | 1 | RESET | MCU reset |
+| ... | ... | ... | ... |
+
+[This is especially important for programming/debug headers, USB connectors, and board-to-board interfaces where miswiring is common and consequences are severe.]
+
 ### Footprint Match — [Schematic Footprint property vs actual PCB footprint]
 ### Value/MPN Consistency — [Spot-check values and MPNs between schematic and PCB]
 ### DNP Consistency — [Components marked DNP in schematic should not have routing on PCB]

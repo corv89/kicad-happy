@@ -150,7 +150,7 @@ Each sheet has its own `.kicad_sch` file. Pins on the sheet symbol connect to `h
   ...
 )
 ```
-**Note**: Layer numbers differ between KiCad 5 and 9. In KiCad 5: F.Cu=0, B.Cu=31, inner=1-30. In KiCad 9: numbering scheme changed.
+**Note**: Layer numbers differ between versions. In KiCad 5: F.Cu=0, B.Cu=31, inner=1-30. In KiCad 6+: B.Cu number depends on layer count (e.g., B.Cu=2 for 2-layer, B.Cu=4 for 4-layer).
 
 ### Footprint on PCB
 ```

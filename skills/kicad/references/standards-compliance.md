@@ -38,18 +38,18 @@ Reference tables and formulas for checking PCB designs against industry standard
 
 | Section | Line | Standard |
 |---------|------|----------|
-| Product Classification | ~20 | IPC-A-600G, IPC-2221A |
-| Conductor Spacing | ~45 | IPC-2221A Table 6-1 |
-| Current Carrying Capacity | ~105 | IPC-2221A Section 6.2 |
-| Annular Ring Requirements | ~155 | IPC-2221A Tables 9-1, 9-2 |
-| Hole Size Requirements | ~190 | IPC-2221A Tables 9-3, 9-4, 9-5 |
-| Impedance Calculations | ~225 | IPC-2221A Section 6.4 |
-| Dielectric Properties | ~260 | IPC-2221A Table 6-2 |
-| Via Protection Types | ~290 | IPC-4761 |
-| Creepage and Clearance | ~340 | ECMA-287 (derived from IEC 60664-1) |
-| Safety Standards | ~490 | ECMA-287, IEC 62368-1 |
-| Land Pattern Density | ~530 | IPC-7351B |
-| Current Capacity (Updated) | ~560 | IPC-2152 |
+| Product Classification | ~56 | IPC-A-600G, IPC-2221A |
+| Conductor Spacing | ~73 | IPC-2221A Table 6-1 |
+| Current Carrying Capacity | ~109 | IPC-2221A Section 6.2 |
+| Annular Ring Requirements | ~158 | IPC-2221A Tables 9-1, 9-2 |
+| Hole Size Requirements | ~194 | IPC-2221A Tables 9-3, 9-4, 9-5 |
+| Impedance Calculations | ~224 | IPC-2221A Section 6.4 |
+| Dielectric Properties | ~262 | IPC-2221A Table 6-2 |
+| Via Protection Types | ~279 | IPC-4761 |
+| Creepage and Clearance | ~313 | ECMA-287 (derived from IEC 60664-1) |
+| Safety Standards | ~446 | ECMA-287, IEC 62368-1 |
+| Land Pattern Density | ~481 | IPC-7351B |
+| Current Capacity (Updated) | ~501 | IPC-2152 |
 
 ---
 

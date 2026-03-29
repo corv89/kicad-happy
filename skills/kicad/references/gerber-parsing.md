@@ -25,8 +25,8 @@ Gerber files are plain text. Each file represents one layer. The format uses sin
 G04 Layer: F.Cu*                    ; Comment
 G04 KiCad-generated file*
 %FSLAX46Y46*%                       ; Format specification
-%MOIN*%                             ; Units: IN (inches) or MM (millimeters)
-%MOIN*%                             ; Most KiCad exports use MM
+%MOMM*%                             ; Units: MM (millimeters) — most KiCad exports
+                                    ; Alternative: %MOIN*% for inches
 %LNFRONT*%                          ; Layer name
 
 ; Aperture definitions
@@ -182,7 +182,7 @@ Region fills (G36/G37) represent filled copper areas — zones, pads with custom
 
 KiCad uses predictable filename suffixes. The naming changed between KiCad 5 and KiCad 6:
 
-| KiCad 9 Suffix | KiCad 5 Suffix | KiCad Layer | Description |
+| KiCad 6+ Suffix | KiCad 5 Suffix | KiCad Layer | Description |
 |----------------|----------------|-------------|-------------|
 | `-F_Cu.gbr` | `-F_Cu.gbr` | F.Cu | Front copper |
 | `-B_Cu.gbr` | `-B_Cu.gbr` | B.Cu | Back copper |

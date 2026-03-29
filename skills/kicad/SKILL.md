@@ -13,10 +13,11 @@ description: Analyze KiCad EDA projects and PDF schematics — schematics, PCB l
 | `digikey` | Search DigiKey for parts (prototype sourcing) |
 | `mouser` | Search Mouser for parts (secondary prototype source) |
 | `lcsc` | Search LCSC for parts (production sourcing, JLCPCB) |
+| `element14` | Search Newark/Farnell/element14 (international sourcing, reliable datasheets) |
 | `jlcpcb` | PCB fabrication & assembly ordering |
 | `pcbway` | Alternative PCB fabrication & assembly |
 
-**Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation.
+**Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc`/`element14` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation.
 
 ## PDF Schematic Analysis
 
