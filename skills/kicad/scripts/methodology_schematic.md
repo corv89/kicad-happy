@@ -67,7 +67,7 @@ The parser (`sexp_parser.py`) converts this to nested Python lists:
     ["property", "Value", "10k", ...], ...]]
 ```
 
-**Key design decision**: All values are strings. The parser performs no type coercion, no schema validation, and no KiCad version-specific handling. This makes it robust across KiCad 5–9 format changes. Callers convert to `float`/`int` as needed.
+**Key design decision**: All values are strings. The parser performs no type coercion, no schema validation, and no KiCad version-specific handling. This makes it robust across KiCad 5–10 format changes. Callers convert to `float`/`int` as needed.
 
 Helper functions (`find_all`, `find_first`, `find_deep`, `get_value`, `get_property`) provide structured traversal of the parse tree without requiring callers to write index-based list access.
 

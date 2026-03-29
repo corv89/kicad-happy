@@ -118,8 +118,8 @@ Each sheet has its own `.kicad_sch` file. Pins on the sheet symbol connect to `h
   (paper "A4")
   (layers ...)              ; Layer stack definition
   (setup ...)               ; Board setup, stackup, plot params
-  (net 0 "")                ; Net index 0 = unconnected (always present)
-  (net 1 "GND")             ; Net declarations (index + name)
+  (net 0 "")                ; KiCad ≤9: net declarations (index + name)
+  (net 1 "GND")             ; KiCad 10: no net declarations — nets identified by name
   (net 2 "+3V3")
   ...
   (footprint ...)           ; Placed footprints with pads
@@ -174,7 +174,8 @@ Each sheet has its own `.kicad_sch` file. Pins on the sheet symbol connect to `h
     (at X Y ANGLE)
     (size W H)
     (layers "F.Cu" "F.Mask" "F.Paste")
-    (net 5 "+3V3")                  ; NET ASSIGNMENT - key for connectivity
+    (net 5 "+3V3")                  ; KiCad ≤9: (net number "name")
+                                     ; KiCad 10: (net "name") — no numeric ID
     (pintype "passive")
     (uuid "...")
   )
@@ -185,9 +186,18 @@ Each sheet has its own `.kicad_sch` file. Pins on the sheet symbol connect to `h
 
 ### Tracks, Vias, and Zones
 ```
+; KiCad ≤9: net referenced by integer ID
 (segment (start X1 Y1) (end X2 Y2) (width 0.2) (layer "F.Cu") (net 7) (uuid "..."))
 (via (at X Y) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 7) (uuid "..."))
-(zone (net 1) (net_name "GND") (layer "F.Cu") (uuid "...")
+(zone (net 1) (net_name "GND") (layer "F.Cu") (uuid "...") ...)
+
+; KiCad 10: net referenced by name string, no net_name node on zones
+(segment (start X1 Y1) (end X2 Y2) (width 0.2) (layer "F.Cu") (net "NetName") (uuid "..."))
+(via (at X Y) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "NetName") (uuid "..."))
+(zone (net "GND") (layer "F.Cu") (uuid "...") ...)
+
+; Zone structure (both versions):
+(zone (net ...) ... (layer "F.Cu") (uuid "...")
   (connect_pads (clearance 0.25))
   (min_thickness 0.25)
   (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))
@@ -205,11 +215,19 @@ Look for graphical items on `Edge.Cuts` layer:
 
 ### Tracing Net Connectivity on PCB
 To find everything connected to a net:
+
+**KiCad ≤9** (integer net IDs):
 1. Find `(net N "NetName")` in the net declarations
-2. Find all `(pad ... (net N ...) ...)` in footprints - pin endpoints
-3. Find all `(segment ... (net N) ...)` - copper traces
-4. Find all `(via ... (net N) ...)` - layer transitions
-5. Find all `(zone (net N) ...)` - copper pours
+2. Find all `(pad ... (net N "name") ...)` in footprints
+3. Find all `(segment ... (net N) ...)` — copper traces
+4. Find all `(via ... (net N) ...)` — layer transitions
+5. Find all `(zone (net N) ...)` — copper pours
+
+**KiCad 10** (string net names — no net declarations section):
+1. Find all `(pad ... (net "NetName") ...)` in footprints
+2. Find all `(segment ... (net "NetName") ...)` — copper traces
+3. Find all `(via ... (net "NetName") ...)` — layer transitions
+4. Find all `(zone (net "NetName") ...)` — copper pours
 
 ---
 

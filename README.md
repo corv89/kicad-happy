@@ -266,13 +266,14 @@ KiCad + Claude Code is the most powerful electronics design workflow you can set
 
 ## ✅ KiCad version support
 
-| Version | Schematic                     | PCB  | Gerber |
-| ------- | ----------------------------- | ---- | ------ |
-| KiCad 9 | Full                          | Full | Full   |
-| KiCad 8 | Full                          | Full | Full   |
-| KiCad 7 | Full                          | Full | Full   |
-| KiCad 6 | Full                          | Full | Full   |
-| KiCad 5 | Full (legacy `.sch` + `.lib`) | Full | Full   |
+| Version  | Schematic                     | PCB  | Gerber |
+| -------- | ----------------------------- | ---- | ------ |
+| KiCad 10 | Full                          | Full | Full   |
+| KiCad 9  | Full                          | Full | Full   |
+| KiCad 8  | Full                          | Full | Full   |
+| KiCad 7  | Full                          | Full | Full   |
+| KiCad 6  | Full                          | Full | Full   |
+| KiCad 5  | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
 ## 📜 License
 

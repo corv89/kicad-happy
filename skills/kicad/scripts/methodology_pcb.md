@@ -43,7 +43,9 @@ Extracts from `(setup ...)` block:
 
 ### 2.3 Net Definitions
 
-Extracts `(net N "name")` entries — maps net numbers to names. Net numbers are used throughout the file to identify which net a pad, track, via, or zone belongs to.
+KiCad ≤9: Extracts `(net N "name")` entries — maps net numbers to names. Net numbers are used throughout the file to identify which net a pad, track, via, or zone belongs to.
+
+KiCad 10: No net declarations section. Nets are identified by name strings directly in pads, tracks, vias, and zones. The analyzer builds a synthetic integer mapping from all unique net names for internal use.
 
 ### 2.4 Footprint Extraction
 
@@ -72,7 +74,7 @@ Each `(footprint ...)` or `(module ...)` block produces:
 - Pad number, type (`smd`, `thru_hole`, `np_thru_hole`), shape (`circle`, `rect`, `oval`, `roundrect`, `custom`)
 - Absolute position (footprint-relative position rotated by footprint angle, then translated)
 - Size (width, height), drill diameter and shape (round vs. oval)
-- Net assignment (net number + name)
+- Net assignment (KiCad ≤9: net number + name; KiCad 10: net name only)
 - Layer list (which copper/mask/paste layers the pad spans)
 - Pin function and type (from schematic cross-reference: `pinfunction`, `pintype`)
 - Custom pad copper area estimation (from primitives)
@@ -86,7 +88,7 @@ Each `(footprint ...)` or `(module ...)` block produces:
 ### 2.5 Track Extraction
 
 Extracts `(segment ...)` and `(arc ...)` blocks:
-- Start/end coordinates, width, layer, net number
+- Start/end coordinates, width, layer, net
 - For arcs: start, mid, and end points (3-point arc definition)
 - Width distribution histogram
 - Layer distribution histogram
@@ -95,7 +97,7 @@ Extracts `(segment ...)` and `(arc ...)` blocks:
 ### 2.6 Via Extraction
 
 Extracts `(via ...)` blocks:
-- Position, pad size, drill diameter, net number
+- Position, pad size, drill diameter, net
 - Layer span (e.g., `F.Cu` to `B.Cu` for through-hole, or specific layers for blind/micro vias)
 - Via type: through, blind, or micro
 - Tenting status (solder mask coverage)

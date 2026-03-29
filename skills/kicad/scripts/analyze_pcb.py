@@ -303,14 +303,79 @@ def extract_setup(root: list) -> dict:
 
 
 def extract_nets(root: list) -> dict[int, str]:
-    """Extract net declarations."""
+    """Extract net declarations.
+
+    KiCad ≤9: top-level (net number "name") declarations.
+    KiCad 10: no declarations — call _build_net_mapping() after extraction.
+    """
     nets = {}
     for item in root:
         if isinstance(item, list) and len(item) >= 3 and item[0] == "net":
-            net_num = int(item[1])
+            try:
+                net_num = int(item[1])
+            except (ValueError, TypeError):
+                continue  # KiCad 10 has no numeric net declarations
             net_name = item[2]
             nets[net_num] = net_name
     return nets
+
+
+# KiCad 10 net format helpers — nets are identified by name, not number.
+_net_name_to_id: dict[str, int] = {}
+
+
+def _net_id(val: str | None) -> int:
+    """Convert a net value to an integer ID.
+
+    KiCad ≤9: val is a numeric string like "3" → returns 3.
+    KiCad 10: val is a net name like "+3.3V" → looks up synthetic ID.
+    """
+    if not val:
+        return 0
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return _net_name_to_id.get(val, 0)
+
+
+def _build_net_mapping(footprints: list[dict], tracks: dict, vias: dict,
+                       zones: list[dict]) -> dict[int, str]:
+    """Build synthetic net ID mapping for KiCad 10 (no net declarations).
+
+    Scans all pads, tracks, vias, and zones for unique net names and assigns
+    sequential integer IDs. Returns the same dict[int, str] format as
+    extract_nets() for backward compatibility.
+    """
+    global _net_name_to_id
+    names: set[str] = set()
+    for fp in footprints:
+        for pad in fp.get("pads", []):
+            n = pad.get("net_name", "")
+            if n:
+                names.add(n)
+    for seg in tracks.get("segments", []):
+        n = seg.get("_net_name", "")
+        if n:
+            names.add(n)
+    for arc in tracks.get("arcs", []):
+        n = arc.get("_net_name", "")
+        if n:
+            names.add(n)
+    for v in vias.get("vias", []):
+        n = v.get("_net_name", "")
+        if n:
+            names.add(n)
+    for z in zones:
+        n = z.get("net_name", "")
+        if n:
+            names.add(n)
+    # Assign sequential IDs (0 = unconnected, 1+ = real nets)
+    net_names: dict[int, str] = {0: ""}
+    _net_name_to_id = {"": 0}
+    for i, name in enumerate(sorted(names), start=1):
+        net_names[i] = name
+        _net_name_to_id[name] = i
+    return net_names
 
 
 def extract_footprints(root: list) -> list[dict]:
@@ -440,8 +505,13 @@ def extract_footprints(root: list) -> list[dict]:
                         pass  # skip malformed drill entries
 
             if pad_net and len(pad_net) >= 3:
-                pad_info["net_number"] = int(pad_net[1])
+                # KiCad ≤9: (net number "name")
+                pad_info["net_number"] = _net_id(pad_net[1])
                 pad_info["net_name"] = pad_net[2]
+            elif pad_net and len(pad_net) == 2:
+                # KiCad 10: (net "name") — no numeric ID
+                pad_info["net_name"] = pad_net[1]
+                pad_info["net_number"] = _net_id(pad_net[1])
 
             if pad_layers and len(pad_layers) > 1:
                 pad_info["layers"] = [l for l in pad_layers[1:] if isinstance(l, str)]
@@ -576,13 +646,16 @@ def extract_tracks(root: list) -> dict:
         net = get_value(seg, "net")
 
         if start and end:
-            segments.append({
+            seg_info = {
                 "x1": float(start[1]), "y1": float(start[2]),
                 "x2": float(end[1]), "y2": float(end[2]),
                 "width": float(width) if width else 0,
                 "layer": layer or "",
-                "net": int(net) if net else 0,
-            })
+                "net": _net_id(net),
+            }
+            if net and not net.lstrip("-").isdigit():
+                seg_info["_net_name"] = net  # KiCad 10: stash for mapping build
+            segments.append(seg_info)
 
     # Also extract arcs
     arcs = []
@@ -595,14 +668,17 @@ def extract_tracks(root: list) -> dict:
         net = get_value(arc, "net")
 
         if start and end:
-            arcs.append({
+            arc_info = {
                 "start": [float(start[1]), float(start[2])],
                 "mid": [float(mid[1]), float(mid[2])] if mid else None,
                 "end": [float(end[1]), float(end[2])],
                 "width": float(width) if width else 0,
                 "layer": layer or "",
-                "net": int(net) if net else 0,
-            })
+                "net": _net_id(net),
+            }
+            if net and not net.lstrip("-").isdigit():
+                arc_info["_net_name"] = net
+            arcs.append(arc_info)
 
     # Width statistics
     widths = {}
@@ -649,8 +725,10 @@ def extract_vias(root: list) -> dict:
             "y": at[1] if at else 0,
             "size": float(size) if size else 0,
             "drill": float(drill) if drill else 0,
-            "net": int(net) if net else 0,
+            "net": _net_id(net),
         }
+        if net and not net.lstrip("-").isdigit():
+            via_info["_net_name"] = net
         if layers_node and len(layers_node) > 1:
             via_info["layers"] = [l for l in layers_node[1:] if isinstance(l, str)]
         if via_type:
@@ -805,8 +883,13 @@ def extract_zones(root: list) -> tuple[list[dict], ZoneFills]:
                 round(filled_max_x, 3), round(filled_max_y, 3),
             )
 
+        # KiCad ≤9: (net number) + (net_name "name")
+        # KiCad 10: (net "name"), no net_name node
+        if net and not net.lstrip("-").isdigit():
+            # KiCad 10: net value is the name itself
+            net_name = net
         zone_info: dict = {
-            "net": int(net) if net else 0,
+            "net": _net_id(net),
             "net_name": net_name or "",
             "layers": zone_layers,
             "clearance": clearance,
@@ -3346,6 +3429,26 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     vias = extract_vias(root)
     zones, zone_fills = extract_zones(root)
     outline = extract_board_outline(root)
+
+    # KiCad 10: no net declarations — build synthetic mapping from content
+    if not net_names:
+        net_names = _build_net_mapping(footprints, tracks, vias, zones)
+        # Backfill net IDs now that the mapping is built
+        for seg in tracks.get("segments", []):
+            if "_net_name" in seg:
+                seg["net"] = _net_id(seg.pop("_net_name"))
+        for arc in tracks.get("arcs", []):
+            if "_net_name" in arc:
+                arc["net"] = _net_id(arc.pop("_net_name"))
+        for v in vias.get("vias", []):
+            if "_net_name" in v:
+                v["net"] = _net_id(v.pop("_net_name"))
+        for z in zones:
+            z["net"] = _net_id(z.get("net_name", ""))
+        for fp in footprints:
+            for pad in fp.get("pads", []):
+                if pad.get("net_name") and pad.get("net_number", 0) == 0:
+                    pad["net_number"] = _net_id(pad["net_name"])
 
     # Connectivity analysis (zone-aware)
     connectivity = analyze_connectivity(footprints, tracks, vias, net_names, zones)
