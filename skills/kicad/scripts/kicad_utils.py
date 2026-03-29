@@ -290,6 +290,12 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         return "power_symbol"
     if lib_id.startswith("power:") and not in_bom:
         return "power_symbol"
+    # Fallback: #PWR references are always power symbols even if the
+    # (power) flag is missing from lib_symbols (can happen after KiCad
+    # version upgrades that reorganize the symbol library structure).
+    # KiCad uses #PWR for all power symbols including GND, VCC, +3V3, etc.
+    if ref.startswith("#PWR"):
+        return "power_symbol"
 
     prefix = ""
     for c in ref:

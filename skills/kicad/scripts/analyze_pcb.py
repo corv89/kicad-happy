@@ -3249,6 +3249,15 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             else:
                 raw_adequacy = "none"
 
+            # When physical count meets threshold but drill weighting doesn't,
+            # use raw adequacy as primary — drill size is a secondary concern
+            # (many manufacturer reference designs use 0.2mm vias in thermal pads)
+            drill_penalized = (raw_adequacy in ("adequate", "good") and
+                               adequacy in ("insufficient", "none") and
+                               total_thermal_vias > 0)
+            if drill_penalized:
+                adequacy = raw_adequacy
+
             entry: dict = {
                 "component": ref,
                 "value": fp.get("value", ""),
@@ -3277,9 +3286,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                     f"through during reflow, creating voids under the thermal pad"
                 )
 
-            if (raw_adequacy in ("adequate", "good") and
-                    adequacy in ("insufficient", "none") and
-                    total_thermal_vias > 0):
+            if drill_penalized:
                 avg_drill = (drill_sum + fp_drill_sum) / total_thermal_vias
                 entry["small_via_note"] = (
                     f"{total_thermal_vias} vias present (avg drill "
