@@ -65,6 +65,7 @@ Use this template. Include sections that are relevant to the design — skip sec
 ### Component Count — [N/N match status]
 ### Component Pinout Verification — [Table: ALL components verified against raw schematic + **manufacturer PDF datasheets** (not KiCad library symbols): Ref | Value | lib_id | Footprint | Pin Count | All Pins Verified | Datasheet Cross-checked | Match. Every component must be checked — not just ICs. Include connectors, transistors, diodes, and critical passives. The "Datasheet Cross-checked" column must reference the actual PDF datasheet with page/section number — not the `.kicad_sym` library file. Verifying against the library symbol is circular (it's the source of the potential error). If no datasheet was available for a component, mark as "NOT VERIFIED — no datasheet" rather than relying on the library symbol. Custom library symbols (e.g., `sacmap:TPS61023`) are highest priority for datasheet verification because there's no upstream KiCad library as a secondary check.]
 ### Pinout Ambiguity & Plausibility — [Components where the symbol's pin assignment depends on the specific MPN. Table: Ref | lib_id | Footprint | MPN | Assumed Pinout | Datasheet Pinout | Plausibility | Status. When verification is possible (MPN + datasheet), verify directly. When it isn't, assess plausibility: does the assumed pinout match the dominant convention for this device type and package? Report confidence: "matches most common convention," "plausible but multiple variants exist," or "unusual — most parts in this category use a different pinout." Flag CRITICAL when no MPN is specified AND the assumed pinout is uncommon or genuinely ambiguous.]
+### Connector Pin Tables — [For connectors with >2 pins (debug headers, programming ports, I/O connectors): table of Pin | Net | Function. The `ic_pin_analysis` section includes connector data — present it as a quick-reference table. Particularly valuable for debug/programming headers (EN, 3V3, TX, GND, RX, BOOT) where pin order matters for cable orientation.]
 ### Net Tracing — [All power rails + critical signal nets traced end-to-end: list all pins, verify connectivity, confirm correctness]
 ### PCB Verification — [If PCB analyzed: footprint count match, pad-net spot-check, board dimensions confirmed]
 ### Gerber Verification — [If gerbers analyzed: layer completeness, drill count, alignment check]
@@ -540,6 +541,18 @@ Document these when they affect the report — it helps the designer understand 
 - **Cross-domain analysis**: Uses voltage equivalence (parsing voltage from rail names) to reduce false positives, but rails without parseable voltages in their names may still trigger false cross-domain warnings.
 - **MOSFET load classification**: Net name keyword detection covers common patterns (motor, heater, fan, solenoid, valve, pump, relay, speaker, buzzer, lamp) but may miss unusual naming conventions.
 - **Bridge circuits**: Cross-sheet detection works through unified hierarchical nets. Topology classification is based on half-bridge count (1=half, 2=H-bridge, 3+=3-phase) which may misclassify independent half-bridges as an H-bridge.
+
+## Fabrication Notes (Optional)
+
+[Include when DFM analysis was performed and the user is preparing for manufacturing. Practical guidance specific to the board:]
+
+- **Fab tier**: Standard vs advanced process capability (based on DFM scoring from PCB analyzer)
+- **Recommended settings**: Copper weight, surface finish, impedance control (if controlled-impedance traces detected)
+- **Stencil guidance**: If fine-pitch components detected (QFN, BGA), note stencil thickness recommendations
+- **Assembly notes**: Component placement order, reflow considerations, hand-solder items
+- **Specific assembler notes**: JLCPCB basic vs extended parts count, PCBWay turnkey vs consigned
+
+This section bridges the design review into the ordering workflow — the `jlcpcb` and `pcbway` skills handle the ordering specifics, but the report should flag anything the designer needs to address before ordering.
 
 ## Report Length Guidelines
 

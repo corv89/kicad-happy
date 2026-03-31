@@ -28,6 +28,7 @@ def snap_to_mil_grid(x_mm: float) -> float:
 _REGULATOR_VREF: dict[str, float] = {
     # TI switching regulators — verified against TI datasheets 2026-03-31
     "TPS6100": 0.5,                                               # TPS61000/01 FB = 0.5V (datasheet)
+    "TPS6102": 0.595,  "TPS6103": 0.595,                          # TPS61020/23/30 FB = 0.595V (datasheet SLVS510)
     "TPS5430": 1.221,  "TPS5450": 1.221,  "TPS5410": 1.221,     # TPS5430/50/10 Vref = 1.221V (datasheet)
     "TPS54160": 0.8,   "TPS54260": 0.8,   "TPS54360": 0.8,      # TPS541x0/542x0/543x0 FB = 0.8V (datasheet)
     "TPS54040": 0.8,   "TPS54060": 0.8,                          # TPS54040/60 Vref = 0.8V (datasheet)

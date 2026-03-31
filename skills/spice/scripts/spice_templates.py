@@ -1431,8 +1431,8 @@ def generate_inrush(det, output_file, context=None, parasitics=None):
 * Output: {v_out}V, {total_uf:.1f}µF total capacitance
 * Soft-start: {soft_start_ms}ms ramp
 
-* Voltage source with linear ramp (soft-start)
-Vreg ramp 0 PWL(0 0 {_format_eng(ramp_time)} {v_out})
+* Voltage source with linear ramp (soft-start) — 10us delay before ramp
+Vreg ramp 0 PWL(0 0 10u 0 {_format_eng(ramp_time + 10e-6)} {v_out})
 * Regulator output impedance
 Rout ramp out {_format_eng(r_out)}
 
@@ -1443,8 +1443,8 @@ Rout ramp out {_format_eng(r_out)}
     analyses = [("tran", f"{_format_eng(ramp_time / 500)} {_format_eng(sim_time)}")]
     measurements = [
         ("i_out", "let", "abs(i(Rout))"),
-        ("i_peak", "max", "i_out"),
-        ("t_peak", "when", "i_out", "i_peak"),
+        ("i_peak", "let", "vecmax(i_out)", True),
+        ("t_peak", "let", "i_out[vecmin(abs(i_out - i_peak))]", True),
         ("v_settled", "find", "v(out)", f"at={_format_eng(sim_time * 0.9)}"),
     ]
     extra = {"v_target": str(v_out), "r_out": str(r_out)}
