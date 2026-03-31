@@ -1525,6 +1525,62 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     reg["output_rail"] = fb_net
                 break
 
+    # Detect output capacitors on each regulator's output rail
+    for reg in power_regulators:
+        output_rail = reg.get("output_rail")
+        reg_ref = reg.get("ref", "")
+        if output_rail and output_rail in ctx.nets:
+            output_caps = []
+            seen_refs = set()
+            for p in ctx.nets[output_rail]["pins"]:
+                cref = p["component"]
+                if cref == reg_ref or cref in seen_refs:
+                    continue
+                comp = ctx.comp_lookup.get(cref)
+                if not comp or comp["type"] != "capacitor":
+                    continue
+                c_val = ctx.parsed_values.get(cref)
+                if not c_val or c_val <= 0:
+                    continue
+                seen_refs.add(cref)
+                output_caps.append({
+                    "ref": cref,
+                    "value": comp["value"],
+                    "farads": c_val,
+                })
+            if output_caps:
+                # Sort by value descending (bulk caps first)
+                output_caps.sort(key=lambda c: -c["farads"])
+                reg["output_capacitors"] = output_caps
+
+        # Detect compensation caps on the FB net
+        fb_net = reg.get("fb_net")
+        if fb_net and fb_net in ctx.nets:
+            comp_caps = []
+            for p in ctx.nets[fb_net]["pins"]:
+                cref = p["component"]
+                if cref == reg_ref:
+                    continue
+                comp = ctx.comp_lookup.get(cref)
+                if not comp or comp["type"] != "capacitor":
+                    continue
+                c_val = ctx.parsed_values.get(cref)
+                if not c_val or c_val <= 0:
+                    continue
+                # Check what else this cap connects to (output rail = feed-forward, GND = compensation)
+                n1, n2 = ctx.get_two_pin_nets(cref)
+                other_net = n2 if n1 == fb_net else n1
+                comp_caps.append({
+                    "ref": cref,
+                    "value": comp["value"],
+                    "farads": c_val,
+                    "other_net": other_net,
+                    "role": "feed_forward" if other_net == output_rail else
+                            "compensation" if ctx.is_ground(other_net) else "unknown",
+                })
+            if comp_caps:
+                reg["compensation_capacitors"] = comp_caps
+
     return power_regulators
 
 
