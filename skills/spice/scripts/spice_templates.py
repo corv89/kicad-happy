@@ -86,14 +86,11 @@ class SpiceTestbench:
 # Parasitic annotation helpers
 # ---------------------------------------------------------------------------
 
-def _get_parasitic_lines(det, net_name, node_before, node_after):
+def _get_parasitic_lines(parasitics_data, net_name, node_before, node_after):
     """Generate SPICE parasitic elements for a net if data is available.
 
-    If the det dict has a _parasitics key (injected by simulate_subcircuits.py),
-    look up the net and return series resistance + via inductance elements.
-
     Args:
-        det: Detection dict (may have _parasitics key)
+        parasitics_data: Parasitics dict from extract_parasitics.py (or None)
         net_name: Original KiCad net name (before sanitization)
         node_before: SPICE node name on one side of the parasitic
         node_after: SPICE node name on the other side
@@ -102,11 +99,10 @@ def _get_parasitic_lines(det, net_name, node_before, node_after):
         (lines_str, parasitic_note) — SPICE element lines and comment,
         or ("", "") if no parasitics available for this net
     """
-    parasitics = det.get("_parasitics")
-    if not parasitics:
+    if not parasitics_data:
         return "", ""
 
-    nets = parasitics.get("nets", {})
+    nets = parasitics_data.get("nets", {})
     net_data = nets.get(net_name)
     if not net_data:
         return "", ""
@@ -147,7 +143,7 @@ def _get_parasitic_lines(det, net_name, node_before, node_after):
     return "\n".join(lines), note
 
 
-def generate_rc_filter(det, output_file):
+def generate_rc_filter(det, output_file, context=None, parasitics=None):
     """Generate testbench for an RC filter detection.
 
     Args:
@@ -185,14 +181,14 @@ def generate_rc_filter(det, output_file):
     # Build the netlist — reconstruct the RC network
     # When parasitics are present, inject trace R between R and C
     parasitic_lines, parasitic_note = "", ""
-    has_parasitics = det.get("_parasitics") is not None
+    has_parasitics = parasitics is not None
 
     if ftype == "low-pass":
         if has_parasitics:
             # R → trace_R → C (parasitic between R output and C input)
             mid = f"{out_net}_trace"
             r_line = spice_element_for_passive(r_ref, r_ohms, in_net, mid)
-            trace_r, trace_note = _get_parasitic_lines(det, det.get("output_net", ""), mid, out_net)
+            trace_r, trace_note = _get_parasitic_lines(parasitics, det.get("output_net", ""), mid, out_net)
             if trace_r:
                 parasitic_lines = trace_r
                 parasitic_note = trace_note
@@ -238,7 +234,7 @@ VAC {in_net} 0 DC 0 AC 1
     return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
-def generate_lc_filter(det, output_file):
+def generate_lc_filter(det, output_file, context=None, parasitics=None):
     """Generate testbench for an LC filter detection.
 
     Args:
@@ -295,7 +291,7 @@ VAC {in_net} 0 DC 0 AC 1
     return SpiceTestbench(circuit, analyses, measurements)
 
 
-def generate_voltage_divider(det, output_file, vin=3.3):
+def generate_voltage_divider(det, output_file, vin=3.3, context=None, parasitics=None):
     """Generate testbench for a voltage divider detection.
 
     Args:
@@ -354,7 +350,7 @@ VIN {top_net} 0 DC {vin}
     return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
-def generate_opamp_circuit(det, output_file):
+def generate_opamp_circuit(det, output_file, context=None, parasitics=None):
     """Generate testbench for an opamp circuit detection.
 
     Args:
@@ -457,8 +453,7 @@ def generate_opamp_circuit(det, output_file):
     vcc_v = 5
     vee_v = -5
 
-    # Try to infer from analyzer context (passed via det or context param)
-    context = det.get("_context")
+    # Try to infer from analyzer context
     if context:
         vcc_v, vee_v = _infer_opamp_rails(det, context)
         if vee_v == 0:
@@ -583,7 +578,7 @@ quit
 """
 
 
-def generate_crystal_circuit(det, output_file):
+def generate_crystal_circuit(det, output_file, context=None, parasitics=None):
     """Generate testbench for a crystal circuit detection.
 
     Tests the oscillation condition: negative resistance seen by the crystal
@@ -773,7 +768,7 @@ def _infer_voltage(net_name, default=3.3):
     return default
 
 
-def generate_feedback_network(det, output_file, vin=3.3):
+def generate_feedback_network(det, output_file, vin=3.3, context=None, parasitics=None):
     """Generate testbench for a feedback network detection.
 
     Feedback networks are voltage dividers connected to a regulator FB pin.
@@ -831,7 +826,7 @@ VIN {top_net} 0 DC {vin}
     return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
-def generate_transistor_circuit(det, output_file):
+def generate_transistor_circuit(det, output_file, context=None, parasitics=None):
     """Generate testbench for a transistor circuit detection.
 
     Simulates the DC bias point of the transistor to verify it's in the
@@ -850,13 +845,13 @@ def generate_transistor_circuit(det, output_file):
     value = det.get("value", "")
 
     if ttype == "mosfet" or ttype == "jfet":
-        return _generate_mosfet_testbench(det, output_file)
+        return _generate_mosfet_testbench(det, output_file, context=context, parasitics=parasitics)
     elif ttype == "bjt":
-        return _generate_bjt_testbench(det, output_file)
+        return _generate_bjt_testbench(det, output_file, context=context, parasitics=parasitics)
     return None
 
 
-def _generate_mosfet_testbench(det, output_file):
+def _generate_mosfet_testbench(det, output_file, context=None, parasitics=None):
     """Generate MOSFET switching testbench."""
     ref = det["reference"]
     value = det.get("value", "MOSFET")
@@ -977,7 +972,7 @@ quit
 """
 
 
-def _generate_bjt_testbench(det, output_file):
+def _generate_bjt_testbench(det, output_file, context=None, parasitics=None):
     """Generate BJT bias point testbench."""
     ref = det["reference"]
     value = det.get("value", "BJT")
@@ -1067,7 +1062,7 @@ quit
 """
 
 
-def generate_current_sense(det, output_file):
+def generate_current_sense(det, output_file, context=None, parasitics=None):
     """Generate testbench for a current sense detection.
 
     Validates the sense resistor value by simulating a DC sweep and
@@ -1133,7 +1128,7 @@ quit
 """
 
 
-def generate_protection_device(det, output_file):
+def generate_protection_device(det, output_file, context=None, parasitics=None):
     """Generate testbench for a protection device detection.
 
     Only TVS/ESD diodes are simulatable — fuses and varistors need
@@ -1188,7 +1183,7 @@ quit
 """
 
 
-def generate_decoupling(det, output_file):
+def generate_decoupling(det, output_file, context=None, parasitics=None):
     """Generate testbench for a decoupling analysis detection.
 
     Measures impedance profile of parallel capacitor bank on a power rail.
@@ -1207,8 +1202,8 @@ def generate_decoupling(det, output_file):
     rail = det.get("rail", "?")
 
     # Prefer pdn_impedance data (has real ESR/ESL from package) over estimates
-    context = det.get("_context", {})
-    pdn_rails = context.get("pdn_impedance", {}).get("rails", {})
+    ctx = context or {}
+    pdn_rails = ctx.get("pdn_impedance", {}).get("rails", {})
     pdn_caps = pdn_rails.get(rail, {}).get("capacitors", []) if pdn_rails else []
     pdn_by_ref = {c["ref"]: c for c in pdn_caps if c.get("ref")}
 
@@ -1281,7 +1276,7 @@ quit
 """
 
 
-def generate_regulator_feedback(det, output_file):
+def generate_regulator_feedback(det, output_file, context=None, parasitics=None):
     """Generate testbench for a power regulator's feedback divider.
 
     Validates that the feedback divider produces the expected Vref at the
@@ -1353,7 +1348,7 @@ quit
 """
 
 
-def generate_rf_matching(det, output_file):
+def generate_rf_matching(det, output_file, context=None, parasitics=None):
     """Generate testbench for an RF matching network.
 
     Sweeps AC impedance of the L/C network to find the self-resonant
@@ -1421,7 +1416,7 @@ quit
 """
 
 
-def generate_inrush(det, output_file):
+def generate_inrush(det, output_file, context=None, parasitics=None):
     """Generate testbench for inrush current analysis.
 
     Simulates startup transient: voltage source ramps up through a
@@ -1490,7 +1485,7 @@ quit
 """
 
 
-def generate_bridge_circuit(det, output_file):
+def generate_bridge_circuit(det, output_file, context=None, parasitics=None):
     """Generate testbench for a half-bridge circuit.
 
     For each half-bridge, verifies that the high-side and low-side FETs
@@ -1523,7 +1518,7 @@ def generate_bridge_circuit(det, output_file):
 
     # Supply voltage — try to infer from power net
     power_net = hb.get("power_net", "")
-    context = det.get("_context", {})
+    ctx = context or {}
     v_supply = 5  # default
     if power_net:
         v = _infer_voltage(power_net, default=None)
@@ -1570,7 +1565,7 @@ Vgate lo_gate 0 DC 0
 # Registry: maps detector key names to generator functions
 # ---------------------------------------------------------------------------
 
-def generate_bms_balance(det, output_file):
+def generate_bms_balance(det, output_file, context=None, parasitics=None):
     """Generate testbench for BMS balance resistor power analysis.
 
     Simulates worst-case cell voltage (4.2V) through the balance resistor
@@ -1627,7 +1622,7 @@ quit
 """
 
 
-def generate_snubber(det, output_file):
+def generate_snubber(det, output_file, context=None, parasitics=None):
     """Generate testbench for an RC snubber circuit.
 
     AC impedance sweep of the snubber R-C network to verify the damping
@@ -1686,7 +1681,7 @@ quit
 """
 
 
-def generate_rf_chain(det, output_file):
+def generate_rf_chain(det, output_file, context=None, parasitics=None):
     """Generate testbench for RF chain link budget analysis.
 
     Hybrid approach: minimal SPICE testbench (50Ω reference check at

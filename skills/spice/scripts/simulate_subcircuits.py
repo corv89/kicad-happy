@@ -118,10 +118,6 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
         """Simulate a batch of detections — shared by signal_analysis and top-level loops."""
         nonlocal total_time
         for i, det in enumerate(detections):
-            det["_context"] = analysis_json
-            if parasitics:
-                det["_parasitics"] = parasitics
-
             label = _make_label(det_type, det, i)
             cir_file = os.path.join(workdir, f"{label}.cir")
             out_file = os.path.join(workdir, f"{label}.out")
@@ -129,7 +125,9 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
             out_file_spice = out_file.replace("\\", "/")
 
             try:
-                cir_content = generator(det, out_file_spice)
+                cir_content = generator(det, out_file_spice,
+                                        context=analysis_json,
+                                        parasitics=parasitics)
             except (KeyError, TypeError, ValueError) as e:
                 results.append({
                     "subcircuit_type": _singular_type(det_type),
@@ -177,7 +175,10 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                 sim_data = parse_output_file(out_file)
 
             if evaluator:
+                # Pass context for evaluators that need it (e.g., feedback_network cross-ref)
+                det["_context"] = analysis_json
                 result = evaluator(det, sim_data)
+                det.pop("_context", None)
             else:
                 result = {
                     "subcircuit_type": _singular_type(det_type),
