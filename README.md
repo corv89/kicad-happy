@@ -11,7 +11,7 @@ These skills turn your AI coding agent into a full-fledged electronics design as
 | Skill         | What it does                                                                                                                                                |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **kicad**     | ⚡ Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DRC/ERC verification. |
-| **spice**     | 🔬 Automatic SPICE simulation — generates ngspice testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios against simulation. |
+| **spice**     | 🔬 Automatic SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. Supports ngspice, LTspice, and Xyce. |
 | **bom**       | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files.                                                    |
 | **digikey**   | 🔎 Search DigiKey for components and download datasheets via API.                                                                                           |
 | **mouser**    | 🔎 Search Mouser for components and download datasheets.                                                                                                    |
@@ -179,13 +179,13 @@ The agent runs the analysis scripts, then autonomously digs deeper — tracing n
 
 ### 🔬 SPICE simulation — verify your circuits actually work
 
-> "Simulate my feedback divider and check if the regulator will actually output the right voltage"
-
 > "Sweep my LC matching network and show me where it actually resonates vs where I designed it"
 
 > "What's the actual phase margin on my opamp filter stage with this TL072?"
 
-The **spice** skill goes beyond static analysis. It automatically generates ngspice testbenches for detected subcircuits — RC/LC filters, voltage dividers, opamp stages, feedback networks, transistor switches, crystal oscillators, and more — runs them, and reports whether the simulated behavior matches the calculated values.
+> "Run SPICE on everything the analyzer detected and tell me what doesn't look right"
+
+The **spice** skill goes beyond static analysis. It automatically generates SPICE testbenches for detected subcircuits — RC/LC filters, voltage dividers, opamp stages, feedback networks, transistor switches, crystal oscillators, and more — runs them with whichever simulator you have installed (ngspice, LTspice, or Xyce — auto-detected), and reports whether the simulated behavior matches the calculated values.
 
 For recognized opamps, it uses **per-part behavioral models** with the real GBW, slew rate, and output swing. It pulls specs from distributor APIs (LCSC, DigiKey, element14, Mouser), downloaded datasheets, or a built-in lookup table of ~100 common parts — in that priority order. An LM358 at gain=-100 correctly shows bandwidth limited to ~10kHz — something the static analysis can't tell you.
 
@@ -193,7 +193,7 @@ When both schematic and PCB exist, it can inject **PCB trace parasitics** into t
 
 ```
 Simulation Verification (14 pass, 1 warn, 0 fail)
-ngspice verified 15 subcircuits in 0.03s.
+Verified 15 subcircuits in 0.03s.
 
   RC filter R5/C3 (fc=15.9kHz): confirmed, <0.3% error
   Feedback divider R10/R11 (Vout=0.596V): confirmed, 0.0% error
@@ -202,7 +202,7 @@ ngspice verified 15 subcircuits in 0.03s.
     Note: signal frequency should stay below 85kHz for <1dB gain error
 ```
 
-Requires `ngspice` installed separately (`apt install ngspice`). Without it, simulation is skipped and the design review still works — you just don't get the dynamic verification layer.
+Requires a SPICE simulator — ngspice (`apt install ngspice`), LTspice, or Xyce. Auto-detected. Without one, simulation is skipped and the design review still works — you just don't get the dynamic verification layer.
 
 For the full methodology — model accuracy, parasitic extraction formulas, supported subcircuit types, and the model resolution cascade — see **[SPICE Integration Guide](spice-integration.md)**.
 
@@ -286,7 +286,7 @@ The agent exports per-supplier upload files — DigiKey bulk-add CSV, Mouser car
 1. **Design** your board in KiCad
 2. **Sync datasheets** for all components — builds a local library the agent uses for validation
 3. **Analyze** the schematic and PCB with the analysis scripts
-4. **Simulate** detected subcircuits with ngspice — verifies filter frequencies, opamp gains, divider ratios
+4. **Simulate** detected subcircuits — verifies filter frequencies, opamp gains, divider ratios (ngspice/LTspice/Xyce)
 5. **Review** the design — the agent cross-references the analysis + simulation with datasheets
 6. **Source components** — search DigiKey/Mouser (prototype) or LCSC (production)
 7. **Export** BOM tracking CSV + per-supplier order files + CPL for your assembler
