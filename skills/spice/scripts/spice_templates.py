@@ -25,6 +25,105 @@ from spice_models import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Parasitic annotation helpers
+# ---------------------------------------------------------------------------
+
+def _get_parasitic_lines(det, net_name, node_before, node_after):
+    """Generate SPICE parasitic elements for a net if data is available.
+
+    If the det dict has a _parasitics key (injected by simulate_subcircuits.py),
+    look up the net and return series resistance + via inductance elements.
+
+    Args:
+        det: Detection dict (may have _parasitics key)
+        net_name: Original KiCad net name (before sanitization)
+        node_before: SPICE node name on one side of the parasitic
+        node_after: SPICE node name on the other side
+
+    Returns:
+        (lines_str, parasitic_note) — SPICE element lines and comment,
+        or ("", "") if no parasitics available for this net
+    """
+    parasitics = det.get("_parasitics")
+    if not parasitics:
+        return "", ""
+
+    nets = parasitics.get("nets", {})
+    net_data = nets.get(net_name)
+    if not net_data:
+        return "", ""
+
+    r_total = net_data.get("total_trace_resistance_ohm", 0)
+    via_l = net_data.get("total_via_inductance_nH", 0)
+    length = net_data.get("total_length_mm", 0)
+    vias = net_data.get("via_count", 0)
+
+    # Only inject if parasitic is significant relative to node_after
+    if r_total < 0.001 and via_l < 0.01:
+        return "", ""
+
+    lines = []
+    safe_net = _sanitize_net(net_name)
+    mid_node = f"{node_before}_p"
+
+    if r_total >= 0.001:
+        lines.append(f"R_trace_{safe_net} {node_before} {mid_node} {_format_eng(r_total)}")
+        current_node = mid_node
+    else:
+        current_node = node_before
+
+    if via_l >= 0.01:
+        via_l_h = via_l * 1e-9  # nH to H
+        via_node = f"{current_node}_v"
+        lines.append(f"L_via_{safe_net} {current_node} {via_node} {_format_eng(via_l_h)}")
+        current_node = via_node
+
+    # Connect the last parasitic node to the target
+    if current_node != node_before:
+        lines.append(f"R_conn_{safe_net} {current_node} {node_after} 0.001")
+
+    note = f"* Parasitic: {length:.1f}mm trace → {r_total*1000:.1f}mΩ"
+    if vias > 0:
+        note += f", {vias} via(s) → {via_l:.2f}nH"
+
+    return "\n".join(lines), note
+
+
+def _build_parasitic_netlist(det, net_names_used):
+    """Build all parasitic elements for the nets used in this subcircuit.
+
+    Args:
+        det: Detection dict with _parasitics
+        net_names_used: List of (original_net_name, spice_node_name) pairs
+
+    Returns:
+        (parasitic_lines_str, parasitic_notes_str) or ("", "") if none
+    """
+    parasitics = det.get("_parasitics")
+    if not parasitics:
+        return "", ""
+
+    all_lines = []
+    all_notes = []
+
+    for orig_net, spice_node in net_names_used:
+        if not orig_net or spice_node == "0":
+            continue
+        # Create intermediate node for the parasitic chain
+        para_node = f"{spice_node}_post"
+        lines, note = _get_parasitic_lines(det, orig_net, spice_node, para_node)
+        if lines:
+            all_lines.append(lines)
+            all_notes.append(note)
+
+    if not all_lines:
+        return "", ""
+
+    header = "* --- PCB parasitics ---"
+    return header + "\n" + "\n".join(all_lines), "\n".join(all_notes)
+
+
 def generate_rc_filter(det, output_file):
     """Generate testbench for an RC filter detection.
 
@@ -61,25 +160,45 @@ def generate_rc_filter(det, output_file):
     f_stop = fc * 100
 
     # Build the netlist — reconstruct the RC network
+    # When parasitics are present, inject trace R between R and C
+    parasitic_lines, parasitic_note = "", ""
+    has_parasitics = det.get("_parasitics") is not None
+
     if ftype == "low-pass":
-        # R in series (input to output), C to ground (output to ground)
-        r_line = spice_element_for_passive(r_ref, r_ohms, in_net, out_net)
-        c_line = spice_element_for_passive(c_ref, c_farads, out_net, "0")
+        if has_parasitics:
+            # R → trace_R → C (parasitic between R output and C input)
+            mid = f"{out_net}_trace"
+            r_line = spice_element_for_passive(r_ref, r_ohms, in_net, mid)
+            trace_r, trace_note = _get_parasitic_lines(det, det.get("output_net", ""), mid, out_net)
+            if trace_r:
+                parasitic_lines = trace_r
+                parasitic_note = trace_note
+            else:
+                # No parasitic for this net — connect directly
+                r_line = spice_element_for_passive(r_ref, r_ohms, in_net, out_net)
+            c_line = spice_element_for_passive(c_ref, c_farads, out_net, "0")
+        else:
+            r_line = spice_element_for_passive(r_ref, r_ohms, in_net, out_net)
+            c_line = spice_element_for_passive(c_ref, c_farads, out_net, "0")
     elif ftype == "high-pass":
-        # C in series (input to output), R to ground (output to ground)
         c_line = spice_element_for_passive(c_ref, c_farads, in_net, out_net)
         r_line = spice_element_for_passive(r_ref, r_ohms, out_net, "0")
     else:
-        # RC-network (ambiguous topology) — default to low-pass
         r_line = spice_element_for_passive(r_ref, r_ohms, in_net, out_net)
         c_line = spice_element_for_passive(c_ref, c_farads, out_net, "0")
+
+    model_note = "* Model: ideal passives (exact for RC)"
+    if parasitic_lines:
+        model_note = "* Model: ideal passives + PCB trace parasitics"
 
     return f"""\
 * Auto-generated testbench for RC filter: {r_ref}/{c_ref}
 * Type: {ftype}, expected fc = {fc:.1f} Hz
-* Model: ideal passives (exact for RC)
+{model_note}
+{parasitic_note}
 
 {r_line}
+{parasitic_lines}
 {c_line}
 
 * AC stimulus
@@ -90,7 +209,7 @@ ac dec 100 {_format_eng(f_start)} {_format_eng(f_stop)}
 * For a simple RC filter, DC gain is ~0dB. Measure -3dB point directly.
 meas ac fc_sim when vdb({out_net})=-3
 meas ac phase_fc find vp({out_net}) at=fc_sim
-echo "fc_sim=$&fc_sim phase_fc=$&phase_fc" > {output_file}
+echo "fc_sim=$&fc_sim phase_fc=$&phase_fc has_parasitics={'1' if parasitic_lines else '0'}" > {output_file}
 quit
 .endc
 
