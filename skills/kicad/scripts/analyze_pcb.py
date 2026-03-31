@@ -1164,9 +1164,87 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     return results
 
 
+def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
+    """Calculate single-ended microstrip characteristic impedance.
+
+    Uses Wheeler's equations (IPC-2141) with effective width correction
+    for finite copper thickness.
+
+    Args:
+        width_mm: Trace width in mm
+        height_mm: Dielectric height to reference plane in mm
+        thickness_mm: Copper thickness in mm
+        epsilon_r: Relative permittivity of dielectric
+
+    Returns:
+        Characteristic impedance in ohms, or None if inputs invalid
+    """
+    if width_mm <= 0 or height_mm <= 0 or thickness_mm <= 0 or epsilon_r <= 0:
+        return None
+    w = width_mm
+    h = height_mm
+    t = thickness_mm
+    er = epsilon_r
+    # Effective width accounting for copper thickness (IPC-2141)
+    if w > 2 * math.pi * t:
+        w_eff = w + (t / math.pi) * (1 + math.log(2 * h / t))
+    else:
+        w_eff = w + (t / math.pi) * (1 + math.log(4 * math.pi * w / t))
+    # Wheeler's equations
+    if w_eff / h < 1:
+        z0 = (60 / math.sqrt(er)) * math.log(8 * h / w_eff + w_eff / (4 * h))
+    else:
+        z0 = (120 * math.pi) / (math.sqrt(er) * (w_eff / h + 1.393 + 0.667 * math.log(w_eff / h + 1.444)))
+    return z0
+
+
+def _build_layer_heights(stackup):
+    """Map copper layer names to their dielectric height above the nearest reference plane.
+
+    Walks the stackup from top to bottom. Each copper layer's height is the
+    thickness of the adjacent dielectric layer below it (for top layers) or
+    above it (for bottom layers).
+
+    Returns:
+        Dict mapping layer name → (dielectric_height_mm, epsilon_r, copper_thickness_mm)
+    """
+    if not stackup:
+        return {}
+
+    heights = {}
+    layers = list(stackup)
+    copper_thickness = 0.035  # default 1oz
+
+    for i, layer in enumerate(layers):
+        if layer.get("type") != "copper":
+            continue
+        name = layer.get("name", "")
+        cu_t = layer.get("thickness", 0.035)
+
+        # Look for the nearest dielectric layer (below for top copper, above for bottom)
+        # Try below first
+        for j in range(i + 1, len(layers)):
+            if layers[j].get("type") in ("core", "prepreg"):
+                h = layers[j].get("thickness", 0.2)
+                er = layers[j].get("epsilon_r", 4.5)
+                heights[name] = (h, er, cu_t)
+                break
+        else:
+            # No dielectric below — try above
+            for j in range(i - 1, -1, -1):
+                if layers[j].get("type") in ("core", "prepreg"):
+                    h = layers[j].get("thickness", 0.2)
+                    er = layers[j].get("epsilon_r", 4.5)
+                    heights[name] = (h, er, cu_t)
+                    break
+
+    return heights
+
+
 def analyze_net_lengths(tracks: dict, vias: dict,
                         net_names: dict[int, str],
-                        include_segments: bool = False) -> list[dict]:
+                        include_segments: bool = False,
+                        stackup: list = None) -> list[dict]:
     """Per-net trace length measurement for matched-length and routing analysis.
 
     Provides total length, per-layer breakdown, segment count, and via count
@@ -1175,7 +1253,13 @@ def analyze_net_lengths(tracks: dict, vias: dict,
 
     When include_segments=True, also emits per-segment width+length detail and
     per-via drill size, for parasitic extraction by the SPICE simulation skill.
+
+    When stackup is provided, each trace segment also gets a characteristic
+    impedance estimate (microstrip formula from IPC-2141).
     """
+    # Pre-compute layer-to-dielectric-height mapping for impedance calculation
+    layer_heights = _build_layer_heights(stackup) if stackup else {}
+
     net_data: dict[int, dict] = {}
 
     for seg in tracks.get("segments", []):
@@ -1196,11 +1280,18 @@ def analyze_net_lengths(tracks: dict, vias: dict,
         ld["segments"] += 1
 
         if include_segments:
-            d.setdefault("trace_segments", []).append({
+            seg_entry = {
                 "layer": layer,
                 "length_mm": round(length, 3),
                 "width_mm": seg.get("width", 0),
-            })
+            }
+            # Add impedance if stackup is available
+            if stackup and layer_heights and layer in layer_heights:
+                h, er, cu_t = layer_heights[layer]
+                z0 = _microstrip_impedance(seg.get("width", 0), h, cu_t, er)
+                if z0:
+                    seg_entry["impedance_ohm"] = round(z0, 1)
+            d.setdefault("trace_segments", []).append(seg_entry)
 
     for arc in tracks.get("arcs", []):
         net = arc["net"]
@@ -1224,11 +1315,17 @@ def analyze_net_lengths(tracks: dict, vias: dict,
         ld["segments"] += 1
 
         if include_segments:
-            d.setdefault("trace_segments", []).append({
+            seg_entry = {
                 "layer": layer,
                 "length_mm": round(length, 3),
                 "width_mm": arc.get("width", 0),
-            })
+            }
+            if stackup and layer_heights and layer in layer_heights:
+                h, er, cu_t = layer_heights[layer]
+                z0 = _microstrip_impedance(arc.get("width", 0), h, cu_t, er)
+                if z0:
+                    seg_entry["impedance_ohm"] = round(z0, 1)
+            d.setdefault("trace_segments", []).append(seg_entry)
 
     for via in vias.get("vias", []):
         net = via["net"]
@@ -3500,8 +3597,19 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     component_groups = group_components(footprints)
 
     # Per-net trace length measurement
+    # Pass stackup for impedance calculation. If no stackup defined, use
+    # a default 2-layer FR4 board (1.6mm total, 1oz copper, εr=4.5).
+    _stackup = setup.get("stackup")
+    if include_trace_segments and not _stackup:
+        _stackup = [
+            {"name": "F.Cu", "type": "copper", "thickness": 0.035},
+            {"name": "dielectric", "type": "core", "thickness": 1.53,
+             "epsilon_r": 4.5, "material": "FR4"},
+            {"name": "B.Cu", "type": "copper", "thickness": 0.035},
+        ]
     net_lengths = analyze_net_lengths(tracks, vias, net_names,
-                                      include_segments=include_trace_segments)
+                                      include_segments=include_trace_segments,
+                                      stackup=_stackup if include_trace_segments else None)
 
     # Power net routing analysis
     power_routing = analyze_power_nets(footprints, tracks, net_names)

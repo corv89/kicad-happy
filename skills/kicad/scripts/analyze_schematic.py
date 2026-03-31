@@ -568,6 +568,36 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
                 and f.get("capacitor", {}).get("reference") not in xtal_refs
             ]
 
+    def _enrich_capacitor_data(results_dict, context):
+        """Add package size and ESR estimates to all capacitor entries in signal_analysis.
+
+        Walks through all detection dicts recursively, finds entries with a 'farads'
+        key and a 'ref' key, and adds 'package' and 'esr_ohm' fields from the
+        component's footprint.
+        """
+        from kicad_utils import extract_cap_package, estimate_cap_esr
+
+        def _enrich(obj):
+            if isinstance(obj, dict):
+                if "farads" in obj and "ref" in obj and "package" not in obj:
+                    ref = obj["ref"]
+                    comp = context.comp_lookup.get(ref)
+                    if comp:
+                        fp = comp.get("footprint", "")
+                        pkg = extract_cap_package(fp)
+                        if pkg:
+                            obj["package"] = pkg
+                            esr = estimate_cap_esr(obj["farads"], pkg)
+                            if esr is not None:
+                                obj["esr_ohm"] = esr
+                for v in obj.values():
+                    _enrich(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _enrich(item)
+
+        _enrich(results_dict)
+
     results = {
         "voltage_dividers": voltage_dividers,
         "rc_filters": rc_filters,
@@ -595,6 +625,9 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     }
 
     results["design_observations"] = detect_design_observations(ctx, results)
+
+    # Post-process: enrich capacitor entries with package size and estimated ESR
+    _enrich_capacitor_data(results, ctx)
 
     return results
 
