@@ -15,6 +15,7 @@ Supported detector types (Phase 1):
 """
 
 import math
+import re
 from spice_models import (
     get_generic_models,
     get_ideal_opamp,
@@ -329,6 +330,29 @@ def generate_opamp_circuit(det, output_file):
         if vee_v == 0:
             vee_net = "GND_VEE"  # Avoid conflict with node 0
 
+    # --- Model resolution (Phase 2) ---
+    # Try to get a per-part behavioral model; fall back to ideal
+    model_str = get_ideal_opamp()
+    model_name = "IDEAL_OPAMP"
+    model_source = "ideal"
+    model_specs = None
+    try:
+        from spice_model_cache import get_model_for_part
+        part_model, source, specs = get_model_for_part(value, "opamp", context)
+        if part_model:
+            model_str = part_model
+            model_name = f"OPAMP_{_sanitize_mpn_for_spice(value)}"
+            model_source = source
+            model_specs = specs
+    except Exception as _e:
+        pass  # Model resolution failed — use ideal
+
+    if model_source == "ideal":
+        model_note = "* Model: IDEAL opamp (Aol=1e6, GBW~10MHz) — real part may have lower GBW"
+    else:
+        gbw = model_specs.get("gbw_hz", 0) if model_specs else 0
+        model_note = f"* Model: {value} behavioral ({model_source}, GBW={gbw/1e6:.1f}MHz)"
+
     gain_comment = ""
     if expected_gain is not None:
         gain_comment = f"* Expected gain: {expected_gain:.3f}"
@@ -336,6 +360,17 @@ def generate_opamp_circuit(det, output_file):
             gain_comment += f" ({expected_gain_db:.1f} dB)"
 
     feedback_components = netlist_lines if netlist_lines else ["* (no external feedback components detected)"]
+
+    # Choose measurement frequency based on model GBW and expected gain.
+    # Measure well below the expected -3dB bandwidth to get accurate DC gain.
+    # f_measure = GBW / (100 * |gain|), clamped to [1, 1000] Hz.
+    abs_gain = abs(expected_gain) if expected_gain and abs(expected_gain) > 1 else 10
+    if model_specs and model_specs.get("gbw_hz"):
+        f_meas = model_specs["gbw_hz"] / (100 * abs_gain)
+    else:
+        f_meas = 10e6 / (100 * abs_gain)  # Ideal model: 10MHz GBW
+    f_meas = max(1, min(f_meas, 1000))  # Clamp to [1, 1000] Hz
+    f_meas_str = _format_eng(f_meas)
 
     # Transimpedance uses current source stimulus
     if use_current_source:
@@ -345,9 +380,9 @@ def generate_opamp_circuit(det, output_file):
 * Auto-generated testbench for opamp: {ref} ({value})
 * Configuration: {config} (transimpedance = Rf = {_format_eng(rf_ohms)} ohm)
 {gain_comment}
-* Model: IDEAL opamp (Aol=1e6, GBW~10MHz) — real part may have lower GBW
+{model_note}
 
-{get_ideal_opamp()}
+{model_str}
 {get_generic_models()}
 
 * Power supplies
@@ -355,7 +390,7 @@ V_VCC {vcc_net} 0 DC {vcc_v}
 V_VEE {vee_net} 0 DC {vee_v}
 
 * Opamp instance
-X{ref} {pos_net or neg_net} {neg_net} {out_net} {vcc_net} {vee_net} IDEAL_OPAMP
+X{ref} {pos_net or neg_net} {neg_net} {out_net} {vcc_net} {vee_net} {model_name}
 
 * Feedback network
 {chr(10).join(feedback_components)}
@@ -365,13 +400,13 @@ IAC 0 {stim_net} DC 0 AC 1u
 
 .control
 ac dec 100 1 100Meg
-* Transimpedance = Vout / Iin; at 1uA stimulus, Vout in uV = TZ in ohms
-meas ac vout_1k find vdb({out_net}) at=1k
-meas ac tz_1k find vm({out_net}) at=1k
-let tz_ohms = tz_1k / 1e-6
-let target = vout_1k - 3
+* Transimpedance = Vout / Iin; measure at {f_meas_str} Hz (in passband)
+meas ac vout_gain find vdb({out_net}) at={f_meas_str}
+meas ac tz_mag find vm({out_net}) at={f_meas_str}
+let tz_ohms = tz_mag / 1e-6
+let target = vout_gain - 3
 meas ac bw_3db when vdb({out_net})=target fall=1
-echo "gain_1k=$&vout_1k bw_3db=$&bw_3db tz_ohms=$&tz_ohms expected_tz={expected_tz}" > {output_file}
+echo "gain_1k=$&vout_gain bw_3db=$&bw_3db tz_ohms=$&tz_ohms expected_tz={expected_tz} model_source={model_source} model_gbw={model_specs.get('gbw_hz', 0) if model_specs else 0}" > {output_file}
 quit
 .endc
 
@@ -382,9 +417,9 @@ quit
 * Auto-generated testbench for opamp: {ref} ({value})
 * Configuration: {config}
 {gain_comment}
-* Model: IDEAL opamp (Aol=1e6, GBW~10MHz) — real part may have lower GBW
+{model_note}
 
-{get_ideal_opamp()}
+{model_str}
 {get_generic_models()}
 
 * Power supplies
@@ -392,7 +427,7 @@ V_VCC {vcc_net} 0 DC {vcc_v}
 V_VEE {vee_net} 0 DC {vee_v}
 
 * Opamp instance
-X{ref} {pos_net or neg_net} {neg_net} {out_net} {vcc_net} {vee_net} IDEAL_OPAMP
+X{ref} {pos_net or neg_net} {neg_net} {out_net} {vcc_net} {vee_net} {model_name}
 
 * Feedback network
 {chr(10).join(feedback_components)}
@@ -402,11 +437,11 @@ VAC {stim_net} 0 DC 0 AC 1
 
 .control
 ac dec 100 1 100Meg
-meas ac gain_1k find vdb({out_net}) at=1k
-* Use let + meas to find -3dB bandwidth (meas can't reference other meas variables)
+* Measure gain at {f_meas_str} Hz (in passband, well below expected BW)
+meas ac gain_1k find vdb({out_net}) at={f_meas_str}
 let target = gain_1k - 3
 meas ac bw_3db when vdb({out_net})=target fall=1
-echo "gain_1k=$&gain_1k bw_3db=$&bw_3db" > {output_file}
+echo "gain_1k=$&gain_1k bw_3db=$&bw_3db model_source={model_source} model_gbw={model_specs.get('gbw_hz', 0) if model_specs else 0}" > {output_file}
 quit
 .endc
 
@@ -510,6 +545,11 @@ quit
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _sanitize_mpn_for_spice(mpn):
+    """Convert an MPN to a valid SPICE subcircuit name component."""
+    return re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip()) if mpn else "UNKNOWN"
+
 
 def _infer_opamp_rails(det, context):
     """Infer opamp VCC/VEE voltages from analyzer context.

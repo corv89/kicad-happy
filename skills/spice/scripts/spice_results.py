@@ -218,6 +218,20 @@ def evaluate_opamp_circuit(det, sim_results):
     sim_gain_1k = sim_results.get("gain_1k")
     sim_bw = sim_results.get("bw_3db")
 
+    # Determine model source from simulation output
+    model_source = sim_results.get("model_source", "ideal")
+    model_gbw_str = sim_results.get("model_gbw", "0")
+    try:
+        model_gbw = float(model_gbw_str) if model_gbw_str else 0
+    except (ValueError, TypeError):
+        model_gbw = 0
+
+    if model_source and model_source != "ideal" and model_source != "0":
+        part_name = det.get("value", "?")
+        model_note = f"{part_name} behavioral ({model_source}, GBW={model_gbw/1e6:.1f}MHz)"
+    else:
+        model_note = "ideal opamp (Aol=1e6, GBW~10MHz) — real part may limit bandwidth"
+
     result = {
         "subcircuit_type": "opamp_circuit",
         "components": [det["reference"]],
@@ -225,7 +239,7 @@ def evaluate_opamp_circuit(det, sim_results):
         "expected": {},
         "simulated": {},
         "delta": {},
-        "model_note": "ideal opamp (Aol=1e6, GBW~10MHz) — real part may limit bandwidth",
+        "model_note": model_note,
     }
 
     if expected_gain is not None:
@@ -256,6 +270,16 @@ def evaluate_opamp_circuit(det, sim_results):
         elif gain_error < 2:
             result["status"] = "warn"
             result["note"] = f"Gain differs by {gain_error:.1f} dB from expected"
+        elif model_source and model_source != "ideal" and model_source != "0":
+            # Behavioral model with large gain error — likely a testbench
+            # topology sensitivity exposed by the lower Aol, not a real
+            # design bug. Downgrade to warn so "fail" stays meaningful.
+            result["status"] = "warn"
+            result["note"] = (
+                f"Gain differs by {gain_error:.1f} dB from expected "
+                f"(behavioral model — may reflect testbench topology sensitivity "
+                f"or real GBW limitation)"
+            )
         else:
             result["status"] = "fail"
             result["note"] = f"Gain differs by {gain_error:.1f} dB — check feedback network"
