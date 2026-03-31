@@ -134,6 +134,11 @@ def evaluate_lc_filter(det, sim_results):
         result["note"] = "ngspice could not find resonance peak"
         return result
 
+    if expected_f == 0:
+        result["status"] = "skip"
+        result["note"] = "expected resonant frequency is 0 Hz — detection may be invalid"
+        return result
+
     result["simulated"]["resonant_hz"] = f_peak
     if gain_peak is not None:
         result["simulated"]["gain_peak_dB"] = gain_peak
