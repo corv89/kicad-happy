@@ -163,7 +163,11 @@ class NgspiceBackend(SimulatorBackend):
             elif func == "let":
                 expression = meas[2]
                 lines.append(f"let {name} = {expression}")
-                echo_vars.append(f"{name}=$&{name}")
+                # Only echo let variables that are explicitly marked as output
+                # (4th element = True). Unmarked lets may be vectors from sweeps
+                # or intermediates for other measurements.
+                if len(meas) > 3 and meas[3]:
+                    echo_vars.append(f"{name}=$&{name}")
 
         # Add extra variables
         if extra_vars:

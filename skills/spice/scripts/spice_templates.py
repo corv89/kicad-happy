@@ -282,7 +282,7 @@ VAC {in_net} 0 DC 0 AC 1
         ("target_lo", "let", "gain_peak - 0.1"),
         ("f_peak_lo", "when", f"vdb({shared})", "target_lo", "rise=1"),
         ("f_peak_hi", "when", f"vdb({shared})", "target_lo", "fall=1"),
-        ("f_peak", "let", "(f_peak_lo + f_peak_hi) / 2"),
+        ("f_peak", "let", "(f_peak_lo + f_peak_hi) / 2", True),
         ("target_3db", "let", "gain_peak - 3"),
         ("bw_3db_lo", "when", f"vdb({shared})", "target_3db", "rise=1"),
         ("bw_3db_hi", "when", f"vdb({shared})", "target_3db", "fall=1"),
@@ -342,8 +342,8 @@ VIN {top_net} 0 DC {vin}
 
     analyses = [("op", "")]
     measurements = [
-        ("vout_sim", "let", f"v({mid_net})"),
-        ("error_pct", "let", f"abs(vout_sim - {expected_vout}) / {expected_vout} * 100"),
+        ("vout_sim", "let", f"v({mid_net})", True),
+        ("error_pct", "let", f"abs(vout_sim - {expected_vout}) / {expected_vout} * 100", True),
     ]
     extra = {"expected": str(expected_vout)}
 
@@ -501,11 +501,16 @@ def generate_opamp_circuit(det, output_file, context=None, parasitics=None):
     f_meas = max(1, min(f_meas, 1000))  # Clamp to [1, 1000] Hz
     f_meas_str = _format_eng(f_meas)
 
+    model_extra = {
+        "model_source": model_source,
+        "model_gbw": str(model_specs.get("gbw_hz", 0) if model_specs else 0),
+    }
+
     # Transimpedance uses current source stimulus
     if use_current_source:
         rf_ohms = rf["ohms"] if rf else 1e6
-        expected_tz = rf_ohms  # Transimpedance = Rf for ideal opamp
-        return f"""\
+        expected_tz = rf_ohms
+        circuit = f"""\
 * Auto-generated testbench for opamp: {ref} ({value})
 * Configuration: {config} (transimpedance = Rf = {_format_eng(rf_ohms)} ohm)
 {gain_comment}
@@ -526,23 +531,19 @@ X{ref} {pos_net or neg_net} {neg_net} {out_net} {vcc_net} {vee_net} {model_name}
 
 * Current source stimulus into summing junction (inverting input)
 IAC 0 {stim_net} DC 0 AC 1u
-
-.control
-ac dec 100 1 100Meg
-* Transimpedance = Vout / Iin; measure at {f_meas_str} Hz (in passband)
-meas ac vout_gain find vdb({out_net}) at={f_meas_str}
-meas ac tz_mag find vm({out_net}) at={f_meas_str}
-let tz_ohms = tz_mag / 1e-6
-let target = vout_gain - 3
-meas ac bw_3db when vdb({out_net})=target fall=1
-echo "gain_1k=$&vout_gain bw_3db=$&bw_3db tz_ohms=$&tz_ohms expected_tz={expected_tz} model_source={model_source} model_gbw={model_specs.get('gbw_hz', 0) if model_specs else 0}" > {output_file}
-quit
-.endc
-
-.end
 """
+        analyses = [("ac", "dec 100 1 100Meg")]
+        measurements = [
+            ("gain_1k", "find", f"vdb({out_net})", f"at={f_meas_str}"),
+            ("tz_mag", "find", f"vm({out_net})", f"at={f_meas_str}"),
+            ("tz_ohms", "let", "tz_mag / 1e-6", True),
+            ("target", "let", "gain_1k - 3"),
+            ("bw_3db", "when", f"vdb({out_net})", "target", "fall=1"),
+        ]
+        model_extra["expected_tz"] = str(expected_tz)
+        return SpiceTestbench(circuit, analyses, measurements, model_extra)
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for opamp: {ref} ({value})
 * Configuration: {config}
 {gain_comment}
@@ -563,19 +564,14 @@ X{ref} {pos_net or neg_net} {neg_net} {out_net} {vcc_net} {vee_net} {model_name}
 
 * AC stimulus
 VAC {stim_net} 0 DC 0 AC 1
-
-.control
-ac dec 100 1 100Meg
-* Measure gain at {f_meas_str} Hz (in passband, well below expected BW)
-meas ac gain_1k find vdb({out_net}) at={f_meas_str}
-let target = gain_1k - 3
-meas ac bw_3db when vdb({out_net})=target fall=1
-echo "gain_1k=$&gain_1k bw_3db=$&bw_3db model_source={model_source} model_gbw={model_specs.get('gbw_hz', 0) if model_specs else 0}" > {output_file}
-quit
-.endc
-
-.end
 """
+    analyses = [("ac", "dec 100 1 100Meg")]
+    measurements = [
+        ("gain_1k", "find", f"vdb({out_net})", f"at={f_meas_str}"),
+        ("target", "let", "gain_1k - 3"),
+        ("bw_3db", "when", f"vdb({out_net})", "target", "fall=1"),
+    ]
+    return SpiceTestbench(circuit, analyses, measurements, model_extra)
 
 
 def generate_crystal_circuit(det, output_file, context=None, parasitics=None):
@@ -628,7 +624,7 @@ def generate_crystal_circuit(det, output_file, context=None, parasitics=None):
         lm = 1 / ((2 * math.pi * freq) ** 2 * cm)
         c0 = 5e-12
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for crystal circuit: {ref} ({value})
 * Frequency: {freq:.0f} Hz
 * Load caps: {c1['ref']}={_format_eng(c1['farads'])}F, {c2['ref']}={_format_eng(c2['farads'])}F
@@ -653,22 +649,18 @@ Rxtal xtal1 xtal1_int 0.001
 * AC stimulus across crystal to measure impedance
 VAC xtal1 xtal1_drv DC 0 AC 1
 IAC 0 xtal1_drv DC 0 AC 0
-
-.control
-* Sweep around crystal frequency to find series and parallel resonance
-ac dec 1000 {_format_eng(freq * 0.99)} {_format_eng(freq * 1.01)}
-let z_mag = v(xtal1) / i(VAC)
-let z_real = real(z_mag)
-* Find minimum impedance (series resonance)
-meas ac f_series when abs(z_real)=minimum(abs(z_real))
-* Report effective load capacitance from cap values
-let cl_series = 1/(1/{c1['farads']} + 1/{c2['farads']})
-echo "f_series=$&f_series cl_pF={cl_eff} rm={rm}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", f"dec 1000 {_format_eng(freq * 0.99)} {_format_eng(freq * 1.01)}")]
+    measurements = [
+        ("z_mag", "let", "v(xtal1) / i(VAC)"),
+        ("z_real", "let", "real(z_mag)"),
+        ("f_series", "when", "abs(z_real)", "minimum(abs(z_real))"),
+        ("cl_series", "let", f"1/(1/{c1['farads']} + 1/{c2['farads']})"),
+    ]
+    extra = {"cl_pF": str(cl_eff), "rm": str(rm)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 # ---------------------------------------------------------------------------
@@ -818,8 +810,8 @@ VIN {top_net} 0 DC {vin}
 
     analyses = [("op", "")]
     measurements = [
-        ("vout_sim", "let", f"v({mid_net})"),
-        ("error_pct", "let", f"abs(vout_sim - {expected_vout}) / {expected_vout} * 100"),
+        ("vout_sim", "let", f"v({mid_net})", True),
+        ("error_pct", "let", f"abs(vout_sim - {expected_vout}) / {expected_vout} * 100", True),
     ]
     extra = {"expected": str(expected_vout)}
 
@@ -908,7 +900,7 @@ def _generate_mosfet_testbench(det, output_file, context=None, parasitics=None):
         protection_note += "\n* Drain snubber RC detected"
 
     if is_p:
-        return f"""\
+        circuit = f"""\
 * Auto-generated testbench for {ch_type} MOSFET: {ref} ({value})
 * Load type: {load_type}{protection_note}
 * Model: generic PMOS (Vth=-1.5V) — real threshold depends on part
@@ -923,24 +915,20 @@ RLOAD {drain} 0 1k
 
 * Gate drive: sweep from VDD (off) to 0V (on)
 Vgate {gate} 0 DC {vdd}
-
-.control
-* DC sweep gate voltage to find threshold
-dc Vgate 0 {vdd} {vdd/100}
-let id = i(VDD)
-let vg = v({gate})
-* Find gate voltage where drain current exceeds 1mA (on threshold)
-meas dc vth when abs(id)=1m
-* Measure on-state current (gate = 0V)
-let i_on = abs(vecmax(id))
-echo "vth=$&vth i_on=$&i_on vdd={vdd}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+        analyses = [("dc", f"Vgate 0 {vdd} {vdd/100}")]
+        measurements = [
+            ("id", "let", "i(VDD)"),
+            ("vg", "let", f"v({gate})"),
+            ("vth", "when", "abs(id)", "1m"),
+            ("i_on", "let", "abs(vecmax(id))", True),
+        ]
+        extra = {"vdd": str(vdd)}
+
+        return SpiceTestbench(circuit, analyses, measurements, extra)
     else:
-        return f"""\
+        circuit = f"""\
 * Auto-generated testbench for {ch_type} MOSFET: {ref} ({value})
 * Load type: {load_type}{protection_note}
 * Model: generic NMOS (Vth=1.5V) — real threshold depends on part
@@ -955,21 +943,17 @@ M{ref} {drain} {gate} 0 0 {model} L=1u W=100u
 
 * Gate drive: sweep from 0V (off) to VDD (on)
 Vgate {gate} 0 DC 0
-
-.control
-* DC sweep gate voltage to find threshold
-dc Vgate 0 {vdd} {vdd/100}
-let id = abs(i(VDD))
-* Find gate voltage where drain current exceeds 1mA (on threshold)
-meas dc vth when id=1m
-* Measure on-state current (gate = VDD)
-let i_on = vecmax(id)
-echo "vth=$&vth i_on=$&i_on vdd={vdd}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+        analyses = [("dc", f"Vgate 0 {vdd} {vdd/100}")]
+        measurements = [
+            ("id", "let", "abs(i(VDD))"),
+            ("vth", "when", "id", "1m"),
+            ("i_on", "let", "vecmax(id)", True),
+        ]
+        extra = {"vdd": str(vdd)}
+
+        return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def _generate_bjt_testbench(det, output_file, context=None, parasitics=None):
@@ -1003,7 +987,7 @@ def _generate_bjt_testbench(det, output_file, context=None, parasitics=None):
     base_note = f"{len(base_res)} base resistor(s)" if base_res else "no base resistor"
 
     if is_pnp:
-        return f"""\
+        circuit = f"""\
 * Auto-generated testbench for {polarity} BJT: {ref} ({value})
 * Load type: {load_type}, {base_note}
 * Model: generic PNP (hFE=200)
@@ -1019,20 +1003,19 @@ RLOAD {collector} 0 1k
 
 * Base drive: sweep from VCC (off) to VCC-0.8V (on)
 Vbase {base} 0 DC {vcc}
-
-.control
-dc Vbase {vcc * 0.5} {vcc} {vcc * 0.005}
-let ic = abs(i(VCC))
-meas dc vbe_on when ic=1m
-let ic_on = vecmax(ic)
-echo "vbe_on=$&vbe_on ic_on=$&ic_on vcc={vcc}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+        analyses = [("dc", f"Vbase {vcc * 0.5} {vcc} {vcc * 0.005}")]
+        measurements = [
+            ("ic", "let", "abs(i(VCC))"),
+            ("vbe_on", "when", "ic", "1m"),
+            ("ic_on", "let", "vecmax(ic)", True),
+        ]
+        extra = {"vcc": str(vcc)}
+
+        return SpiceTestbench(circuit, analyses, measurements, extra)
     else:
-        return f"""\
+        circuit = f"""\
 * Auto-generated testbench for {polarity} BJT: {ref} ({value})
 * Load type: {load_type}, {base_note}
 * Model: generic NPN (hFE=200)
@@ -1048,18 +1031,17 @@ Q{ref} {collector} {base} 0 {model}
 
 * Base drive: sweep from 0V (off) to 1V (on)
 Vbase {base} 0 DC 0
-
-.control
-dc Vbase 0 1 0.01
-let ic = abs(i(VCC))
-meas dc vbe_on when ic=1m
-let ic_on = vecmax(ic)
-echo "vbe_on=$&vbe_on ic_on=$&ic_on vcc={vcc}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+        analyses = [("dc", "Vbase 0 1 0.01")]
+        measurements = [
+            ("ic", "let", "abs(i(VCC))"),
+            ("vbe_on", "when", "ic", "1m"),
+            ("ic_on", "let", "vecmax(ic)", True),
+        ]
+        extra = {"vcc": str(vcc)}
+
+        return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_current_sense(det, output_file, context=None, parasitics=None):
@@ -1095,7 +1077,7 @@ def generate_current_sense(det, output_file, context=None, parasitics=None):
     i_at_50mv = 0.05 / r_ohms
     i_at_100mv = 0.1 / r_ohms
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for current sense: {r_ref} ({r_ohms} ohm)
 * Sense IC: {ic_ref} ({ic_value})
 * Expected max current at 50mV: {max_50} A
@@ -1106,26 +1088,19 @@ def generate_current_sense(det, output_file, context=None, parasitics=None):
 
 * Apply known current and measure voltage drop
 I1 sense_hi 0 DC {_format_eng(i_at_50mv)}
-
-.control
-* Test at 50mV operating point
-op
-let vsense_50 = v(sense_hi)
-let i_50 = {i_at_50mv}
-
-* Compute effective resistance from V/I
-let r_eff = vsense_50 / i_50
-
-* Simulated currents at standard voltage thresholds
-let i_at_50mV = abs(0.05 / r_eff)
-let i_at_100mV = abs(0.1 / r_eff)
-
-echo "i_at_50mV=$&i_at_50mV i_at_100mV=$&i_at_100mV r_ohms={r_ohms}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("op", "")]
+    measurements = [
+        ("vsense_50", "let", "v(sense_hi)"),
+        ("i_50", "let", str(i_at_50mv)),
+        ("r_eff", "let", "vsense_50 / i_50"),
+        ("i_at_50mV", "let", "abs(0.05 / r_eff)", True),
+        ("i_at_100mV", "let", "abs(0.1 / r_eff)", True),
+    ]
+    extra = {"r_ohms": str(r_ohms)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_protection_device(det, output_file, context=None, parasitics=None):
@@ -1155,7 +1130,7 @@ def generate_protection_device(det, output_file, context=None, parasitics=None):
     rail_v = _infer_voltage(det.get("protected_net"), default=3.3)
     sweep_max = rail_v * 3  # Sweep to 3x nominal to see clamping
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for protection device: {ref} ({value})
 * Type: {ptype}, protecting {det.get('protected_net', '?')}
 * Model: generic Zener diode — real TVS clamping may differ
@@ -1167,20 +1142,17 @@ D{ref} {clamp_net or '0'} {protected_net} D_GENERIC
 
 * Voltage ramp on protected net to find clamping voltage
 Vramp {protected_net} 0 DC 0
-
-.control
-dc Vramp 0 {_format_eng(sweep_max)} {_format_eng(sweep_max / 200)}
-let idiode = abs(i(Vramp))
-* Find voltage where clamping current exceeds 1mA (onset of clamping)
-meas dc v_clamp_1mA when idiode=1m
-* Find voltage where clamping current exceeds 10mA
-meas dc v_clamp_10mA when idiode=10m
-echo "v_clamp_1mA=$&v_clamp_1mA v_clamp_10mA=$&v_clamp_10mA rail_v={rail_v}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("dc", f"Vramp 0 {_format_eng(sweep_max)} {_format_eng(sweep_max / 200)}")]
+    measurements = [
+        ("idiode", "let", "abs(i(Vramp))"),
+        ("v_clamp_1mA", "when", "idiode", "1m"),
+        ("v_clamp_10mA", "when", "idiode", "10m"),
+    ]
+    extra = {"rail_v": str(rail_v)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_decoupling(det, output_file, context=None, parasitics=None):
@@ -1251,7 +1223,7 @@ def generate_decoupling(det, output_file, context=None, parasitics=None):
     n_caps = len(valid_caps)
     model_note = "ESR/ESL from pdn_impedance (package-based)" if using_pdn else "estimated ESR + parasitic L from SRF"
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for decoupling analysis: {rail} rail
 * {n_caps} capacitor(s) in parallel, series R-L-C model
 * Model: {model_note}
@@ -1260,20 +1232,19 @@ def generate_decoupling(det, output_file, context=None, parasitics=None):
 
 * 1A AC current source into the rail node — V(rail) = Z(f)
 IAC 0 rail DC 0 AC 1
-
-.control
-ac dec 200 100 100Meg
-let z_mag = vm(rail)
-meas ac z_min min z_mag
-meas ac f_at_zmin when z_mag=z_min
-meas ac z_at_1M find vm(rail) at=1Meg
-meas ac z_at_100k find vm(rail) at=100k
-echo "z_min=$&z_min f_at_zmin=$&f_at_zmin z_at_1M=$&z_at_1M z_at_100k=$&z_at_100k n_caps={n_caps}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", "dec 200 100 100Meg")]
+    measurements = [
+        ("z_mag", "let", "vm(rail)"),
+        ("z_min", "min", "z_mag"),
+        ("f_at_zmin", "when", "z_mag", "z_min"),
+        ("z_at_1M", "find", "vm(rail)", "at=1Meg"),
+        ("z_at_100k", "find", "vm(rail)", "at=100k"),
+    ]
+    extra = {"n_caps": str(n_caps)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_regulator_feedback(det, output_file, context=None, parasitics=None):
@@ -1324,7 +1295,7 @@ def generate_regulator_feedback(det, output_file, context=None, parasitics=None)
     expected_vfb = vin * ratio
     mid_net = "fb_net"
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for regulator feedback: {reg_ref}
 * Divider: {rt_ref}/{rb_ref}, ratio={ratio:.4f}
 * Expected Vout={vin}V, Vfb={expected_vfb:.4f}V (Vref={vref or '?'}V)
@@ -1334,18 +1305,17 @@ def generate_regulator_feedback(det, output_file, context=None, parasitics=None)
 VIN out_rail 0 DC {vin}
 {spice_element_for_passive(rt_ref, rt_ohms, "out_rail", mid_net)}
 {spice_element_for_passive(rb_ref, rb_ohms, mid_net, "0")}
-
-.control
-op
-let vfb_sim = v({mid_net})
-let expected = {expected_vfb}
-let error_pct = abs(vfb_sim - expected) / expected * 100
-echo "vfb_sim=$&vfb_sim error_pct=$&error_pct expected={expected_vfb} vin={vin} vref={vref or 0}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("op", "")]
+    measurements = [
+        ("vfb_sim", "let", f"v({mid_net})", True),
+        ("expected", "let", str(expected_vfb)),
+        ("error_pct", "let", "abs(vfb_sim - expected) / expected * 100", True),
+    ]
+    extra = {"expected": str(expected_vfb), "vin": str(vin), "vref": str(vref or 0)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_rf_matching(det, output_file, context=None, parasitics=None):
@@ -1390,7 +1360,7 @@ def generate_rf_matching(det, output_file, context=None, parasitics=None):
     comp_netlist = "\n".join(netlist_lines)
     comp_refs = [c["ref"] for c in valid]
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for RF matching network
 * Topology: {topology}, {len(valid)} components: {', '.join(comp_refs)}
 * Model: ideal passives — no parasitic ESR/ESL
@@ -1399,21 +1369,19 @@ def generate_rf_matching(det, output_file, context=None, parasitics=None):
 
 * 1A AC current source — V(port) = Z(f)
 IAC 0 port DC 0 AC 1
-
-.control
-ac dec 200 1k 10G
-let z_mag = vm(port)
-meas ac z_min min z_mag
-meas ac f_at_zmin when z_mag=z_min
-meas ac z_at_100M find vm(port) at=100Meg
-meas ac z_at_1G find vm(port) at=1G
-meas ac z_at_2G4 find vm(port) at=2.4G
-echo "z_min=$&z_min f_at_zmin=$&f_at_zmin z_at_100M=$&z_at_100M z_at_1G=$&z_at_1G z_at_2G4=$&z_at_2G4" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", "dec 200 1k 10G")]
+    measurements = [
+        ("z_mag", "let", "vm(port)"),
+        ("z_min", "min", "z_mag"),
+        ("f_at_zmin", "when", "z_mag", "z_min"),
+        ("z_at_100M", "find", "vm(port)", "at=100Meg"),
+        ("z_at_1G", "find", "vm(port)", "at=1G"),
+        ("z_at_2G4", "find", "vm(port)", "at=2.4G"),
+    ]
+
+    return SpiceTestbench(circuit, analyses, measurements)
 
 
 def generate_inrush(det, output_file, context=None, parasitics=None):
@@ -1458,7 +1426,7 @@ def generate_inrush(det, output_file, context=None, parasitics=None):
     cap_refs = [c["ref"] for c in valid_caps[:5]]
     total_uf = sum(c["farads"] for c in valid_caps) * 1e6
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for inrush analysis: {reg_ref} ({topology})
 * Output: {v_out}V, {total_uf:.1f}µF total capacitance
 * Soft-start: {soft_start_ms}ms ramp
@@ -1470,19 +1438,18 @@ Rout ramp out {_format_eng(r_out)}
 
 * Output capacitors
 {cap_netlist}
-
-.control
-tran {_format_eng(ramp_time / 500)} {_format_eng(sim_time)}
-let i_out = abs(i(Rout))
-meas tran i_peak max i_out
-meas tran t_peak when i_out=i_peak
-meas tran v_settled find v(out) at={_format_eng(sim_time * 0.9)}
-echo "i_peak=$&i_peak t_peak=$&t_peak v_settled=$&v_settled v_target={v_out} r_out={r_out}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("tran", f"{_format_eng(ramp_time / 500)} {_format_eng(sim_time)}")]
+    measurements = [
+        ("i_out", "let", "abs(i(Rout))"),
+        ("i_peak", "max", "i_out"),
+        ("t_peak", "when", "i_out", "i_peak"),
+        ("v_settled", "find", "v(out)", f"at={_format_eng(sim_time * 0.9)}"),
+    ]
+    extra = {"v_target": str(v_out), "r_out": str(r_out)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_bridge_circuit(det, output_file, context=None, parasitics=None):
@@ -1525,7 +1492,7 @@ def generate_bridge_circuit(det, output_file, context=None, parasitics=None):
         if v and v > 0:
             v_supply = v
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for bridge circuit: {topology}
 * Half-bridge: {hi_ref} (high, {hi_type}) / {lo_ref} (low, {lo_type})
 * Model: generic FET models — real Vth/Rds depends on specific part
@@ -1544,21 +1511,19 @@ Rhi_gnd hi_gate {"mid" if hi_type == "PMOS" else "0"} 100k
 * Load resistor at output
 Rload mid 0 100
 
-.control
-* Sweep low-side gate to verify turn-on
-dc Vgate 0 {v_supply} {v_supply/100}
-let id_lo = abs(i(VDD))
-meas dc vth_lo when id_lo=100u
-meas dc id_on find id_lo at={v_supply}
-echo "vth_lo=$&vth_lo id_on=$&id_on v_supply={v_supply} topology={topology}" > {output_file}
-quit
-.endc
-
 * Gate sweep source
 Vgate lo_gate 0 DC 0
-
-.end
 """
+
+    analyses = [("dc", f"Vgate 0 {v_supply} {v_supply/100}")]
+    measurements = [
+        ("id_lo", "let", "abs(i(VDD))"),
+        ("vth_lo", "when", "id_lo", "100u"),
+        ("id_on", "find", "id_lo", f"at={v_supply}"),
+    ]
+    extra = {"v_supply": str(v_supply), "topology": topology}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 # ---------------------------------------------------------------------------
@@ -1602,24 +1567,23 @@ def generate_bms_balance(det, output_file, context=None, parasitics=None):
     bms_ref = det.get("bms_reference", "?")
     bms_val = det.get("bms_value", "?")
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for BMS balance resistor: {bms_ref} ({bms_val})
 * {cell_count} cells, balance R = {r_ref} ({_format_eng(r_ohms)} ohm)
 * Worst-case: 4.2V fully-charged Li-ion cell
 
 Vcell cell 0 DC 4.2
 {r_ref} cell 0 {_format_eng(r_ohms)}
-
-.control
-op
-let i_bal = abs(i(Vcell))
-let p_bal = 4.2 * i_bal
-echo "i_bal=$&i_bal p_bal=$&p_bal r_ohms={r_ohms} n_cells={cell_count}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("op", "")]
+    measurements = [
+        ("i_bal", "let", "abs(i(Vcell))", True),
+        ("p_bal", "let", "4.2 * i_bal", True),
+    ]
+    extra = {"r_ohms": str(r_ohms), "n_cells": str(cell_count)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_snubber(det, output_file, context=None, parasitics=None):
@@ -1657,7 +1621,7 @@ def generate_snubber(det, output_file, context=None, parasitics=None):
     f_start = max(f_analytical / 100, 1)
     f_stop = f_analytical * 100
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for snubber on {fet_ref}: {r_ref}/{c_ref}
 * R={_format_eng(r_ohms)} ohm, C={_format_eng(c_farads)} F
 * Analytical: tau={_format_eng(tau)}s, f_snub={f_analytical:.1f} Hz
@@ -1667,18 +1631,17 @@ def generate_snubber(det, output_file, context=None, parasitics=None):
 
 * AC current source — V(drain) = Z(f)
 IAC 0 drain DC 0 AC 1
-
-.control
-ac dec 200 {_format_eng(f_start)} {_format_eng(f_stop)}
-let z_mag = vm(drain)
-meas ac z_min min z_mag
-meas ac f_at_zmin when z_mag=z_min
-echo "z_min=$&z_min f_at_zmin=$&f_at_zmin tau={tau} f_analytical={f_analytical}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", f"dec 200 {_format_eng(f_start)} {_format_eng(f_stop)}")]
+    measurements = [
+        ("z_mag", "let", "vm(drain)"),
+        ("z_min", "min", "z_mag"),
+        ("f_at_zmin", "when", "z_mag", "z_min"),
+    ]
+    extra = {"tau": str(tau), "f_analytical": str(f_analytical)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_rf_chain(det, output_file, context=None, parasitics=None):
@@ -1705,7 +1668,7 @@ def generate_rf_chain(det, output_file, context=None, parasitics=None):
     n_stages = det.get("total_rf_components", 0)
     band = det.get("frequency_band", "?")
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for RF chain link budget
 * Operating frequency: {freq/1e6:.0f} MHz ({band})
 * Analytical gain budget: {gain_budget:.1f} dB ({n_stages} stages)
@@ -1716,16 +1679,15 @@ R_load port 0 50
 
 * AC stimulus at operating frequency
 IAC 0 port DC 0 AC 1
-
-.control
-ac dec 10 {_format_eng(freq / 2)} {_format_eng(freq * 2)}
-meas ac z_at_fc find vm(port) at={_format_eng(freq)}
-echo "z_at_fc=$&z_at_fc gain_budget={gain_budget} freq_hz={freq} n_stages={n_stages}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", f"dec 10 {_format_eng(freq / 2)} {_format_eng(freq * 2)}")]
+    measurements = [
+        ("z_at_fc", "find", "vm(port)", f"at={_format_eng(freq)}"),
+    ]
+    extra = {"gain_budget": str(gain_budget), "freq_hz": str(freq), "n_stages": str(n_stages)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 TEMPLATE_REGISTRY = {
