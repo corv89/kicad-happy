@@ -72,7 +72,38 @@ OPAMP_SPECS = {
     "LM833":    {"gbw_hz": 15e6,  "slew_vus": 7,    "vos_mv": 0.3,  "aol_db": 110, "rin_ohms": 300e3, "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "MC4558":   {"gbw_hz": 5.5e6, "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "RC4558":   {"gbw_hz": 3e6,   "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "NJM4558":  {"gbw_hz": 3e6,   "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "OPA1678":  {"gbw_hz": 24e6,  "slew_vus": 13,   "vos_mv": 0.2,  "aol_db": 135, "rin_ohms": 1e13,  "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.0},
+
+    # Top coverage-gap parts from corpus analysis (2026-03-30)
+    # TI — high-speed / wideband
+    "OPA695":   {"gbw_hz": 1700e6,"slew_vus": 4300, "vos_mv": 1.5,  "aol_db": 70,  "rin_ohms": 160e3, "supply_min": 10,  "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.5},
+    "OPA4991":  {"gbw_hz": 4.5e6, "slew_vus": 1.3,  "vos_mv": 0.025,"aol_db": 140, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 40,  "rro": False, "rri": False, "swing_v": 1.5},
+    "OPA1602":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OPA1604":  {"gbw_hz": 20e6,  "slew_vus": 12,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OPA4202":  {"gbw_hz": 20e6,  "slew_vus": 10,   "vos_mv": 0.025,"aol_db": 142, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.5},
+
+    # TI — low-power / precision
+    "TLV9151":  {"gbw_hz": 3e6,   "slew_vus": 1.5,  "vos_mv": 0.7,  "aol_db": 114, "rin_ohms": 1e12,  "supply_min": 1.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
+    "LM6361":   {"gbw_hz": 50e6,  "slew_vus": 300,  "vos_mv": 2.0,  "aol_db": 80,  "rin_ohms": 1e12,  "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+
+    # Analog Devices — precision / low-noise
+    "ADA4528":  {"gbw_hz": 3.5e6, "slew_vus": 0.4,  "vos_mv": 0.003,"aol_db": 145, "rin_ohms": 200e6, "supply_min": 2.2, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.01},
+    "ADA4898":  {"gbw_hz": 65e6,  "slew_vus": 55,   "vos_mv": 0.03, "aol_db": 120, "rin_ohms": 8e6,   "supply_min": 9,   "supply_max": 33,  "rro": False, "rri": False, "swing_v": 2.0},
+    "ADA4610":  {"gbw_hz": 16e6,  "slew_vus": 25,   "vos_mv": 0.5,  "aol_db": 120, "rin_ohms": 1e13,  "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "AD8512":   {"gbw_hz": 8e6,   "slew_vus": 20,   "vos_mv": 0.4,  "aol_db": 106, "rin_ohms": 1e13,  "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "AD8676":   {"gbw_hz": 10e6,  "slew_vus": 2.5,  "vos_mv": 0.012,"aol_db": 130, "rin_ohms": 10e6,  "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "AD817":    {"gbw_hz": 50e6,  "slew_vus": 350,  "vos_mv": 0.5,  "aol_db": 90,  "rin_ohms": 10e6,  "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+
+    # Microchip — single-channel variants
+    "MCP6001":  {"gbw_hz": 1e6,   "slew_vus": 0.6,  "vos_mv": 4.5,  "aol_db": 112, "rin_ohms": 1e13,  "supply_min": 1.8, "supply_max": 6,   "rro": True,  "rri": True,  "swing_v": 0.025},
+
+    # JRC / NJR — common in audio
+    "uPC324":   {"gbw_hz": 1e6,   "slew_vus": 0.4,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 2e6,   "supply_min": 3,   "supply_max": 32,  "rro": False, "rri": False, "swing_v": 1.5},
+    "HA17558":  {"gbw_hz": 5.5e6, "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+
+    # Elantec / Intersil — high-speed
+    "EL2018":   {"gbw_hz": 160e6, "slew_vus": 1500, "vos_mv": 2.0,  "aol_db": 80,  "rin_ohms": 1e6,   "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
 }
 
 # ---------------------------------------------------------------------------
@@ -86,14 +117,30 @@ OPAMP_SPECS = {
 #   vout_fixed: Dict mapping suffix → fixed Vout, if applicable
 # ---------------------------------------------------------------------------
 LDO_SPECS = {
-    # TI
+    # 78xx family — all manufacturers (LM78xx, L78xx, MC78xx, uA78xx, KA78xx)
+    # Same electrical specs regardless of manufacturer prefix
     "LM7805":   {"vref": 5.0,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "L7805":    {"vref": 5.0,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "MC7805":   {"vref": 5.0,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "KA7805":   {"vref": 5.0,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
     "LM7812":   {"vref": 12.0, "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "L7812":    {"vref": 12.0, "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
     "LM7833":   {"vref": 3.3,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "L7833":    {"vref": 3.3,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "LM7809":   {"vref": 9.0,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "L7809":    {"vref": 9.0,  "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "LM7815":   {"vref": 15.0, "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+    "L7815":    {"vref": 15.0, "dropout_mv": 2000, "iq_ua": 5000,  "iout_max_ma": 1500, "fixed": True},
+
+    # 1117 family — multiple manufacturers
     "LM1117":   {"vref": 1.25, "dropout_mv": 1000, "iq_ua": 5000,  "iout_max_ma": 800,  "vout_fixed": {"-3.3": 3.3, "-5.0": 5.0, "-2.5": 2.5, "-1.8": 1.8}},
     "TLV1117":  {"vref": 1.25, "dropout_mv": 1000, "iq_ua": 5000,  "iout_max_ma": 800},
+    "REG1117":  {"vref": 1.25, "dropout_mv": 1000, "iq_ua": 5000,  "iout_max_ma": 800,  "vout_fixed": {"-3.3": 3.3, "-5.0": 5.0, "-2.5": 2.5, "-1.8": 1.8}},
+
+    # TI
     "TPS7A05":  {"vref": 0.5,  "dropout_mv": 110,  "iq_ua": 1,     "iout_max_ma": 100},
     "TPS7A20":  {"vref": 0.5,  "dropout_mv": 300,  "iq_ua": 1,     "iout_max_ma": 200},
+    "TPS7230":  {"vref": 1.21, "dropout_mv": 300,  "iq_ua": 260,   "iout_max_ma": 200},
 
     # AMS
     "AMS1117":  {"vref": 1.25, "dropout_mv": 1000, "iq_ua": 5000,  "iout_max_ma": 1000, "vout_fixed": {"-3.3": 3.3, "-5.0": 5.0, "-2.5": 2.5, "-1.8": 1.8}},
@@ -113,6 +160,9 @@ LDO_SPECS = {
 
     # STMicroelectronics
     "LD1117":   {"vref": 1.25, "dropout_mv": 1100, "iq_ua": 5000,  "iout_max_ma": 800, "vout_fixed": {"-3.3": 3.3, "-5.0": 5.0, "-2.5": 2.5}},
+
+    # Richtek
+    "RT9080":   {"vref": 0.8,  "dropout_mv": 250,  "iq_ua": 2,     "iout_max_ma": 600, "vout_fixed": {"-3.3": 3.3, "-2.5": 2.5, "-1.8": 1.8, "-1.2": 1.2}},
 
     # TI — low-Iq
     "TPS7A02":  {"vref": 0.5,  "dropout_mv": 200,  "iq_ua": 0.025, "iout_max_ma": 50},
