@@ -5,6 +5,14 @@ description: Search DigiKey for electronic components and download datasheets �
 
 # DigiKey Parts Search & Analysis
 
+## Related Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `kicad` | Schematic analysis — extracts MPNs for datasheet sync |
+| `bom` | BOM management — orchestrates sourcing across distributors |
+| `spice` | Uses DigiKey parametric data for behavioral SPICE models |
+
 DigiKey is the **primary source for prototype orders** (Mouser is secondary). Its API returns direct PDF datasheet links, making it the preferred datasheet source. For production orders, see `lcsc`/`jlcpcb`. For BOM management and export workflows, see `bom`.
 
 ## API Credential Setup

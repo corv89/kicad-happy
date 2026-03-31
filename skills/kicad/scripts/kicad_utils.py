@@ -26,83 +26,69 @@ def snap_to_mil_grid(x_mm: float) -> float:
 # guessing from a list.  Entries are checked in order; first prefix match wins.
 # When a part isn't found here the analyzer falls back to the heuristic sweep.
 _REGULATOR_VREF: dict[str, float] = {
-    # TI switching regulators (verified against datasheets)
-    "TPS6100": 0.5,    "TPS6102": 0.595,  "TPS6103": 0.595, # TPS61000/01/02 FB = 0.5V; TPS61020/23/30 FB = 0.595V typ
-    "TPS5430": 1.221,  "TPS5450": 1.221,                     # TPS5430 Vref = 1.221V
-    "TPS54160": 0.8,   "TPS54260": 0.8,   "TPS54360": 0.8,   # TPS5436x FB = 0.8V
-    "TPS542": 0.6,     "TPS543": 0.6,     "TPS544": 0.6,
-    "TPS54040": 0.8,   "TPS54060": 0.8,                       # TPS54040 Vref = 0.8V
-    "TPS5410": 1.221,
-    "TPS56": 0.6,      "TPS55": 0.6,
-    "TPS6208": 0.6,    "TPS6209": 0.6,
-    "TPS6211": 0.6,    "TPS6212": 0.6,
-    "TPS6213": 0.6,    "TPS6215": 0.6,
-    "TPS6300": 0.5,    "TPS6301": 0.5,
-    "TPS40": 0.6,
-    "LMR514": 0.8,     "LMR516": 0.8,                         # LMR51450 Vref = 0.8V
-    "LMR336": 1.0,     "LMR338": 1.0,                         # LMR33630 Vref = 1.0V
-    "LM516": 0.8,      "LM258": 1.285,   "LM259": 1.285,
-    "LM260": 1.21,     "LM261": 1.21,
-    "LM340": 1.25,
-    "LMZ3": 0.8,       "LMZ2": 0.795,
-    "TLV620": 0.5,     "TLV621": 0.5,
+    # TI switching regulators — verified against TI datasheets 2026-03-31
+    "TPS6100": 0.5,                                               # TPS61000/01 FB = 0.5V (datasheet)
+    "TPS5430": 1.221,  "TPS5450": 1.221,  "TPS5410": 1.221,     # TPS5430/50/10 Vref = 1.221V (datasheet)
+    "TPS54160": 0.8,   "TPS54260": 0.8,   "TPS54360": 0.8,      # TPS541x0/542x0/543x0 FB = 0.8V (datasheet)
+    "TPS54040": 0.8,   "TPS54060": 0.8,                          # TPS54040/60 Vref = 0.8V (datasheet)
+    "TPS56": 0.6,                                                 # TPS560200 VSENSE = 0.6V (datasheet)
+    "TPS6300": 0.5,    "TPS6301": 0.5,                           # TPS63000/01 VFB = 0.5V (datasheet)
+    "TPS6310": 0.5,                                               # TPS631000 VFB = 0.5V (datasheet SLVSEK5)
+    "LMR514": 0.8,     "LMR516": 0.8,                            # LMR51440/60 Vref = 0.8V (datasheet)
+    "LMR336": 1.0,     "LMR338": 1.0,                            # LMR33630/60 Vref = 1.0V (datasheet)
+    "LMR380": 1.0,                                                # LMR38010 VFB = 1.0V (datasheet SNVSB89)
+    "LM258": 1.23,     "LM259": 1.23,                            # LM2596/LM2585 VFB = 1.23V (datasheet)
+    "LMZ2": 0.795,                                                # LMZ23610 VFB = 0.795V (datasheet)
+    "LM614": 1.0,      "LM619": 1.0,                             # LM61495 VFB = 1.0V (datasheet, 0.99/1.0/1.01)
     # TI LDOs
-    "TLV759": 0.55,                                            # TLV759P (adjustable) FB = 0.55V
-    "TPS7A": 1.19,     "TPS7B": 1.21,
-    # Analog Devices / Linear Tech (verified against datasheets)
-    "LT361": 0.8,      "LT362": 0.8,
-    "LT364": 1.22,     "LT365": 1.22,
-    "LT801": 0.8,      "LT802": 0.8,
-    "LT810": 0.97,     "LT811": 0.97,                         # LT8610 VFB = 0.970V typ
-    "LT860": 0.97,     "LT862": 0.97,                         # LT8640/LT8620 VFB = 0.970V typ
-    "LT871": 1.0,      "LT872": 1.0,
-    "LTC34": 0.8,
-    "LTM46": 0.6,       "LTM82": 0.6,
+    "TLV759": 0.55,                                               # TLV759P (adjustable) FB = 0.55V (datasheet)
+    "TPS7A": 1.19,                                                # TPS7A49 VFB = 1.185V typ (datasheet, 1.19 is ≈)
+    # Analog Devices / Linear Tech — verified 2026-03-31
+    "LT361": 0.6,      "LT362": 0.6,                             # LTC3610/3620 VFB = 0.6V (datasheet)
+    "LT810": 0.97,     "LT811": 0.97,                            # LT8610/8614 VFB = 0.970V (datasheet)
+    "LT860": 0.97,     "LT862": 0.97,                            # LT8640/8620 VFB = 0.970V (datasheet)
+    "LT871": 1.213,                                               # LT8710 FBX = 1.213V (datasheet)
+    "LTM46": 0.6,                                                 # LTM4600 VFB = 0.6V (datasheet)
     # Richtek
-    "RT5": 0.6,         "RT6": 0.6,
-    "RT2875": 0.8,
+    "RT5": 0.6,         "RT6": 0.6,                              # RT5785/RT6150 VFB = 0.6V (datasheet)
+    "RT2875": 0.6,                                                # RT2875 VFB = 0.6V (datasheet)
     # MPS
-    "MP1": 0.8,         "MP2": 0.8,         "MP8": 0.8,
+    "MP1": 0.8,         "MP2": 0.8,                               # MP1584/MP2315 VFB = 0.8V (datasheet)
     # Microchip
-    "MIC29": 1.24,      "MIC55": 1.24,
-    "MCP170": 1.21,
+    "MIC29": 1.24,                                                # MIC29150/29300 Vref = 1.24V (datasheet)
     # Diodes Inc
     "AP736": 0.8,                                                 # AP7365 adjustable VFB = 0.8V (datasheet)
-    "AP6": 0.6,         "AP73": 0.6,
-    "AP2112": 0.8,                                              # AP2112 adjustable Vref = 0.8V
-    # ST
-    "LD1117": 1.25,                                             # LD1117 Vref = 1.25V
-    "LDL1117": 1.25,
-    "LD33": 1.25,
-    # ON Semi
-    "NCP1": 0.8,        "NCV4": 0.8,
-    # SY
-    "SY8": 0.6,                                                # SY8089 FB = 0.6V typ
-    # Maxim
-    "MAX5035": 1.22,    "MAX5033": 1.22,                         # MAX5035 VFB = 1.221V typ (datasheet)
-    "MAX1771": 1.5,     "MAX1709": 1.24,                         # MAX1771 Vref = 1.5V, MAX1709 VFB = 1.24V (datasheet)
-    "MAX17760": 0.8,                                              # MAX17760 FB = 0.8V (datasheet, min Vout = 0.8V)
-    # ISL (Renesas/Intersil)
-    "ISL854": 0.6,      "ISL850": 0.6,                           # ISL854102 FB = 0.6V (datasheet)
-    # LM6x4xx (TI)
-    "LM614": 1.0,       "LM619": 1.0,                            # LM61495 VFB = 1.0V (datasheet, 0.99/1.0/1.01)
-    # Diodes Inc (BCD Semiconductor)
+    "AP73": 0.6,                                                  # AP7362/63 adjustable VFB = 0.6V (datasheet)
+    "AP2112": 0.8,                                                # AP2112 adjustable Vref = 0.8V (datasheet)
     "AP3015": 1.23,                                               # AP3015A VFB = 1.23V (datasheet, 1.205/1.23/1.255)
+    # ST
+    "LD1117": 1.25,    "LDL1117": 1.25,   "LD33": 1.25,         # LD1117 family Vref = 1.25V (datasheet)
+    # ON Semi
+    "NCP1117": 1.25,                                              # NCP1117 Vref = 1.25V (datasheet)
+    # SY (Silergy)
+    "SY8": 0.6,                                                   # SY8089 FB = 0.6V (datasheet)
+    # Maxim
+    "MAX5035": 1.22,    "MAX5033": 1.22,                          # MAX5035/33 VFB = 1.22V (datasheet)
+    "MAX1771": 1.5,     "MAX1709": 1.25,                          # MAX1771 Vref = 1.5V, MAX1709 VFB = 1.25V (datasheet)
+    "MAX17760": 0.8,                                               # MAX17760 FB = 0.8V (datasheet)
+    # ISL (Renesas/Intersil)
+    "ISL854": 0.6,      "ISL850": 0.8,                            # ISL85410 = 0.6V, ISL85003 = 0.8V (datasheets)
     # XL (XLSEMI)
-    "XL70": 1.25,                                               # XL7015 VFB = 1.25V (datasheet)
-    # TPS631xxx (TI ultra-low-power)
-    "TPS6310": 0.5,                                              # TPS631000 VFB = 0.5V (datasheet SLVSEK5)
-    # LMR38xxx (TI)
-    "LMR380": 1.0,                                               # LMR38010 VFB = 1.0V (datasheet SNVSB89)
+    "XL70": 1.25,                                                  # XL7015 VFB = 1.25V (datasheet)
     # Generic (well-established values)
     "LM317": 1.25,     "LM337": 1.25,
     "AMS1117": 1.25,   "AMS1085": 1.25,
     "LM78": 1.25,      "LM79": 1.25,
     "LM1117": 1.25,
-    # NOTE: Parts without feedback dividers are intentionally excluded:
-    # LT3080 (uses 10uA SET current source), LTC3649 (uses 50uA ISET),
-    # TLV713 (fixed output only), XC6206 (fixed output only, no FB pin),
-    # AP2210 (unverified Vref).
+    # NOTE: Removed entries that couldn't be verified against datasheets:
+    # TPS6102/6103 (0.595V unverified), TPS542/543/544 (mixed family, 0.6-0.8V),
+    # TPS55 (TPS55340=1.229V, not 0.6V), TPS40 (TPS40200=0.7V, not 0.6V),
+    # TPS6208-6215 (mixed, 0.45V-0.8V), TPS7B (fixed output only),
+    # LM516 (LM5160=2.0V), LT364/365 (mixed/battery charger),
+    # LT801/802/872 (no such parts), LTC34 (mixed), LTM82 (mixed),
+    # MP8 (mixed), AP6 (mixed), MIC55/MCP170/NCV4 (fixed output only),
+    # TLV620/621 (unverified), LM340 (fixed, redundant with LM78),
+    # LMZ3 (unclear FB), LM260/261 (LM26001 Vref unclear).
 }
 
 # Keywords for classifying MOSFET/BJT load type from net names.
@@ -658,3 +644,135 @@ def get_two_pin_nets(pin_net: dict, ref: str) -> tuple[str | None, str | None]:
     n1, _ = pin_net.get((ref, "1"), (None, None))
     n2, _ = pin_net.get((ref, "2"), (None, None))
     return n1, n2
+
+
+# ---------------------------------------------------------------------------
+# Capacitor package extraction and ESR/ESL estimation
+# ---------------------------------------------------------------------------
+
+# Regex to extract package size from KiCad footprint strings
+# Matches: C_0402_1005Metric, C_0805_2012Metric, CP_EIA-3216-18_Kemet-A, etc.
+_CAP_PKG_RE = re.compile(r'C[P]?_(\d{4})_')
+_CAP_PKG_EIA_RE = re.compile(r'EIA-(\d{4})')
+
+# Typical MLCC ESR by package and capacitance range (X7R/X5R, 1kHz reference)
+# Source: aggregate datasheet data from Murata, Samsung, TDK
+# Format: (package, max_farads) → esr_ohm
+# Checked in order — first match where farads <= max_farads wins
+_CAP_ESR_TABLE = [
+    # 0402 (1005 metric)
+    ("0402", 1e-8,  5.0),    # ≤10nF
+    ("0402", 1e-7,  1.0),    # ≤100nF
+    ("0402", 1e-5,  0.5),    # ≤10µF
+    # 0603 (1608 metric)
+    ("0603", 1e-8,  2.0),
+    ("0603", 1e-7,  0.5),
+    ("0603", 1e-6,  0.15),
+    ("0603", 1e-4,  0.1),
+    # 0805 (2012 metric)
+    ("0805", 1e-7,  0.3),
+    ("0805", 1e-6,  0.08),
+    ("0805", 1e-4,  0.03),
+    # 1206 (3216 metric)
+    ("1206", 1e-6,  0.1),
+    ("1206", 1e-5,  0.03),
+    ("1206", 1e-3,  0.01),
+    # 1210 (3225 metric)
+    ("1210", 1e-5,  0.02),
+    ("1210", 1e-3,  0.008),
+    # 2220 (5750 metric)
+    ("2220", 1e-3,  0.005),
+]
+
+# Typical ESL by package (nH) — dominated by package geometry, not capacitance
+_CAP_ESL = {
+    "0402": 0.3,
+    "0603": 0.5,
+    "0805": 0.7,
+    "1206": 1.0,
+    "1210": 1.0,
+    "1812": 1.2,
+    "2220": 1.5,
+}
+
+
+def extract_cap_package(footprint):
+    """Extract capacitor package size from KiCad footprint string.
+
+    Examples:
+        'Capacitor_SMD:C_0402_1005Metric' → '0402'
+        'Capacitor_SMD:C_0805_2012Metric' → '0805'
+        'Capacitor_SMD:CP_EIA-3216-18_Kemet-A' → '3216'
+        'Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P2.50mm' → None (THT, no standard package)
+        '' → None
+
+    Returns:
+        Package designator string (e.g., '0402') or None
+    """
+    if not footprint:
+        return None
+    # Try standard "C_0402_..." pattern first
+    m = _CAP_PKG_RE.search(footprint)
+    if m:
+        return m.group(1)
+    # Try EIA pattern
+    m = _CAP_PKG_EIA_RE.search(footprint)
+    if m:
+        # Convert EIA metric to imperial: 3216 → 1206, etc.
+        eia = m.group(1)
+        eia_to_imperial = {
+            "1005": "0402", "1608": "0603", "2012": "0805",
+            "3216": "1206", "3225": "1210", "4532": "1812",
+            "5750": "2220",
+        }
+        return eia_to_imperial.get(eia, eia)
+    return None
+
+
+def estimate_cap_esr(farads, package):
+    """Estimate ESR for an MLCC capacitor based on package and value.
+
+    Very approximate — real ESR depends on manufacturer, voltage rating,
+    dielectric type (X7R vs C0G), and measurement frequency. These are
+    typical values at ~1kHz for X7R/X5R MLCCs.
+
+    Args:
+        farads: Capacitance in farads
+        package: Package designator (e.g., '0402', '0805')
+
+    Returns:
+        Estimated ESR in ohms, or None if package not recognized
+    """
+    if not package or not farads or farads <= 0:
+        return None
+    pkg = package.upper()
+    for tbl_pkg, max_f, esr in _CAP_ESR_TABLE:
+        if pkg == tbl_pkg and farads <= max_f:
+            return esr
+    # No match — return a conservative default
+    if farads < 1e-6:
+        return 0.5
+    elif farads < 1e-4:
+        return 0.1
+    else:
+        return 0.05
+
+
+def estimate_cap_esl(package):
+    """Estimate parasitic inductance (ESL) for an MLCC.
+
+    ESL is primarily driven by package geometry (current path length
+    through the component), not by capacitance value.
+
+    Args:
+        package: Package designator (e.g., '0402', '0805')
+
+    Returns:
+        Estimated ESL in henries, or None if package not recognized
+    """
+    if not package:
+        return None
+    esl_nh = _CAP_ESL.get(package.upper())
+    if esl_nh is None:
+        return None
+    return esl_nh * 1e-9  # Convert nH to H
