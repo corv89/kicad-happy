@@ -5,6 +5,15 @@ description: Search LCSC Electronics for electronic components — find parts by
 
 # LCSC Electronics — Component Search, Datasheets & Ordering
 
+## Related Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `kicad` | Schematic analysis — extracts MPNs for part lookup |
+| `bom` | BOM management — orchestrates sourcing across distributors |
+| `jlcpcb` | PCB assembly — shares the same parts library |
+| `spice` | Uses LCSC parametric data for behavioral SPICE models (no auth needed) |
+
 LCSC is JLCPCB's sister company — they share the same parts library and `Cxxxxx` part numbers. Use LCSC for **production sourcing** (assembled boards from JLCPCB/PCBWay). DigiKey/Mouser are for prototyping. For BOM management and export workflows, see `bom`.
 
 ## Key Differences from DigiKey/Mouser

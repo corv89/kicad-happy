@@ -14,6 +14,10 @@ This skill inverts the typical simulation workflow: instead of requiring users t
 | Skill | Purpose |
 |-------|---------|
 | `kicad` | Schematic/PCB analysis — produces the analyzer JSON this skill consumes |
+| `digikey` | Parametric specs for behavioral models, datasheet downloads |
+| `mouser` | Parametric specs (secondary source), datasheet downloads |
+| `lcsc` | Parametric specs (no auth needed), datasheet downloads |
+| `element14` | Parametric specs (international), datasheet downloads |
 
 **Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report.
 
@@ -253,6 +257,7 @@ For detailed information about the behavioral models used, their accuracy envelo
 | `scripts/spice_part_library.py` | Lookup table of electrical specs for ~100 common opamps, LDOs, comparators, voltage references, crystal drivers |
 | `scripts/spice_model_generator.py` | Parameterized behavioral .subckt generation from specs dicts |
 | `scripts/spice_model_cache.py` | Project-local model cache in `spice/models/` next to the schematic |
+| `scripts/spice_spec_fetcher.py` | Queries distributor APIs (LCSC, DigiKey, element14, Mouser) and datasheets for parametric specs |
 | `scripts/extract_parasitics.py` | Compute trace R, via L, coupling C from PCB analysis JSON (Phase 3) |
 
 ## Per-Part Behavioral Models (Phase 2)

@@ -5,6 +5,15 @@ description: Search Mouser Electronics for electronic components — secondary s
 
 # Mouser Electronics Parts Search & Analysis
 
+## Related Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `kicad` | Schematic analysis — extracts MPNs for part lookup |
+| `bom` | BOM management — orchestrates sourcing across distributors |
+| `digikey` | Primary prototype source (prefer for datasheets — direct PDF links) |
+| `spice` | Uses Mouser parametric data for behavioral SPICE models |
+
 Mouser is the **secondary source for prototype orders** — use when DigiKey is out of stock or has worse pricing. For production orders, see `lcsc`/`jlcpcb`. For BOM management and export workflows, see `bom`. For datasheets, prefer DigiKey's API (direct PDF links) — Mouser blocks automated PDF downloads.
 
 ## API Credential Setup
