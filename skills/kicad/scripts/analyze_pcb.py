@@ -1336,10 +1336,31 @@ def analyze_net_lengths(tracks: dict, vias: dict,
         d["via_count"] += 1
 
         if include_segments:
-            d.setdefault("via_details", []).append({
+            via_entry = {
                 "drill_mm": via.get("drill", 0),
                 "layers": via.get("layers", []),
-            })
+            }
+            # Compute stub length for through-hole vias on boards with >2 layers
+            if stackup and layer_heights:
+                via_layers = via.get("layers", [])
+                if len(via_layers) >= 2 and len(layer_heights) > 2:
+                    # Via connects between first and last of its layers;
+                    # stub = total board thickness - span between connected layers
+                    all_cu = [l["name"] for l in stackup if l.get("type") == "copper"]
+                    if len(all_cu) > 2:
+                        try:
+                            top_idx = all_cu.index(via_layers[0])
+                            bot_idx = all_cu.index(via_layers[-1])
+                            span_layers = all_cu[top_idx:bot_idx + 1]
+                            # Stub = layers below the bottom connected layer
+                            stub_layers = all_cu[bot_idx + 1:]
+                            if stub_layers:
+                                stub_mm = sum(layer_heights.get(l, (0.2, 4.5, 0.035))[0]
+                                              for l in stub_layers)
+                                via_entry["stub_length_mm"] = round(stub_mm, 3)
+                        except ValueError:
+                            pass
+            d.setdefault("via_details", []).append(via_entry)
 
     result = []
     for net_num, data in sorted(net_data.items(),
