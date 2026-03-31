@@ -1461,8 +1461,8 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                             reg_info["assumed_vref"] = known_vref
                             reg_info["vref_source"] = "lookup"
                             reg_info["feedback_divider"] = {
-                                "r_top": vd["r_top"]["ref"],
-                                "r_bottom": vd["r_bottom"]["ref"],
+                                "r_top": {"ref": vd["r_top"]["ref"], "ohms": vd["r_top"]["ohms"], "value": vd["r_top"]["value"]},
+                                "r_bottom": {"ref": vd["r_bottom"]["ref"], "ohms": vd["r_bottom"]["ohms"], "value": vd["r_bottom"]["value"]},
                                 "ratio": ratio,
                             }
                     else:
@@ -1474,8 +1474,8 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                                 reg_info["assumed_vref"] = vref
                                 reg_info["vref_source"] = "heuristic"
                                 reg_info["feedback_divider"] = {
-                                    "r_top": vd["r_top"]["ref"],
-                                    "r_bottom": vd["r_bottom"]["ref"],
+                                    "r_top": {"ref": vd["r_top"]["ref"], "ohms": vd["r_top"]["ohms"], "value": vd["r_top"]["value"]},
+                                    "r_bottom": {"ref": vd["r_bottom"]["ref"], "ohms": vd["r_bottom"]["ohms"], "value": vd["r_bottom"]["value"]},
                                     "ratio": ratio,
                                 }
                                 break
@@ -1516,8 +1516,8 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 ratio = vd["ratio"]
                 # In FB-at-top, Vout = Vfb (the top of the divider IS the output)
                 reg["feedback_divider"] = {
-                    "r_top": vd["r_top"]["ref"],
-                    "r_bottom": vd["r_bottom"]["ref"],
+                    "r_top": {"ref": vd["r_top"]["ref"], "ohms": vd["r_top"]["ohms"], "value": vd["r_top"]["value"]},
+                    "r_bottom": {"ref": vd["r_bottom"]["ref"], "ohms": vd["r_bottom"]["ohms"], "value": vd["r_bottom"]["value"]},
                     "ratio": ratio,
                     "topology": "fb_at_top",
                 }
@@ -2065,6 +2065,25 @@ def detect_bridge_circuits(ctx: AnalysisContext) -> tuple[list[dict], set, dict]
                     if comp and comp["type"] == "ic":
                         driver_ics.add(p["component"])
 
+        # Enrich half-bridge dicts with FET type info
+        for hb in half_bridges:
+            hi_info = fet_pins.get(hb["high_side"], {})
+            lo_info = fet_pins.get(hb["low_side"], {})
+            hi_lib = hi_info.get("lib_id", "").lower()
+            lo_lib = lo_info.get("lib_id", "").lower()
+            hb["high_side_type"] = "PMOS" if ("pmos" in hi_lib or "pch" in hi_lib) else "NMOS"
+            hb["low_side_type"] = "PMOS" if ("pmos" in lo_lib or "pch" in lo_lib) else "NMOS"
+            # Add gate resistor values if available
+            for gate_key, gate_net in [("high_gate", hb["high_gate"]), ("low_gate", hb["low_gate"])]:
+                if gate_net in ctx.nets:
+                    for p in ctx.nets[gate_net]["pins"]:
+                        comp = ctx.comp_lookup.get(p["component"])
+                        if comp and comp["type"] == "resistor":
+                            r_val = ctx.parsed_values.get(p["component"])
+                            if r_val:
+                                hb[gate_key + "_resistor"] = {"ref": p["component"], "ohms": r_val}
+                                break
+
         bridge_circuits.append({
             "topology": topology,
             "half_bridges": half_bridges,
@@ -2191,8 +2210,9 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
                     flyback_ref = dc["reference"]
                     break
 
-        # Snubber check
+        # Snubber check — detect R+C from drain to source via intermediate net
         has_snubber = False
+        snubber_data = None
         for dc in drain_comps:
             if dc["type"] == "resistor":
                 r_n1, r_n2 = ctx.get_two_pin_nets(dc["reference"])
@@ -2204,7 +2224,18 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
                             c_other = c_n2 if c_n1 == other else c_n1
                             if c_other == source_net:
                                 has_snubber = True
+                                r_ohms = ctx.parsed_values.get(dc["reference"])
+                                c_farads = ctx.parsed_values.get(sc["reference"])
+                                if r_ohms and c_farads and r_ohms > 0 and c_farads > 0:
+                                    snubber_data = {
+                                        "resistor_ref": dc["reference"],
+                                        "resistor_ohms": r_ohms,
+                                        "capacitor_ref": sc["reference"],
+                                        "capacitor_farads": c_farads,
+                                    }
                                 break
+            if has_snubber:
+                break
 
         # Source sense resistor
         source_sense = None
@@ -2276,6 +2307,7 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
             "has_flyback_diode": has_flyback,
             "flyback_diode": flyback_ref,
             "has_snubber": has_snubber,
+            "snubber_data": snubber_data,
             "source_sense_resistor": source_sense,
         }
         if topology:
@@ -2982,6 +3014,41 @@ def detect_memory_interfaces(ctx: AnalysisContext) -> list[dict]:
     return memory_interfaces
 
 
+# RF IC frequency bands — maps lowercase keyword prefixes to operating frequency
+RF_IC_BANDS = {
+    "cc2500": {"freq_hz": 2.4e9, "band": "2.4GHz ISM"},
+    "cc1101": {"freq_hz": 868e6, "band": "sub-GHz ISM"},
+    "sx127": {"freq_hz": 868e6, "band": "LoRa sub-GHz"},
+    "sx126": {"freq_hz": 868e6, "band": "LoRa sub-GHz"},
+    "nrf24": {"freq_hz": 2.4e9, "band": "2.4GHz"},
+    "nrf52": {"freq_hz": 2.4e9, "band": "2.4GHz BLE"},
+    "nrf53": {"freq_hz": 2.4e9, "band": "2.4GHz BLE"},
+    "esp32": {"freq_hz": 2.4e9, "band": "2.4GHz WiFi/BLE"},
+    "at86rf": {"freq_hz": 2.4e9, "band": "802.15.4"},
+    "si446": {"freq_hz": 868e6, "band": "sub-GHz"},
+    "si4432": {"freq_hz": 868e6, "band": "sub-GHz"},
+    "si4463": {"freq_hz": 868e6, "band": "sub-GHz"},
+    "a7105": {"freq_hz": 2.4e9, "band": "2.4GHz"},
+    "bk4819": {"freq_hz": 430e6, "band": "UHF"},
+    "rfm9": {"freq_hz": 868e6, "band": "LoRa"},
+    "rfm6": {"freq_hz": 868e6, "band": "FSK"},
+}
+
+# Heuristic gain/loss per RF component role (dB)
+RF_ROLE_GAIN_DB = {
+    "amplifier": 15.0,
+    "switch": -0.5,
+    "filter": -1.5,
+    "balun": -0.5,
+    "mixer": -7.0,
+    "attenuator": -6.0,
+    "coupler": -10.0,
+    "power_detector": -20.0,
+    "freq_multiplier": -10.0,
+    "transceiver": 0.0,
+}
+
+
 def detect_rf_chains(ctx: AnalysisContext) -> list[dict]:
     """Detect RF signal chain components."""
     rf_chains: list[dict] = []
@@ -3196,6 +3263,36 @@ def detect_rf_chains(ctx: AnalysisContext) -> list[dict]:
                 ref: _rf_role(ref) for ref in all_rf_refs
             },
         })
+
+        # Enrich with operating frequency and gain budget
+        chain = rf_chains[-1]
+        comp_roles = chain["component_roles"]
+
+        # Determine operating frequency from transceivers
+        operating_freq = None
+        freq_band = None
+        for xcvr in rf_transceivers:
+            val_lib = (xcvr.get("value", "") + " " + xcvr.get("lib_id", "")).lower()
+            for prefix, band_info in RF_IC_BANDS.items():
+                if prefix in val_lib:
+                    operating_freq = band_info["freq_hz"]
+                    freq_band = band_info["band"]
+                    break
+            if operating_freq:
+                break
+
+        # Compute per-stage gain/loss budget
+        stage_gains = {}
+        total_gain_db = 0.0
+        for ref, role in comp_roles.items():
+            gain = RF_ROLE_GAIN_DB.get(role, 0.0)
+            stage_gains[ref] = {"role": role, "gain_dB": gain}
+            total_gain_db += gain
+
+        chain["operating_frequency_hz"] = operating_freq
+        chain["frequency_band"] = freq_band
+        chain["gain_budget_dB"] = round(total_gain_db, 1)
+        chain["stage_gains"] = stage_gains
     return rf_chains
 
 
@@ -3267,10 +3364,14 @@ def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
                             visited_refs.add(cref)
                             continue
                         visited_refs.add(cref)
+                        mc_parsed = ctx.parsed_values.get(cref)
                         matching_components.append({
                             "ref": cref,
                             "type": comp["type"],
                             "value": comp.get("value", ""),
+                            "farads": mc_parsed if comp["type"] == "capacitor" and mc_parsed else None,
+                            "henries": mc_parsed if comp["type"] == "inductor" and mc_parsed else None,
+                            "ohms": mc_parsed if comp["type"] == "resistor" and mc_parsed else None,
                         })
                         # Follow through to other pin
                         cn1, cn2 = ctx.get_two_pin_nets(cref)
@@ -3379,9 +3480,9 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
     bms_ic_keywords = (
         "bq769", "bq76920", "bq76930", "bq76940", "bq76952", "bq7694",
         "ltc681", "ltc682", "ltc683", "ltc680",
-        "isl9420", "isl9421", "max1726", "max1730",
-        "afe",
+        "isl9420", "isl9421", "isl9424", "max1726", "max1730",
     )
+    # "afe" removed — too many false positives (matches "safety", "cafe", etc.)
 
     bms_ics = []
     seen_bms_refs = set()
@@ -3399,34 +3500,68 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
         cell_pins = []
         bms_nets = set()
         for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref == ref:
-                bms_nets.add(net)
-                if net:
-                    nn = net.upper()
-                    if re.match(r'^VC\d+$', nn) or re.match(r'^CELL\d+', nn):
-                        cell_pins.append({"pin": pnum, "net": net})
+            if pref != ref:
+                continue
+            bms_nets.add(net)
+            if not net:
+                continue
+            # Match on PIN NAME (not net name) — cell voltage pins are
+            # named VC0..VC16, CELL0..CELL16, C0..C16 on BMS ICs
+            pin_name = None
+            if net in ctx.nets:
+                for p in ctx.nets[net]["pins"]:
+                    if p["component"] == ref and p["pin_number"] == pnum:
+                        pin_name = (p.get("pin_name") or "").upper()
+                        break
+            if pin_name:
+                m = re.match(r'^VC(\d+)[A-Z]?$', pin_name)
+                if not m:
+                    m = re.match(r'^CELL(\d+)', pin_name)
+                if not m:
+                    m = re.match(r'^C(\d+)$', pin_name)
+                if m:
+                    cell_pins.append({"pin": pnum, "pin_name": pin_name, "net": net})
 
+        # Determine cell count from pin names, filtering out repurposed pins.
+        # BQ76920 reuses VC3-5 for I2C/enable on 3/4-cell configs — these
+        # connect to GND, SDA, SCL etc. instead of cell voltage nets.
+        # Only count VC pins that connect to non-power, non-I2C nets.
         cell_numbers = set()
+        valid_cell_pins = []
         for cp in cell_pins:
-            m = re.match(r'^VC(\d+)$', cp["net"].upper())
+            net = cp["net"]
+            net_upper = net.upper()
+            # Skip pins connected to well-known non-cell nets
+            if ctx.is_power_net(net) or ctx.is_ground(net):
+                continue
+            if any(k in net_upper for k in ("SDA", "SCL", "I2C", "CHG_EN",
+                                             "DSG_EN", "ALERT", "TS", "REGOUT",
+                                             "REGSRC")):
+                continue
+            valid_cell_pins.append(cp)
+            m = re.match(r'^VC(\d+)', cp["pin_name"])
             if m:
                 cell_numbers.add(int(m.group(1)))
-            m = re.match(r'^CELL(\d+)', cp["net"].upper())
+            m = re.match(r'^CELL(\d+)', cp["pin_name"])
+            if m:
+                cell_numbers.add(int(m.group(1)))
+            m = re.match(r'^C(\d+)$', cp["pin_name"])
             if m:
                 cell_numbers.add(int(m.group(1)))
 
         balance_resistors = []
-        cell_net_names = {cp["net"] for cp in cell_pins}
+        cell_net_names = {cp["net"] for cp in valid_cell_pins}
         for net_name in cell_net_names:
             if net_name not in ctx.nets:
                 continue
             for p in ctx.nets[net_name]["pins"]:
                 comp = ctx.comp_lookup.get(p["component"])
                 if comp and comp["type"] == "resistor" and p["component"] != ref:
-                    val = parse_value(comp.get("value", ""))
+                    r_ohms = ctx.parsed_values.get(p["component"])
                     balance_resistors.append({
                         "reference": p["component"],
                         "value": comp["value"],
+                        "ohms": r_ohms,
                         "cell_net": net_name,
                     })
 
@@ -3474,10 +3609,11 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
             "bms_reference": ref,
             "bms_value": bms_ic["value"],
             "bms_lib_id": bms_ic.get("lib_id", ""),
-            "cell_voltage_pins": len(cell_pins),
+            "cell_voltage_pins": len(valid_cell_pins),
             "cell_count": cell_count,
             "cell_nets": sorted(cell_net_names),
-            "balance_resistors": len(balance_resistors),
+            "balance_resistors": balance_resistors,
+            "balance_resistor_count": len(balance_resistors),
             "charge_discharge_fets": chg_dsg_fets,
             "ntc_sensors": unique_ntcs,
         })
