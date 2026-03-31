@@ -148,9 +148,21 @@ Several schematic and PCB analyzer features were added to feed deeper simulation
 
 ## Environment Variables
 
+### Simulator selection
+
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `NGSPICE_PATH` | No | Explicit path to ngspice binary (overrides PATH lookup) |
+| `SPICE_SIMULATOR` | No | Force a specific simulator: `ngspice`, `ltspice`, or `xyce`. Default: auto-detect (tries ngspice → LTspice → Xyce). Can also be set via `--simulator` CLI flag. |
+| `NGSPICE_PATH` | No | Explicit path to ngspice binary (skips PATH lookup) |
+| `LTSPICE_PATH` | No | Explicit path to LTspice binary |
+| `XYCE_PATH` | No | Explicit path to Xyce binary |
+
+Most users don't need to set any of these — the skill auto-detects whichever simulator is installed. The `*_PATH` variables are for non-standard install locations.
+
+### Behavioral model API credentials
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
 | `DIGIKEY_CLIENT_ID` | No | Enables DigiKey API parametric spec lookup (OAuth 2.0 client credentials) |
 | `DIGIKEY_CLIENT_SECRET` | No | Paired with CLIENT_ID |
 | `ELEMENT14_API_KEY` | No | Enables element14/Newark/Farnell API parametric spec lookup |
@@ -158,9 +170,7 @@ Several schematic and PCB analyzer features were added to feed deeper simulation
 
 **LCSC requires no credentials** — the jlcsearch community API is free and is tried first in the cascade.
 
-ngspice is found automatically via PATH on Linux/macOS. On Windows, the skill checks `C:\Spice64\bin\ngspice.exe` as a fallback.
-
-Without any API credentials, the skill still works — it falls through to the built-in lookup table (100+ parts) and then to ideal models. API credentials expand coverage to any part the distributors carry.
+Without any API credentials, the skill still works — it falls through to the built-in lookup table (100+ parts) and then to ideal models. API credentials expand behavioral model coverage to any part the distributors carry.
 
 ## Testing
 

@@ -59,58 +59,21 @@ def _singular_type(det_type):
 def find_ngspice():
     """Locate the ngspice binary. Returns path or None.
 
-    Checks in order:
-      1. NGSPICE_PATH env var (explicit override)
-      2. PATH via shutil.which (works on Linux, macOS with Homebrew)
-      3. Common Windows install location (C:\\Spice64\\bin\\ngspice.exe)
+    Legacy wrapper — prefer detect_simulator() for multi-simulator support.
     """
-    # Explicit override
-    env_path = os.environ.get("NGSPICE_PATH")
-    if env_path and os.path.isfile(env_path):
-        return env_path
-
-    # Standard PATH lookup (Linux, macOS)
-    found = shutil.which("ngspice")
-    if found:
-        return found
-
-    # Common Windows default install location
-    for candidate in [
-        os.path.join(os.environ.get("PROGRAMFILES", ""), "Spice64", "bin", "ngspice.exe"),
-        r"C:\Spice64\bin\ngspice.exe",
-    ]:
-        if os.path.isfile(candidate):
-            return candidate
-
-    return None
+    from spice_simulator import NgspiceBackend
+    backend = NgspiceBackend()
+    return backend.find()
 
 
 def run_ngspice(cir_file, timeout=5):
     """Run ngspice in batch mode on a .cir file.
 
-    Args:
-        cir_file: Path to the .cir testbench file
-        timeout: Maximum seconds to wait for simulation
-
-    Returns:
-        (success: bool, stdout: str, stderr: str)
+    Legacy wrapper — prefer simulator_backend.run() for multi-simulator.
     """
-    ngspice = find_ngspice()
-    if not ngspice:
-        return False, "", "ngspice not found"
-
-    try:
-        result = subprocess.run(
-            [ngspice, "-b", cir_file],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return result.returncode == 0, result.stdout, result.stderr
-    except subprocess.TimeoutExpired:
-        return False, "", f"Simulation timed out after {timeout}s"
-    except OSError as e:
-        return False, "", str(e)
+    from spice_simulator import NgspiceBackend
+    backend = NgspiceBackend()
+    return backend.run(cir_file, timeout=timeout)
 
 
 def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
@@ -438,15 +401,23 @@ def main():
              "PCB-aware simulation. When provided, testbenches include trace "
              "resistance and via inductance.",
     )
+    parser.add_argument(
+        "--simulator",
+        choices=["auto", "ngspice", "ltspice", "xyce"],
+        default="auto",
+        help="SPICE simulator to use (default: auto-detect)",
+    )
 
     args = parser.parse_args()
 
-    # Check ngspice
-    if not find_ngspice():
-        print("Error: ngspice not found. Install with:", file=sys.stderr)
-        print("  Linux:   apt install ngspice", file=sys.stderr)
-        print("  macOS:   brew install ngspice", file=sys.stderr)
-        print("  Windows: download from ngspice.sourceforge.io", file=sys.stderr)
+    # Detect simulator
+    from spice_simulator import detect_simulator
+    simulator_backend = detect_simulator(args.simulator)
+    if not simulator_backend:
+        print("Error: no SPICE simulator found. Install one of:", file=sys.stderr)
+        print("  ngspice: apt install ngspice / brew install ngspice", file=sys.stderr)
+        print("  LTspice: download from analog.com/ltspice", file=sys.stderr)
+        print("  Xyce:    download from xyce.sandia.gov", file=sys.stderr)
         print("  Or set NGSPICE_PATH env var to the ngspice binary path.", file=sys.stderr)
         sys.exit(1)
 
