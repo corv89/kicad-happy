@@ -220,6 +220,41 @@ VREF_SPECS = {
 }
 
 # ---------------------------------------------------------------------------
+# Discrete MOSFET specs — common SOT-23 FETs for behavioral model generation
+#
+# Keys:
+#   vth_v:      Gate threshold voltage, typical (V)
+#   rdson_ohm:  On-resistance at rated Vgs (ohms)
+#   ciss_pf:    Input capacitance (pF)
+#   vds_max:    Maximum drain-source voltage (V)
+#   id_max_a:   Maximum continuous drain current (A)
+#   type:       "nmos" or "pmos"
+# ---------------------------------------------------------------------------
+MOSFET_SPECS = {
+    # N-channel SOT-23 — verified against downloaded datasheets 2026-03-31
+    "BSS138":    {"vth_v": 1.1,  "rdson_ohm": 2.5,   "ciss_pf": 27,  "vds_max": 50,  "id_max_a": 0.22, "type": "nmos"},  # ON Semi, max Rdson@Vgs=10V
+    "2N7002":    {"vth_v": 1.8,  "rdson_ohm": 5.0,   "ciss_pf": 50,  "vds_max": 60,  "id_max_a": 0.28, "type": "nmos"},  # Nexperia, max Rdson@Vgs=10V
+    "AO3400":    {"vth_v": 1.05, "rdson_ohm": 0.027, "ciss_pf": 630, "vds_max": 30,  "id_max_a": 5.7,  "type": "nmos"},  # AOS AO3400A, max Rdson@Vgs=10V
+    "SI2302":    {"vth_v": 0.63, "rdson_ohm": 0.057, "ciss_pf": 340, "vds_max": 20,  "id_max_a": 2.9,  "type": "nmos"},  # Vishay SI2302CDS, max Rdson@Vgs=4.5V
+    "IRLML2502": {"vth_v": 0.9,  "rdson_ohm": 0.045, "ciss_pf": 740, "vds_max": 20,  "id_max_a": 4.2,  "type": "nmos"},  # Infineon, max Rdson@Vgs=4.5V
+    "IRLML6344": {"vth_v": 0.8,  "rdson_ohm": 0.029, "ciss_pf": 650, "vds_max": 30,  "id_max_a": 5.0,  "type": "nmos"},  # Infineon, max Rdson@Vgs=4.5V
+    "DMN3150":   {"vth_v": 0.92, "rdson_ohm": 0.072, "ciss_pf": 305, "vds_max": 30,  "id_max_a": 3.8,  "type": "nmos"},  # Diodes DMN3150L, max Rdson@Vgs=4.5V
+    # P-channel SOT-23 — verified against downloaded datasheets 2026-03-31
+    "BSS84":     {"vth_v": -1.6, "rdson_ohm": 7.5,   "ciss_pf": 24,  "vds_max": -50, "id_max_a": -0.15,"type": "pmos"},  # Nexperia BSS84AKW, max Rdson@Vgs=-10V
+    "SI2301":    {"vth_v": -0.7, "rdson_ohm": 0.112, "ciss_pf": 405, "vds_max": -20, "id_max_a": -2.3, "type": "pmos"},  # Vishay SI2301CDS, max Rdson@Vgs=-4.5V
+    "AO3401":    {"vth_v": -0.9, "rdson_ohm": 0.06,  "ciss_pf": 645, "vds_max": -30, "id_max_a": -4.0, "type": "pmos"},  # AOS AO3401A, max Rdson@Vgs=-4.5V
+    # NOTE: DMP3150 removed — not a real part number (no Diodes Inc product).
+    # NOTE: NTR4101 removed — datasheet unavailable for verification (ON Semi blocks download).
+}
+
+
+def lookup_mosfet_specs(mpn):
+    """Look up discrete MOSFET specs by MPN prefix."""
+    _, specs = _prefix_match(mpn, MOSFET_SPECS)
+    return specs
+
+
+# ---------------------------------------------------------------------------
 # Crystal oscillator driver specs — MCU/IC transconductance for startup margin
 #
 # Keys:

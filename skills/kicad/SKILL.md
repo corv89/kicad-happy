@@ -193,8 +193,9 @@ board_dimensions, gerbers, drills
 3. **Sync datasheets** (see Datasheet Acquisition below) — this step is a prerequisite for verification, not optional. Without datasheets, all subsequent verification is reduced to internal consistency checks — confirming the design agrees with itself, not that it's correct. Run the sync before reading any analyzer output. If sync fails or no API keys are available, use fallback methods (Datasheet property URLs, individual downloads via `digikey` skill, ask the user). If critical IC datasheets can't be obtained, note this prominently in the report as a verification gap.
 4. **Read the `.kicad_pro`** project file directly (it's JSON) for design rules, net classes, and DRC/ERC settings
 5. **Cross-reference outputs** between schematic and PCB (see section below) — this catches the most dangerous bugs (swapped pins, missing nets, footprint mismatches)
-6. **Verify each output** against the raw files and datasheets before using the data in your report
-7. **Produce a unified report** covering schematic analysis, PCB layout analysis, and cross-reference findings. See `references/report-generation.md` for the report template.
+6. **Run SPICE simulation** (if a simulator is available) — hand off to the `spice` skill with the schematic analysis JSON. This validates filter frequencies, divider ratios, opamp gains, and more against actual simulation results. If both schematic and PCB analysis exist, use `--parasitics` for high-impedance circuits (>100K feedback dividers, LC filters, RF matching networks). Include results in the Simulation Verification section of the report.
+7. **Verify each output** against the raw files and datasheets before using the data in your report
+8. **Produce a unified report** covering schematic analysis, PCB layout analysis, simulation verification, and cross-reference findings. See `references/report-generation.md` for the report template.
 
 The more data sources you combine, the more confident the analysis. A schematic-only review misses layout issues; a PCB-only review misses design intent. Always use everything available.
 
