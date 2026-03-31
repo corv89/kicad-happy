@@ -1119,6 +1119,301 @@ _ESD_TVS_PREFIXES = ("esd", "prtr", "usblc", "tpd", "pesd", "sp05",
                      "rclamp", "nup", "lesd", "ip4", "dt104")
 
 
+def _build_routing_graph(segments, arcs, vias_list):
+    """Build a per-net adjacency graph from trace segments and vias.
+
+    Nodes are coordinate tuples (x, y) rounded to 0.001mm.
+    Edges are trace segments with length and width.
+
+    Returns:
+        Dict mapping net_id → {nodes: set, edges: dict[node → [(neighbor, length_mm, width_mm)]]}
+    """
+    SNAP = 0.001  # Coordinate snapping precision (mm)
+
+    def _snap(x, y):
+        return (round(x / SNAP) * SNAP, round(y / SNAP) * SNAP)
+
+    graphs = {}  # net_id → {"edges": defaultdict(list)}
+
+    for seg in segments:
+        net = seg.get("net", 0)
+        if net <= 0:
+            continue
+        p1 = _snap(seg["x1"], seg["y1"])
+        p2 = _snap(seg["x2"], seg["y2"])
+        dx = seg["x2"] - seg["x1"]
+        dy = seg["y2"] - seg["y1"]
+        length = math.sqrt(dx * dx + dy * dy)
+        width = seg.get("width", 0)
+
+        g = graphs.setdefault(net, {})
+        edges = g.setdefault("edges", {})
+        edges.setdefault(p1, []).append((p2, length, width))
+        edges.setdefault(p2, []).append((p1, length, width))
+
+    for arc in arcs:
+        net = arc.get("net", 0)
+        if net <= 0:
+            continue
+        s, e = arc["start"], arc["end"]
+        p1 = _snap(s[0], s[1])
+        p2 = _snap(e[0], e[1])
+        m = arc.get("mid")
+        if m:
+            length = _arc_length_3pt(s[0], s[1], m[0], m[1], e[0], e[1])
+        else:
+            dx, dy = e[0] - s[0], e[1] - s[1]
+            length = math.sqrt(dx * dx + dy * dy)
+        width = arc.get("width", 0)
+
+        g = graphs.setdefault(net, {})
+        edges = g.setdefault("edges", {})
+        edges.setdefault(p1, []).append((p2, length, width))
+        edges.setdefault(p2, []).append((p1, length, width))
+
+    # Add vias as zero-length edges connecting the same point across layers
+    for via in vias_list:
+        net = via.get("net", 0)
+        if net <= 0:
+            continue
+        vp = _snap(via["x"], via["y"])
+        g = graphs.setdefault(net, {})
+        edges = g.setdefault("edges", {})
+        edges.setdefault(vp, [])  # Ensure via point exists as a node
+
+    return graphs
+
+
+def _route_distance(graph, start_xy, end_xy, snap=0.001):
+    """Find the shortest routed distance between two points in a net graph.
+
+    Uses Dijkstra's algorithm on the routing graph.
+
+    Args:
+        graph: {"edges": {node → [(neighbor, length, width)]}}
+        start_xy: (x, y) tuple of start pad position
+        end_xy: (x, y) tuple of end pad position
+        snap: Coordinate snapping precision
+
+    Returns:
+        (total_length_mm, path_widths) or (None, None) if no path exists
+    """
+    def _snap(x, y):
+        return (round(x / snap) * snap, round(y / snap) * snap)
+
+    start = _snap(*start_xy)
+    end = _snap(*end_xy)
+    edges = graph.get("edges", {})
+
+    if start not in edges or end not in edges:
+        return None, None
+    if start == end:
+        return 0.0, []
+
+    # Dijkstra
+    import heapq
+    dist = {start: 0.0}
+    prev = {}
+    widths = {}
+    heap = [(0.0, start)]
+    visited = set()
+
+    while heap:
+        d, node = heapq.heappop(heap)
+        if node in visited:
+            continue
+        visited.add(node)
+        if node == end:
+            # Reconstruct path widths
+            path_widths = []
+            n = end
+            while n in prev:
+                path_widths.append(widths[n])
+                n = prev[n]
+            return round(d, 3), list(reversed(path_widths))
+        for neighbor, length, width in edges.get(node, []):
+            if neighbor in visited:
+                continue
+            new_dist = d + length
+            if neighbor not in dist or new_dist < dist[neighbor]:
+                dist[neighbor] = new_dist
+                prev[neighbor] = node
+                widths[neighbor] = width
+                heapq.heappush(heap, (new_dist, neighbor))
+
+    return None, None  # No path found
+
+
+def analyze_pad_to_pad_distances(footprints, tracks, vias, net_names):
+    """Compute actual routed trace distances between component pads on shared nets.
+
+    Builds a routing graph per net and uses Dijkstra to find the shortest
+    routed path between each pair of pads. Much more accurate than Euclidean
+    distance for decoupling placement and parasitic extraction.
+
+    Returns:
+        Dict mapping "REF1.pad-REF2.pad" → {
+            "net": net_name,
+            "routed_distance_mm": float,
+            "euclidean_distance_mm": float,
+            "ratio": float (routed/euclidean — 1.0 = direct, >1.5 = detour),
+            "min_width_mm": float
+        }
+    """
+    # Build routing graphs
+    graphs = _build_routing_graph(
+        tracks.get("segments", []),
+        tracks.get("arcs", []),
+        vias.get("vias", [])
+    )
+
+    # Collect pad positions per net
+    pad_positions = {}  # net_id → [(ref, pad_num, x, y)]
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        for pad in fp.get("pads", []):
+            net = pad.get("net_number", 0)
+            if net <= 0:
+                continue
+            x = pad.get("abs_x", fp.get("x", 0))
+            y = pad.get("abs_y", fp.get("y", 0))
+            pad_positions.setdefault(net, []).append((ref, pad["number"], x, y))
+
+    results = {}
+    for net_id, pads in pad_positions.items():
+        if len(pads) < 2:
+            continue
+        graph = graphs.get(net_id)
+        if not graph:
+            continue
+        net_name = net_names.get(net_id, f"net_{net_id}")
+
+        # Compute distances between all pairs (limited to 20 pads per net
+        # to avoid combinatorial explosion on power nets)
+        if len(pads) > 20:
+            continue  # Skip high-fanout nets
+
+        for i in range(len(pads)):
+            for j in range(i + 1, len(pads)):
+                ref_a, pad_a, xa, ya = pads[i]
+                ref_b, pad_b, xb, yb = pads[j]
+
+                # Euclidean distance
+                euclid = math.sqrt((xb - xa) ** 2 + (yb - ya) ** 2)
+                if euclid < 0.1:
+                    continue  # Same pad or overlapping
+
+                # Routed distance
+                routed, widths = _route_distance(graph, (xa, ya), (xb, yb))
+                if routed is None:
+                    continue
+
+                key = f"{ref_a}.{pad_a}-{ref_b}.{pad_b}"
+                entry = {
+                    "net": net_name,
+                    "routed_distance_mm": routed,
+                    "euclidean_distance_mm": round(euclid, 3),
+                    "ratio": round(routed / euclid, 2) if euclid > 0 else 0,
+                }
+                if widths:
+                    entry["min_width_mm"] = min(widths)
+                results[key] = entry
+
+    return results
+
+
+def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
+                                    signal_nets=None):
+    """Check ground/power plane continuity under signal traces.
+
+    For each signal net's trace segments, samples points along the trace
+    and checks if the opposite layer has a ground or power zone fill.
+    Flags gaps in the reference plane that could cause return path
+    discontinuities and EMI issues.
+
+    Args:
+        tracks: Track data dict with segments
+        net_names: Net number → name mapping
+        zones: Zone list (for zone metadata)
+        zone_fills: ZoneFills spatial index
+        signal_nets: Optional set of net names to check (default: all non-power)
+
+    Returns:
+        List of gap findings: [{net, layer, gap_start_mm, gap_length_mm, ...}]
+    """
+    if not zone_fills.has_data:
+        return []
+
+    from kicad_utils import is_power_net_name, is_ground_name
+
+    findings = []
+    # Only check signal nets (not power/ground — they ARE the reference)
+    segments = tracks.get("segments", [])
+
+    # Group segments by net
+    net_segments: dict[int, list] = {}
+    for seg in segments:
+        net = seg.get("net", 0)
+        if net <= 0:
+            continue
+        net_name = net_names.get(net, "")
+        if is_power_net_name(net_name) or is_ground_name(net_name):
+            continue
+        if signal_nets and net_name not in signal_nets:
+            continue
+        net_segments.setdefault(net, []).append(seg)
+
+    SAMPLE_INTERVAL = 2.0  # mm between sample points
+
+    for net_id, segs in net_segments.items():
+        net_name = net_names.get(net_id, f"net_{net_id}")
+        total_samples = 0
+        gap_samples = 0
+
+        for seg in segs:
+            layer = seg.get("layer", "F.Cu")
+            opp_layer = "B.Cu" if layer == "F.Cu" else "F.Cu"
+
+            x1, y1 = seg["x1"], seg["y1"]
+            x2, y2 = seg["x2"], seg["y2"]
+            dx, dy = x2 - x1, y2 - y1
+            length = math.sqrt(dx * dx + dy * dy)
+            if length < 0.1:
+                continue
+
+            # Sample along the trace
+            n_samples = max(2, int(length / SAMPLE_INTERVAL) + 1)
+            for k in range(n_samples):
+                t = k / max(n_samples - 1, 1)
+                px = x1 + t * dx
+                py = y1 + t * dy
+                total_samples += 1
+
+                # Check for ANY zone (ground or power) on opposite layer
+                opp_zones = zone_fills.zones_at_point(px, py, opp_layer, zones)
+                if not opp_zones:
+                    gap_samples += 1
+
+        if total_samples > 0 and gap_samples > 0:
+            coverage_pct = round((1 - gap_samples / total_samples) * 100, 1)
+            if coverage_pct < 95:  # Only report if significant gap
+                total_length = sum(
+                    math.sqrt((s["x2"]-s["x1"])**2 + (s["y2"]-s["y1"])**2)
+                    for s in segs)
+                findings.append({
+                    "net": net_name,
+                    "total_trace_mm": round(total_length, 1),
+                    "samples_checked": total_samples,
+                    "samples_with_reference_plane": total_samples - gap_samples,
+                    "reference_plane_coverage_pct": coverage_pct,
+                    "gap_note": f"{gap_samples} of {total_samples} sample points lack reference plane on opposite layer",
+                })
+
+    # Sort by coverage (worst first)
+    findings.sort(key=lambda f: f["reference_plane_coverage_pct"])
+    return findings
+
+
 def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     """For each IC, find nearby capacitors and report distances.
 
@@ -3635,6 +3930,12 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     # Power net routing analysis
     power_routing = analyze_power_nets(footprints, tracks, net_names)
 
+    # Pad-to-pad routed distance analysis (only with --full, needs segment data)
+    pad_distances = None
+    if include_trace_segments:
+        pad_distances = analyze_pad_to_pad_distances(
+            footprints, tracks, vias, net_names)
+
     # Decoupling placement analysis
     decoupling = analyze_decoupling_placement(footprints)
 
@@ -3684,6 +3985,12 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     # Copper presence analysis (cross-layer zone fill at pad locations)
     copper_presence = analyze_copper_presence(footprints, zones, zone_fills)
 
+    # Return path continuity (only with --full, expensive)
+    return_path = None
+    if include_trace_segments and zone_fills.has_data:
+        return_path = analyze_return_path_continuity(
+            tracks, net_names, zones, zone_fills)
+
     # Compact footprint output — include pad-to-net mapping but omit pad geometry
     footprint_summary = []
     for fp in footprints:
@@ -3732,6 +4039,8 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         "net_lengths": net_lengths,
     }
 
+    if pad_distances:
+        result["pad_to_pad_distances"] = pad_distances
     if power_routing:
         result["power_net_routing"] = power_routing
     if decoupling:
@@ -3771,6 +4080,8 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["thermal_pad_vias"] = thermal_pad_vias
     if copper_presence:
         result["copper_presence"] = copper_presence
+    if return_path:
+        result["return_path_continuity"] = return_path
 
     return result
 
