@@ -4,18 +4,30 @@ Deep-dive into how the SPICE simulation skill works, what it can and can't do, a
 
 ## How It Works
 
-The SPICE skill reads the output of the schematic analyzer (and optionally the PCB analyzer), identifies subcircuits that can be simulated, generates ngspice testbenches for each one, runs them in batch mode, and evaluates the results against expected values.
+The SPICE skill reads the output of the schematic analyzer (and optionally the PCB analyzer), identifies subcircuits that can be simulated, generates SPICE testbenches for each one, runs them in batch mode using the detected simulator (ngspice, LTspice, or Xyce), and evaluates the results against expected values.
 
 ```
 KiCad schematic
   → analyze_schematic.py → analysis.json (detects subcircuits with component values)
-  → simulate_subcircuits.py → generates .cir testbenches → runs ngspice → report.json
+  → simulate_subcircuits.py → generates .cir testbenches → runs simulator → report.json
 
 Optionally, with PCB:
   → analyze_pcb.py --full → pcb.json (trace geometry, stackup)
   → extract_parasitics.py → parasitics.json (trace R, via L, coupling C)
   → simulate_subcircuits.py --parasitics parasitics.json → parasitic-aware report
 ```
+
+## Supported Simulators
+
+| Simulator | Platform | Install | Notes |
+|-----------|----------|---------|-------|
+| **ngspice** | Linux, macOS, Windows | `apt install ngspice` / `brew install ngspice` / ngspice.sourceforge.io | Default choice. Full measurement support via `.control` blocks. |
+| **LTspice** | Windows, macOS, Linux (wine) | analog.com/ltspice | Free, widely installed. Uses `.meas` in netlist body. |
+| **Xyce** | Linux, macOS, Windows | xyce.sandia.gov | Sandia's parallel SPICE. Uses `.measure` statements. |
+
+Auto-detected in the order above (first found wins). Override with `--simulator ngspice|ltspice|xyce` or `SPICE_SIMULATOR` env var.
+
+The circuit netlists are standard SPICE (Berkeley SPICE3 syntax) — portable across all simulators. Only the measurement layer differs: ngspice uses `.control` blocks, LTspice/Xyce use `.meas`/`.measure` in the netlist body. The testbench architecture (SpiceTestbench objects) separates the portable circuit from the simulator-specific measurement commands.
 
 The key insight: the schematic analyzer already detects 21+ subcircuit types (RC filters, voltage dividers, opamp circuits, etc.) with full component values and net topology. The SPICE skill turns these static detections into dynamic simulations — instead of "I found an RC filter with calculated fc=15.9kHz," it says "I simulated this RC filter and confirmed fc=15.9kHz."
 
@@ -144,7 +156,7 @@ Several schematic and PCB analyzer features were added to feed deeper simulation
 
 **Replaces:** Back-of-envelope calculations, manual "does this RC filter actually give me 15.9kHz" checks, the question "did I use the right resistor values in my feedback divider."
 
-**Does not replace:** Full-circuit SPICE simulation in LTspice/ngspice for stability analysis, transient behavior, Monte Carlo tolerance analysis, or thermal simulation. Use the SPICE skill for quick validation during design review; use a full simulator for deep analysis.
+**Does not replace:** Full-circuit SPICE simulation for stability analysis, transient behavior, Monte Carlo tolerance analysis, or thermal simulation. The SPICE skill runs targeted subcircuit testbenches, not full-board simulation. Use it for quick validation during design review; use the simulator's GUI for deep interactive analysis.
 
 ## Environment Variables
 
