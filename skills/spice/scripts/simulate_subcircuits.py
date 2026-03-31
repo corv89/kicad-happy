@@ -113,7 +113,8 @@ def run_ngspice(cir_file, timeout=5):
         return False, "", str(e)
 
 
-def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None):
+def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
+                         parasitics=None):
     """Run SPICE simulations for all simulatable subcircuits in the analysis.
 
     Args:
@@ -175,6 +176,8 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None):
 
             # Inject analysis context for generators that need it (opamp rails, etc.)
             det["_context"] = analysis_json
+            if parasitics:
+                det["_parasitics"] = parasitics
 
             # Generate testbench
             try:
@@ -252,6 +255,8 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None):
 
         for i, det in enumerate(detections):
             det["_context"] = analysis_json
+            if parasitics:
+                det["_parasitics"] = parasitics
             label = _make_label(tl_type, det, i)
             cir_file = os.path.join(workdir, f"{label}.cir")
             out_file = os.path.join(workdir, f"{label}.out")
@@ -427,6 +432,12 @@ def main():
         action="store_true",
         help="Omit file paths from output (for clean reports)",
     )
+    parser.add_argument(
+        "--parasitics",
+        help="Path to parasitics JSON (from extract_parasitics.py) for "
+             "PCB-aware simulation. When provided, testbenches include trace "
+             "resistance and via inductance.",
+    )
 
     args = parser.parse_args()
 
@@ -458,12 +469,25 @@ def main():
                   file=sys.stderr)
             types = [t for t in types if t in supported]
 
+    # Load parasitics if provided
+    parasitics_data = None
+    if args.parasitics:
+        try:
+            with open(args.parasitics, "r") as f:
+                parasitics_data = json.load(f)
+            n_nets = len(parasitics_data.get("nets", {}))
+            print(f"Loaded parasitics for {n_nets} nets from {args.parasitics}",
+                  file=sys.stderr)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: could not load parasitics: {e}", file=sys.stderr)
+
     # Run simulations
     report = simulate_subcircuits(
         analysis,
         workdir=args.workdir,
         timeout=args.timeout,
         types=types,
+        parasitics=parasitics_data,
     )
 
     # Clean up file paths if compact mode
