@@ -12,6 +12,7 @@ All models use the same 5-pin interface: inp, inn, out, vcc, vee
 
 import math
 import re
+from spice_models import _format_eng as _eng
 
 
 def sanitize_mpn(mpn):
@@ -224,24 +225,5 @@ Rout out_int out {zout}
 """
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
-def _eng(value):
-    """Format a float in engineering notation for SPICE."""
-    if value == 0:
-        return "0"
-    abs_val = abs(value)
-    suffixes = [
-        (1e12, "T"), (1e9, "G"), (1e6, "Meg"), (1e3, "k"),
-        (1, ""), (1e-3, "m"), (1e-6, "u"), (1e-9, "n"), (1e-12, "p"),
-        (1e-15, "f"),
-    ]
-    for threshold, suffix in suffixes:
-        if abs_val >= threshold * 0.999:
-            scaled = value / threshold
-            if scaled == int(scaled):
-                return f"{int(scaled)}{suffix}"
-            return f"{scaled:.4g}{suffix}"
-    return f"{value:.4e}"
+# _eng imported from spice_models._format_eng at module level

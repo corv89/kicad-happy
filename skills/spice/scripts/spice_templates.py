@@ -81,10 +81,6 @@ class SpiceTestbench:
         )
         return f"{self.circuit}\n{meas_block}\n\n.end\n"
 
-    def render_ngspice(self, output_file):
-        """Convenience: render for ngspice (backward compat)."""
-        return self.render(None, output_file)
-
 
 # ---------------------------------------------------------------------------
 # Parasitic annotation helpers
@@ -149,40 +145,6 @@ def _get_parasitic_lines(det, net_name, node_before, node_after):
         note += f", {vias} via(s) → {via_l:.2f}nH"
 
     return "\n".join(lines), note
-
-
-def _build_parasitic_netlist(det, net_names_used):
-    """Build all parasitic elements for the nets used in this subcircuit.
-
-    Args:
-        det: Detection dict with _parasitics
-        net_names_used: List of (original_net_name, spice_node_name) pairs
-
-    Returns:
-        (parasitic_lines_str, parasitic_notes_str) or ("", "") if none
-    """
-    parasitics = det.get("_parasitics")
-    if not parasitics:
-        return "", ""
-
-    all_lines = []
-    all_notes = []
-
-    for orig_net, spice_node in net_names_used:
-        if not orig_net or spice_node == "0":
-            continue
-        # Create intermediate node for the parasitic chain
-        para_node = f"{spice_node}_post"
-        lines, note = _get_parasitic_lines(det, orig_net, spice_node, para_node)
-        if lines:
-            all_lines.append(lines)
-            all_notes.append(note)
-
-    if not all_lines:
-        return "", ""
-
-    header = "* --- PCB parasitics ---"
-    return header + "\n" + "\n".join(all_lines), "\n".join(all_notes)
 
 
 def generate_rc_filter(det, output_file):
@@ -719,7 +681,10 @@ quit
 # ---------------------------------------------------------------------------
 
 def _sanitize_mpn_for_spice(mpn):
-    """Convert an MPN to a valid SPICE subcircuit name component."""
+    """Convert an MPN to a valid SPICE subcircuit name component.
+
+    Mirrors sanitize_mpn() in spice_model_generator.py.
+    """
     return re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip()) if mpn else "UNKNOWN"
 
 
@@ -788,7 +753,6 @@ def _infer_voltage(net_name, default=3.3):
     """
     if net_name is None:
         return default
-    import re
     name = net_name.upper().strip()
     # Match patterns like "3V3", "1V8", "5V0", "+3.3V", "+5V"
     m = re.match(r'[+]?(\d+)V(\d+)', name)

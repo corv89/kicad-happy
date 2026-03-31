@@ -14,6 +14,7 @@ Usage:
     python analyze_pcb.py <file.kicad_pcb> [--output file.json]
 """
 
+import heapq
 import json
 import math
 import sys
@@ -1211,7 +1212,6 @@ def _route_distance(graph, start_xy, end_xy, snap=0.001):
         return 0.0, []
 
     # Dijkstra
-    import heapq
     dist = {start: 0.0}
     prev = {}
     widths = {}
@@ -1390,8 +1390,7 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
                 total_samples += 1
 
                 # Check for ANY zone (ground or power) on opposite layer
-                opp_zones = zone_fills.zones_at_point(px, py, opp_layer, zones)
-                if not opp_zones:
+                if not zone_fills.has_copper_at(px, py, opp_layer):
                     gap_samples += 1
 
         if total_samples > 0 and gap_samples > 0:
@@ -1508,7 +1507,6 @@ def _build_layer_heights(stackup):
 
     heights = {}
     layers = list(stackup)
-    copper_thickness = 0.035  # default 1oz
 
     for i, layer in enumerate(layers):
         if layer.get("type") != "copper":
@@ -1646,7 +1644,6 @@ def analyze_net_lengths(tracks: dict, vias: dict,
                         try:
                             top_idx = all_cu.index(via_layers[0])
                             bot_idx = all_cu.index(via_layers[-1])
-                            span_layers = all_cu[top_idx:bot_idx + 1]
                             # Stub = layers below the bottom connected layer
                             stub_layers = all_cu[bot_idx + 1:]
                             if stub_layers:
