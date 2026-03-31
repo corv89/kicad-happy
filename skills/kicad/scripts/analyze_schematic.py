@@ -568,6 +568,36 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
                 and f.get("capacitor", {}).get("reference") not in xtal_refs
             ]
 
+    def _enrich_capacitor_data(results_dict, context):
+        """Add package size and ESR estimates to all capacitor entries in signal_analysis.
+
+        Walks through all detection dicts recursively, finds entries with a 'farads'
+        key and a 'ref' key, and adds 'package' and 'esr_ohm' fields from the
+        component's footprint.
+        """
+        from kicad_utils import extract_cap_package, estimate_cap_esr
+
+        def _enrich(obj):
+            if isinstance(obj, dict):
+                if "farads" in obj and "ref" in obj and "package" not in obj:
+                    ref = obj["ref"]
+                    comp = context.comp_lookup.get(ref)
+                    if comp:
+                        fp = comp.get("footprint", "")
+                        pkg = extract_cap_package(fp)
+                        if pkg:
+                            obj["package"] = pkg
+                            esr = estimate_cap_esr(obj["farads"], pkg)
+                            if esr is not None:
+                                obj["esr_ohm"] = esr
+                for v in obj.values():
+                    _enrich(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _enrich(item)
+
+        _enrich(results_dict)
+
     results = {
         "voltage_dividers": voltage_dividers,
         "rc_filters": rc_filters,
@@ -595,6 +625,9 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
     }
 
     results["design_observations"] = detect_design_observations(ctx, results)
+
+    # Post-process: enrich capacitor entries with package size and estimated ESR
+    _enrich_capacitor_data(results, ctx)
 
     return results
 
@@ -3044,10 +3077,15 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                                 "to_rail": other_net,
                             })
             if devices:  # Skip connector-only routing with no ICs
+                load_count = len(devices)
+                # Typical I2C input capacitance: ~5pF per device pin
+                estimated_cin_pF = load_count * 5
                 buses["i2c"].append({
                     "net": net_name,
                     "line": line,
                     "devices": devices,
+                    "load_count": load_count,
+                    "estimated_bus_capacitance_pF": estimated_cin_pF,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
                 })
@@ -3094,10 +3132,13 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                        if comp_lookup.get(p["component"], {}).get("type") == "ic"]
 
             if devices:  # Skip connector-only routing with no ICs
+                load_count = len(devices)
                 buses["i2c"].append({
                     "net": net_name,
                     "line": bus_type,
                     "devices": devices,
+                    "load_count": load_count,
+                    "estimated_bus_capacitance_pF": load_count * 5,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
                 })
@@ -3144,9 +3185,14 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
             has_ic = any(s.get("devices") for s in signals.values())
             if not has_ic:
                 continue
+            # Count unique devices across all SPI signals
+            all_spi_devs = set()
+            for sig_data in signals.values():
+                all_spi_devs.update(sig_data.get("devices", []))
             buses["spi"].append({
                 "bus_id": bus_id,
                 "signals": signals,
+                "load_count": len(all_spi_devs),
             })
 
     # UART: look for TX/RX pairs (exclude other protocols that happen to contain TX/RX)

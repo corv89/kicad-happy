@@ -16,8 +16,9 @@ description: Analyze KiCad EDA projects and PDF schematics — schematics, PCB l
 | `element14` | Search Newark/Farnell/element14 (international sourcing, reliable datasheets) |
 | `jlcpcb` | PCB fabrication & assembly ordering |
 | `pcbway` | Alternative PCB fabrication & assembly |
+| `spice` | SPICE simulation verification of detected subcircuits |
 
-**Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc`/`element14` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation.
+**Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc`/`element14` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation. Hand off to `spice` for simulation verification of RC/LC filters, voltage dividers, feedback networks, opamp gain stages, transistor circuits, crystal circuits, current sense resistors, and protection devices — run automatically during design reviews when ngspice is available.
 
 ## PDF Schematic Analysis
 
@@ -108,7 +109,7 @@ Outputs structured JSON (~50-300KB depending on board complexity) with:
 - **Power & thermal**: current capacity per net, power net routing summary, ground domain identification (AGND/DGND), zone stitching via density, thermal pad detection and via counting
 - **Manufacturing**: placement analysis (courtyard overlaps, edge clearance), decoupling cap distances, DFM scoring (JLCPCB standard/advanced tier), tombstoning risk (0201/0402 thermal asymmetry), thermal pad via adequacy, silkscreen documentation audit
 
-Add `--full` to include individual track/via coordinates. Supports KiCad 5 legacy format.
+Add `--full` to include individual track/via coordinates, per-segment trace impedance (microstrip Z0 from stackup), pad-to-pad routed distances, return path continuity analysis, and via stub lengths. The `--full` output feeds the `spice` skill's parasitic extraction (`extract_parasitics.py`) for PCB-aware simulation. Supports KiCad 5 legacy format.
 
 **Zone fills must be current.** The copper presence analysis uses KiCad's filled polygon data, which is computed when the user runs Edit → Fill All Zones (shortcut `B`) and stored in the `.kicad_pcb` file. If the board was modified after the last fill, the filled polygon data may be stale and the copper presence results will be inaccurate. When reviewing copper presence data, note whether the `fill_ratio` seems reasonable — a zone with 0 filled area or `is_filled: false` likely hasn't been filled.
 

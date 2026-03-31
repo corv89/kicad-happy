@@ -108,6 +108,8 @@ def parse_gerber(path: str) -> dict:
     component_pads = {}         # ref -> pad flash count
     component_nets = {}         # ref -> set of net names
     net_names = set()
+    net_draw_counts = {}        # net_name -> draw count (D01 operations)
+    net_flash_counts = {}       # net_name -> flash count (D03 operations)
     pin_mappings = []           # [{ref, pin, pin_name, net}]
 
     # Aperture dimension tracking for trace width / min feature analysis
@@ -199,8 +201,12 @@ def parse_gerber(path: str) -> dict:
                 aperture_flash_counts[current_aperture] = aperture_flash_counts.get(current_aperture, 0) + 1
             if current_component and current_component in component_pads:
                 component_pads[current_component] += 1
+            if current_net:
+                net_flash_counts[current_net] = net_flash_counts.get(current_net, 0) + 1
         elif "D01" in s:
             result["draw_count"] += 1
+            if current_net:
+                net_draw_counts[current_net] = net_draw_counts.get(current_net, 0) + 1
 
         # -- Coordinate extraction --
         cm = re.match(r"X(-?\d+)Y(-?\d+)", s)
@@ -224,12 +230,25 @@ def parse_gerber(path: str) -> dict:
     # --- Build X2 object summary ---
     has_x2_objects = bool(component_pads or net_names or pin_mappings)
     if has_x2_objects:
+        # Per-net copper usage (draws = traces, flashes = pads)
+        net_copper_usage = {}
+        for net in net_names:
+            draws = net_draw_counts.get(net, 0)
+            flashes = net_flash_counts.get(net, 0)
+            if draws > 0 or flashes > 0:
+                net_copper_usage[net] = {
+                    "draw_operations": draws,
+                    "flash_operations": flashes,
+                    "total_operations": draws + flashes,
+                }
+
         result["x2_objects"] = {
             "component_refs": sorted(component_pads.keys()),
             "component_pads": {r: c for r, c in sorted(component_pads.items()) if c > 0},
             "component_nets": {r: sorted(ns) for r, ns in sorted(component_nets.items()) if ns},
             "net_names": sorted(net_names),
             "pin_mappings": pin_mappings,
+            "net_copper_usage": net_copper_usage,
         }
 
     # --- Aperture analysis ---

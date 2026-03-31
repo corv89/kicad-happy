@@ -5,6 +5,14 @@ description: Search Newark, Farnell, and element14 for electronic components —
 
 # element14 / Newark / Farnell — Component Search, Datasheets & Ordering
 
+## Related Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `kicad` | Schematic analysis — extracts MPNs for part lookup |
+| `bom` | BOM management — orchestrates sourcing across distributors |
+| `spice` | Uses element14 parametric data for behavioral SPICE models |
+
 One API covers three regional storefronts — same catalog, same datasheets, only pricing/stock vary by region:
 
 | Storefront | Region | Store ID |

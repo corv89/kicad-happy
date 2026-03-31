@@ -14,6 +14,7 @@ Usage:
     python analyze_pcb.py <file.kicad_pcb> [--output file.json]
 """
 
+import heapq
 import json
 import math
 import sys
@@ -1119,6 +1120,299 @@ _ESD_TVS_PREFIXES = ("esd", "prtr", "usblc", "tpd", "pesd", "sp05",
                      "rclamp", "nup", "lesd", "ip4", "dt104")
 
 
+def _build_routing_graph(segments, arcs, vias_list):
+    """Build a per-net adjacency graph from trace segments and vias.
+
+    Nodes are coordinate tuples (x, y) rounded to 0.001mm.
+    Edges are trace segments with length and width.
+
+    Returns:
+        Dict mapping net_id → {nodes: set, edges: dict[node → [(neighbor, length_mm, width_mm)]]}
+    """
+    SNAP = 0.001  # Coordinate snapping precision (mm)
+
+    def _snap(x, y):
+        return (round(x / SNAP) * SNAP, round(y / SNAP) * SNAP)
+
+    graphs = {}  # net_id → {"edges": defaultdict(list)}
+
+    for seg in segments:
+        net = seg.get("net", 0)
+        if net <= 0:
+            continue
+        p1 = _snap(seg["x1"], seg["y1"])
+        p2 = _snap(seg["x2"], seg["y2"])
+        dx = seg["x2"] - seg["x1"]
+        dy = seg["y2"] - seg["y1"]
+        length = math.sqrt(dx * dx + dy * dy)
+        width = seg.get("width", 0)
+
+        g = graphs.setdefault(net, {})
+        edges = g.setdefault("edges", {})
+        edges.setdefault(p1, []).append((p2, length, width))
+        edges.setdefault(p2, []).append((p1, length, width))
+
+    for arc in arcs:
+        net = arc.get("net", 0)
+        if net <= 0:
+            continue
+        s, e = arc["start"], arc["end"]
+        p1 = _snap(s[0], s[1])
+        p2 = _snap(e[0], e[1])
+        m = arc.get("mid")
+        if m:
+            length = _arc_length_3pt(s[0], s[1], m[0], m[1], e[0], e[1])
+        else:
+            dx, dy = e[0] - s[0], e[1] - s[1]
+            length = math.sqrt(dx * dx + dy * dy)
+        width = arc.get("width", 0)
+
+        g = graphs.setdefault(net, {})
+        edges = g.setdefault("edges", {})
+        edges.setdefault(p1, []).append((p2, length, width))
+        edges.setdefault(p2, []).append((p1, length, width))
+
+    # Add vias as zero-length edges connecting the same point across layers
+    for via in vias_list:
+        net = via.get("net", 0)
+        if net <= 0:
+            continue
+        vp = _snap(via["x"], via["y"])
+        g = graphs.setdefault(net, {})
+        edges = g.setdefault("edges", {})
+        edges.setdefault(vp, [])  # Ensure via point exists as a node
+
+    return graphs
+
+
+def _route_distance(graph, start_xy, end_xy, snap=0.001):
+    """Find the shortest routed distance between two points in a net graph.
+
+    Uses Dijkstra's algorithm on the routing graph.
+
+    Args:
+        graph: {"edges": {node → [(neighbor, length, width)]}}
+        start_xy: (x, y) tuple of start pad position
+        end_xy: (x, y) tuple of end pad position
+        snap: Coordinate snapping precision
+
+    Returns:
+        (total_length_mm, path_widths) or (None, None) if no path exists
+    """
+    def _snap(x, y):
+        return (round(x / snap) * snap, round(y / snap) * snap)
+
+    start = _snap(*start_xy)
+    end = _snap(*end_xy)
+    edges = graph.get("edges", {})
+
+    if start not in edges or end not in edges:
+        return None, None
+    if start == end:
+        return 0.0, []
+
+    # Dijkstra
+    dist = {start: 0.0}
+    prev = {}
+    widths = {}
+    heap = [(0.0, start)]
+    visited = set()
+
+    while heap:
+        d, node = heapq.heappop(heap)
+        if node in visited:
+            continue
+        visited.add(node)
+        if node == end:
+            # Reconstruct path widths
+            path_widths = []
+            n = end
+            while n in prev:
+                path_widths.append(widths[n])
+                n = prev[n]
+            return round(d, 3), list(reversed(path_widths))
+        for neighbor, length, width in edges.get(node, []):
+            if neighbor in visited:
+                continue
+            new_dist = d + length
+            if neighbor not in dist or new_dist < dist[neighbor]:
+                dist[neighbor] = new_dist
+                prev[neighbor] = node
+                widths[neighbor] = width
+                heapq.heappush(heap, (new_dist, neighbor))
+
+    return None, None  # No path found
+
+
+def analyze_pad_to_pad_distances(footprints, tracks, vias, net_names):
+    """Compute actual routed trace distances between component pads on shared nets.
+
+    Builds a routing graph per net and uses Dijkstra to find the shortest
+    routed path between each pair of pads. Much more accurate than Euclidean
+    distance for decoupling placement and parasitic extraction.
+
+    Returns:
+        Dict mapping "REF1.pad-REF2.pad" → {
+            "net": net_name,
+            "routed_distance_mm": float,
+            "euclidean_distance_mm": float,
+            "ratio": float (routed/euclidean — 1.0 = direct, >1.5 = detour),
+            "min_width_mm": float
+        }
+    """
+    # Build routing graphs
+    graphs = _build_routing_graph(
+        tracks.get("segments", []),
+        tracks.get("arcs", []),
+        vias.get("vias", [])
+    )
+
+    # Collect pad positions per net
+    pad_positions = {}  # net_id → [(ref, pad_num, x, y)]
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        for pad in fp.get("pads", []):
+            net = pad.get("net_number", 0)
+            if net <= 0:
+                continue
+            x = pad.get("abs_x", fp.get("x", 0))
+            y = pad.get("abs_y", fp.get("y", 0))
+            pad_positions.setdefault(net, []).append((ref, pad["number"], x, y))
+
+    results = {}
+    for net_id, pads in pad_positions.items():
+        if len(pads) < 2:
+            continue
+        graph = graphs.get(net_id)
+        if not graph:
+            continue
+        net_name = net_names.get(net_id, f"net_{net_id}")
+
+        # Compute distances between all pairs (limited to 20 pads per net
+        # to avoid combinatorial explosion on power nets)
+        if len(pads) > 20:
+            continue  # Skip high-fanout nets
+
+        for i in range(len(pads)):
+            for j in range(i + 1, len(pads)):
+                ref_a, pad_a, xa, ya = pads[i]
+                ref_b, pad_b, xb, yb = pads[j]
+
+                # Euclidean distance
+                euclid = math.sqrt((xb - xa) ** 2 + (yb - ya) ** 2)
+                if euclid < 0.1:
+                    continue  # Same pad or overlapping
+
+                # Routed distance
+                routed, widths = _route_distance(graph, (xa, ya), (xb, yb))
+                if routed is None:
+                    continue
+
+                key = f"{ref_a}.{pad_a}-{ref_b}.{pad_b}"
+                entry = {
+                    "net": net_name,
+                    "routed_distance_mm": routed,
+                    "euclidean_distance_mm": round(euclid, 3),
+                    "ratio": round(routed / euclid, 2) if euclid > 0 else 0,
+                }
+                if widths:
+                    entry["min_width_mm"] = min(widths)
+                results[key] = entry
+
+    return results
+
+
+def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
+                                    signal_nets=None):
+    """Check ground/power plane continuity under signal traces.
+
+    For each signal net's trace segments, samples points along the trace
+    and checks if the opposite layer has a ground or power zone fill.
+    Flags gaps in the reference plane that could cause return path
+    discontinuities and EMI issues.
+
+    Args:
+        tracks: Track data dict with segments
+        net_names: Net number → name mapping
+        zones: Zone list (for zone metadata)
+        zone_fills: ZoneFills spatial index
+        signal_nets: Optional set of net names to check (default: all non-power)
+
+    Returns:
+        List of gap findings: [{net, layer, gap_start_mm, gap_length_mm, ...}]
+    """
+    if not zone_fills.has_data:
+        return []
+
+    from kicad_utils import is_power_net_name, is_ground_name
+
+    findings = []
+    # Only check signal nets (not power/ground — they ARE the reference)
+    segments = tracks.get("segments", [])
+
+    # Group segments by net
+    net_segments: dict[int, list] = {}
+    for seg in segments:
+        net = seg.get("net", 0)
+        if net <= 0:
+            continue
+        net_name = net_names.get(net, "")
+        if is_power_net_name(net_name) or is_ground_name(net_name):
+            continue
+        if signal_nets and net_name not in signal_nets:
+            continue
+        net_segments.setdefault(net, []).append(seg)
+
+    SAMPLE_INTERVAL = 2.0  # mm between sample points
+
+    for net_id, segs in net_segments.items():
+        net_name = net_names.get(net_id, f"net_{net_id}")
+        total_samples = 0
+        gap_samples = 0
+
+        for seg in segs:
+            layer = seg.get("layer", "F.Cu")
+            opp_layer = "B.Cu" if layer == "F.Cu" else "F.Cu"
+
+            x1, y1 = seg["x1"], seg["y1"]
+            x2, y2 = seg["x2"], seg["y2"]
+            dx, dy = x2 - x1, y2 - y1
+            length = math.sqrt(dx * dx + dy * dy)
+            if length < 0.1:
+                continue
+
+            # Sample along the trace
+            n_samples = max(2, int(length / SAMPLE_INTERVAL) + 1)
+            for k in range(n_samples):
+                t = k / max(n_samples - 1, 1)
+                px = x1 + t * dx
+                py = y1 + t * dy
+                total_samples += 1
+
+                # Check for ANY zone (ground or power) on opposite layer
+                if not zone_fills.has_copper_at(px, py, opp_layer):
+                    gap_samples += 1
+
+        if total_samples > 0 and gap_samples > 0:
+            coverage_pct = round((1 - gap_samples / total_samples) * 100, 1)
+            if coverage_pct < 95:  # Only report if significant gap
+                total_length = sum(
+                    math.sqrt((s["x2"]-s["x1"])**2 + (s["y2"]-s["y1"])**2)
+                    for s in segs)
+                findings.append({
+                    "net": net_name,
+                    "total_trace_mm": round(total_length, 1),
+                    "samples_checked": total_samples,
+                    "samples_with_reference_plane": total_samples - gap_samples,
+                    "reference_plane_coverage_pct": coverage_pct,
+                    "gap_note": f"{gap_samples} of {total_samples} sample points lack reference plane on opposite layer",
+                })
+
+    # Sort by coverage (worst first)
+    findings.sort(key=lambda f: f["reference_plane_coverage_pct"])
+    return findings
+
+
 def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     """For each IC, find nearby capacitors and report distances.
 
@@ -1164,14 +1458,101 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     return results
 
 
+def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
+    """Calculate single-ended microstrip characteristic impedance.
+
+    Uses Wheeler's equations (IPC-2141) with effective width correction
+    for finite copper thickness.
+
+    Args:
+        width_mm: Trace width in mm
+        height_mm: Dielectric height to reference plane in mm
+        thickness_mm: Copper thickness in mm
+        epsilon_r: Relative permittivity of dielectric
+
+    Returns:
+        Characteristic impedance in ohms, or None if inputs invalid
+    """
+    if width_mm <= 0 or height_mm <= 0 or thickness_mm <= 0 or epsilon_r <= 0:
+        return None
+    w = width_mm
+    h = height_mm
+    t = thickness_mm
+    er = epsilon_r
+    # Effective width accounting for copper thickness (IPC-2141)
+    if w > 2 * math.pi * t:
+        w_eff = w + (t / math.pi) * (1 + math.log(2 * h / t))
+    else:
+        w_eff = w + (t / math.pi) * (1 + math.log(4 * math.pi * w / t))
+    # Wheeler's equations
+    if w_eff / h < 1:
+        z0 = (60 / math.sqrt(er)) * math.log(8 * h / w_eff + w_eff / (4 * h))
+    else:
+        z0 = (120 * math.pi) / (math.sqrt(er) * (w_eff / h + 1.393 + 0.667 * math.log(w_eff / h + 1.444)))
+    return z0
+
+
+def _build_layer_heights(stackup):
+    """Map copper layer names to their dielectric height above the nearest reference plane.
+
+    Walks the stackup from top to bottom. Each copper layer's height is the
+    thickness of the adjacent dielectric layer below it (for top layers) or
+    above it (for bottom layers).
+
+    Returns:
+        Dict mapping layer name → (dielectric_height_mm, epsilon_r, copper_thickness_mm)
+    """
+    if not stackup:
+        return {}
+
+    heights = {}
+    layers = list(stackup)
+
+    for i, layer in enumerate(layers):
+        if layer.get("type") != "copper":
+            continue
+        name = layer.get("name", "")
+        cu_t = layer.get("thickness", 0.035)
+
+        # Look for the nearest dielectric layer (below for top copper, above for bottom)
+        # Try below first
+        for j in range(i + 1, len(layers)):
+            if layers[j].get("type") in ("core", "prepreg"):
+                h = layers[j].get("thickness", 0.2)
+                er = layers[j].get("epsilon_r", 4.5)
+                heights[name] = (h, er, cu_t)
+                break
+        else:
+            # No dielectric below — try above
+            for j in range(i - 1, -1, -1):
+                if layers[j].get("type") in ("core", "prepreg"):
+                    h = layers[j].get("thickness", 0.2)
+                    er = layers[j].get("epsilon_r", 4.5)
+                    heights[name] = (h, er, cu_t)
+                    break
+
+    return heights
+
+
 def analyze_net_lengths(tracks: dict, vias: dict,
-                        net_names: dict[int, str]) -> list[dict]:
+                        net_names: dict[int, str],
+                        include_segments: bool = False,
+                        stackup: list = None) -> list[dict]:
     """Per-net trace length measurement for matched-length and routing analysis.
 
     Provides total length, per-layer breakdown, segment count, and via count
     for each routed net. Enables differential pair matching, bus length matching,
     and routing completeness assessment by higher-level logic.
+
+    When include_segments=True, also emits per-segment width+length detail and
+    per-via drill size, for parasitic extraction by the SPICE simulation skill.
+
+    When stackup is provided, each trace segment also gets a characteristic
+    impedance estimate (microstrip formula from IPC-2141).
     """
+    # Pre-compute layer-to-dielectric-height mapping for impedance calculation
+    layer_heights = _build_layer_heights(stackup) if stackup else {}
+
     net_data: dict[int, dict] = {}
 
     for seg in tracks.get("segments", []):
@@ -1190,6 +1571,20 @@ def analyze_net_lengths(tracks: dict, vias: dict,
         ld = d["layers"].setdefault(layer, {"length": 0.0, "segments": 0})
         ld["length"] += length
         ld["segments"] += 1
+
+        if include_segments:
+            seg_entry = {
+                "layer": layer,
+                "length_mm": round(length, 3),
+                "width_mm": seg.get("width", 0),
+            }
+            # Add impedance if stackup is available
+            if stackup and layer_heights and layer in layer_heights:
+                h, er, cu_t = layer_heights[layer]
+                z0 = _microstrip_impedance(seg.get("width", 0), h, cu_t, er)
+                if z0:
+                    seg_entry["impedance_ohm"] = round(z0, 1)
+            d.setdefault("trace_segments", []).append(seg_entry)
 
     for arc in tracks.get("arcs", []):
         net = arc["net"]
@@ -1212,6 +1607,19 @@ def analyze_net_lengths(tracks: dict, vias: dict,
         ld["length"] += length
         ld["segments"] += 1
 
+        if include_segments:
+            seg_entry = {
+                "layer": layer,
+                "length_mm": round(length, 3),
+                "width_mm": arc.get("width", 0),
+            }
+            if stackup and layer_heights and layer in layer_heights:
+                h, er, cu_t = layer_heights[layer]
+                z0 = _microstrip_impedance(arc.get("width", 0), h, cu_t, er)
+                if z0:
+                    seg_entry["impedance_ohm"] = round(z0, 1)
+            d.setdefault("trace_segments", []).append(seg_entry)
+
     for via in vias.get("vias", []):
         net = via["net"]
         if net <= 0:
@@ -1220,10 +1628,36 @@ def analyze_net_lengths(tracks: dict, vias: dict,
                                       "segment_count": 0, "via_count": 0})
         d["via_count"] += 1
 
+        if include_segments:
+            via_entry = {
+                "drill_mm": via.get("drill", 0),
+                "layers": via.get("layers", []),
+            }
+            # Compute stub length for through-hole vias on boards with >2 layers
+            if stackup and layer_heights:
+                via_layers = via.get("layers", [])
+                if len(via_layers) >= 2 and len(layer_heights) > 2:
+                    # Via connects between first and last of its layers;
+                    # stub = total board thickness - span between connected layers
+                    all_cu = [l["name"] for l in stackup if l.get("type") == "copper"]
+                    if len(all_cu) > 2:
+                        try:
+                            top_idx = all_cu.index(via_layers[0])
+                            bot_idx = all_cu.index(via_layers[-1])
+                            # Stub = layers below the bottom connected layer
+                            stub_layers = all_cu[bot_idx + 1:]
+                            if stub_layers:
+                                stub_mm = sum(layer_heights.get(l, (0.2, 4.5, 0.035))[0]
+                                              for l in stub_layers)
+                                via_entry["stub_length_mm"] = round(stub_mm, 3)
+                        except ValueError:
+                            pass
+            d.setdefault("via_details", []).append(via_entry)
+
     result = []
     for net_num, data in sorted(net_data.items(),
                                 key=lambda x: x[1]["total_length"], reverse=True):
-        result.append({
+        entry = {
             "net": net_names.get(net_num, f"net_{net_num}"),
             "net_number": net_num,
             "total_length_mm": round(data["total_length"], 3),
@@ -1234,7 +1668,13 @@ def analyze_net_lengths(tracks: dict, vias: dict,
                         "segments": info["segments"]}
                 for layer, info in sorted(data["layers"].items())
             },
-        })
+        }
+        if include_segments:
+            if "trace_segments" in data:
+                entry["trace_segments"] = data["trace_segments"]
+            if "via_details" in data:
+                entry["via_details"] = data["via_details"]
+        result.append(entry)
     return result
 
 
@@ -3417,7 +3857,8 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
     return result
 
 
-def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
+def analyze_pcb(path: str, *, proximity: bool = False,
+                include_trace_segments: bool = False) -> dict:
     """Main analysis function.
 
     Args:
@@ -3469,10 +3910,28 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     component_groups = group_components(footprints)
 
     # Per-net trace length measurement
-    net_lengths = analyze_net_lengths(tracks, vias, net_names)
+    # Pass stackup for impedance calculation. If no stackup defined, use
+    # a default 2-layer FR4 board (1.6mm total, 1oz copper, εr=4.5).
+    _stackup = setup.get("stackup")
+    if include_trace_segments and not _stackup:
+        _stackup = [
+            {"name": "F.Cu", "type": "copper", "thickness": 0.035},
+            {"name": "dielectric", "type": "core", "thickness": 1.53,
+             "epsilon_r": 4.5, "material": "FR4"},
+            {"name": "B.Cu", "type": "copper", "thickness": 0.035},
+        ]
+    net_lengths = analyze_net_lengths(tracks, vias, net_names,
+                                      include_segments=include_trace_segments,
+                                      stackup=_stackup if include_trace_segments else None)
 
     # Power net routing analysis
     power_routing = analyze_power_nets(footprints, tracks, net_names)
+
+    # Pad-to-pad routed distance analysis (only with --full, needs segment data)
+    pad_distances = None
+    if include_trace_segments:
+        pad_distances = analyze_pad_to_pad_distances(
+            footprints, tracks, vias, net_names)
 
     # Decoupling placement analysis
     decoupling = analyze_decoupling_placement(footprints)
@@ -3523,6 +3982,12 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
     # Copper presence analysis (cross-layer zone fill at pad locations)
     copper_presence = analyze_copper_presence(footprints, zones, zone_fills)
 
+    # Return path continuity (only with --full, expensive)
+    return_path = None
+    if include_trace_segments and zone_fills.has_data:
+        return_path = analyze_return_path_continuity(
+            tracks, net_names, zones, zone_fills)
+
     # Compact footprint output — include pad-to-net mapping but omit pad geometry
     footprint_summary = []
     for fp in footprints:
@@ -3571,6 +4036,8 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
         "net_lengths": net_lengths,
     }
 
+    if pad_distances:
+        result["pad_to_pad_distances"] = pad_distances
     if power_routing:
         result["power_net_routing"] = power_routing
     if decoupling:
@@ -3610,6 +4077,8 @@ def analyze_pcb(path: str, *, proximity: bool = False) -> dict:
         result["thermal_pad_vias"] = thermal_pad_vias
     if copper_presence:
         result["copper_presence"] = copper_presence
+    if return_path:
+        result["return_path_continuity"] = return_path
 
     return result
 
@@ -3676,7 +4145,8 @@ def main():
     if not args.pcb:
         parser.error("the following arguments are required: pcb")
 
-    result = analyze_pcb(args.pcb, proximity=args.proximity)
+    result = analyze_pcb(args.pcb, proximity=args.proximity,
+                         include_trace_segments=args.full)
 
     if args.full:
         # Re-parse to get full track/via data
