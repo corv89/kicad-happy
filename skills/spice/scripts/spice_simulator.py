@@ -181,31 +181,9 @@ class NgspiceBackend(SimulatorBackend):
         return "\n".join(lines)
 
     def parse_results(self, output_file, stdout, stderr):
-        """Parse ngspice echo output file (key=value format)."""
-        results = {}
-        try:
-            with open(output_file, "r") as f:
-                content = f.read().strip()
-        except (OSError, IOError):
-            return results
-
-        if not content:
-            return results
-
-        for token in content.split():
-            if "=" not in token:
-                continue
-            key, _, val = token.partition("=")
-            key = key.strip()
-            val = val.strip()
-            if not val or val.lower() == "failed" or val == "---":
-                results[key] = None
-            else:
-                try:
-                    results[key] = float(val)
-                except ValueError:
-                    results[key] = val
-        return results
+        """Parse ngspice echo output file — delegates to shared parser."""
+        from spice_results import parse_output_file
+        return parse_output_file(output_file)
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ import time
 # Allow imports from same directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from spice_templates import TEMPLATE_REGISTRY, TOPLEVEL_REGISTRY, list_supported_types
+from spice_templates import TEMPLATE_REGISTRY, TOPLEVEL_REGISTRY, list_supported_types, SpiceTestbench
 from spice_results import (
     EVALUATOR_REGISTRY,
     build_report,
@@ -114,35 +114,20 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
     results = []
     total_time = 0
 
-    for det_type in sim_types:
-        if det_type not in signal:
-            continue
-        if det_type not in TEMPLATE_REGISTRY:
-            continue
-
-        generator = TEMPLATE_REGISTRY[det_type]
-        evaluator = EVALUATOR_REGISTRY.get(det_type)
-
-        detections = signal[det_type]
-        if not isinstance(detections, list):
-            continue
-
+    def _run_detection_batch(det_type, detections, generator, evaluator):
+        """Simulate a batch of detections — shared by signal_analysis and top-level loops."""
+        nonlocal total_time
         for i, det in enumerate(detections):
-            # Generate unique filenames for this subcircuit
-            # Build a label from component refs
-            label = _make_label(det_type, det, i)
-            cir_file = os.path.join(workdir, f"{label}.cir")
-            out_file = os.path.join(workdir, f"{label}.out")
-            log_file = os.path.join(workdir, f"{label}.log")
-            # ngspice requires forward slashes in file paths, even on Windows
-            out_file_spice = out_file.replace("\\", "/")
-
-            # Inject analysis context for generators that need it (opamp rails, etc.)
             det["_context"] = analysis_json
             if parasitics:
                 det["_parasitics"] = parasitics
 
-            # Generate testbench
+            label = _make_label(det_type, det, i)
+            cir_file = os.path.join(workdir, f"{label}.cir")
+            out_file = os.path.join(workdir, f"{label}.out")
+            log_file = os.path.join(workdir, f"{label}.log")
+            out_file_spice = out_file.replace("\\", "/")
+
             try:
                 cir_content = generator(det, out_file_spice)
             except (KeyError, TypeError, ValueError) as e:
@@ -155,19 +140,14 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                 continue
 
             if cir_content is None:
-                # Generator decided this detection isn't simulatable
                 continue
 
-            # Handle SpiceTestbench objects (new) or raw strings (legacy)
-            from spice_templates import SpiceTestbench
             if isinstance(cir_content, SpiceTestbench):
                 cir_content = cir_content.render(simulator_backend, out_file_spice)
 
-            # Write .cir file
             with open(cir_file, "w") as f:
                 f.write(cir_content)
 
-            # Run simulation
             t0 = time.monotonic()
             if simulator_backend:
                 success, stdout, stderr = simulator_backend.run(cir_file, timeout=timeout)
@@ -176,7 +156,6 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
             elapsed = time.monotonic() - t0
             total_time += elapsed
 
-            # Save log
             with open(log_file, "w") as f:
                 f.write(f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}\n")
 
@@ -185,20 +164,18 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                     "subcircuit_type": _singular_type(det_type),
                     "components": _get_components(det),
                     "status": "skip",
-                    "note": f"ngspice failed: {stderr[:200]}",
+                    "note": f"Simulation failed: {stderr[:200]}",
                     "cir_file": cir_file,
                     "log_file": log_file,
                     "elapsed_s": round(elapsed, 3),
                 })
                 continue
 
-            # Parse results
             if simulator_backend and hasattr(simulator_backend, 'parse_results'):
                 sim_data = simulator_backend.parse_results(out_file, stdout, stderr)
             else:
                 sim_data = parse_output_file(out_file)
 
-            # Evaluate
             if evaluator:
                 result = evaluator(det, sim_data)
             else:
@@ -213,6 +190,17 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
             result["log_file"] = log_file
             result["elapsed_s"] = round(elapsed, 3)
             results.append(result)
+
+    # Process signal_analysis detections
+    for det_type in sim_types:
+        if det_type not in signal or det_type not in TEMPLATE_REGISTRY:
+            continue
+        detections = signal[det_type]
+        if not isinstance(detections, list):
+            continue
+        _run_detection_batch(det_type, detections,
+                            TEMPLATE_REGISTRY[det_type],
+                            EVALUATOR_REGISTRY.get(det_type))
 
     # Process top-level types (not under signal_analysis)
     for tl_type, (list_key, generator) in TOPLEVEL_REGISTRY.items():
@@ -224,82 +212,8 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
         detections = tl_data.get(list_key, [])
         if not isinstance(detections, list):
             continue
-
-        evaluator = EVALUATOR_REGISTRY.get(tl_type)
-
-        for i, det in enumerate(detections):
-            det["_context"] = analysis_json
-            if parasitics:
-                det["_parasitics"] = parasitics
-            label = _make_label(tl_type, det, i)
-            cir_file = os.path.join(workdir, f"{label}.cir")
-            out_file = os.path.join(workdir, f"{label}.out")
-            log_file = os.path.join(workdir, f"{label}.log")
-            out_file_spice = out_file.replace("\\", "/")
-
-            try:
-                cir_content = generator(det, out_file_spice)
-            except (KeyError, TypeError, ValueError) as e:
-                results.append({
-                    "subcircuit_type": _singular_type(tl_type),
-                    "components": _get_components(det),
-                    "status": "skip",
-                    "note": f"Testbench generation failed: {e}",
-                })
-                continue
-
-            if cir_content is None:
-                continue
-
-            from spice_templates import SpiceTestbench
-            if isinstance(cir_content, SpiceTestbench):
-                cir_content = cir_content.render(simulator_backend, out_file_spice)
-
-            with open(cir_file, "w") as f:
-                f.write(cir_content)
-
-            t0 = time.monotonic()
-            if simulator_backend:
-                success, stdout, stderr = simulator_backend.run(cir_file, timeout=timeout)
-            else:
-                success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
-            elapsed = time.monotonic() - t0
-            total_time += elapsed
-
-            with open(log_file, "w") as f:
-                f.write(f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}\n")
-
-            if not success:
-                results.append({
-                    "subcircuit_type": _singular_type(tl_type),
-                    "components": _get_components(det),
-                    "status": "skip",
-                    "note": f"ngspice failed: {stderr[:200]}",
-                    "cir_file": cir_file,
-                    "log_file": log_file,
-                    "elapsed_s": round(elapsed, 3),
-                })
-                continue
-
-            if simulator_backend and hasattr(simulator_backend, 'parse_results'):
-                sim_data = simulator_backend.parse_results(out_file, stdout, stderr)
-            else:
-                sim_data = parse_output_file(out_file)
-
-            if evaluator:
-                result = evaluator(det, sim_data)
-            else:
-                result = {
-                    "subcircuit_type": _singular_type(tl_type),
-                    "components": _get_components(det),
-                    "status": "pass",
-                    "simulated": sim_data,
-                }
-
-            result["cir_file"] = cir_file
-            result["log_file"] = log_file
-            result["elapsed_s"] = round(elapsed, 3)
-            results.append(result)
+        _run_detection_batch(tl_type, detections,
+                            generator, EVALUATOR_REGISTRY.get(tl_type))
 
     report = build_report(results)
     report["workdir"] = workdir

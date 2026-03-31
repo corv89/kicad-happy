@@ -63,6 +63,10 @@ def resolve_cache_dir(analysis_json, override_dir=None):
     return Path(tempfile.gettempdir()) / "kicad-happy-spice" / "models"
 
 
+# In-memory cache for index.json to avoid re-reading on every call
+_index_cache = {}  # cache_dir_str → (mtime, parsed_index)
+
+
 def get_cached_model(cache_dir, mpn):
     """Retrieve a cached model by MPN.
 
@@ -77,9 +81,17 @@ def get_cached_model(cache_dir, mpn):
     if not index_path.exists():
         return None, None
 
+    # Use in-memory cache keyed on file mtime to avoid re-parsing
+    cache_key = str(cache_dir)
     try:
-        with open(index_path) as f:
-            index = json.load(f)
+        mtime = index_path.stat().st_mtime
+        cached = _index_cache.get(cache_key)
+        if cached and cached[0] == mtime:
+            index = cached[1]
+        else:
+            with open(index_path) as f:
+                index = json.load(f)
+            _index_cache[cache_key] = (mtime, index)
     except (json.JSONDecodeError, OSError):
         return None, None
 
@@ -142,6 +154,9 @@ def cache_model(cache_dir, mpn, subckt, specs, source, component_type):
 
     with open(index_path, "w") as f:
         json.dump(index, f, indent=2)
+
+    # Invalidate in-memory cache so next read picks up the new entry
+    _index_cache.pop(str(cache_dir), None)
 
 
 def _serialize_specs(specs):
