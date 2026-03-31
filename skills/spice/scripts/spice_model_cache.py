@@ -173,19 +173,25 @@ def get_model_for_part(mpn, component_type=None, context=None):
     """Resolve a SPICE model for a component, using the full cascade.
 
     Resolution order:
-        1. Project cache (if context provides analysis_json with "file")
-        2. Built-in lookup table
-        3. API parametric fetch (Tier 2, if available — TODO)
-        4. Ideal/generic model fallback
+        1. Project cache — previously resolved models (instant)
+        2. Distributor API parametric data — LCSC, DigiKey, element14, Mouser
+        3. Datasheet PDF extraction — from project datasheets/ directory
+        4. Built-in lookup table — ~100 common parts with verified specs
+        5. Ideal/generic model fallback
+
+    Real data (APIs, datasheets) takes priority over the lookup table.
+    The lookup table is the offline safety net when no network/datasheet
+    is available.
 
     Args:
         mpn: Manufacturer part number (from det["value"])
         component_type: Hint — "opamp", "ldo", "comparator", "vref"
-        context: Analysis JSON dict (for cache dir resolution)
+        context: Analysis JSON dict (for cache dir and project dir)
 
     Returns:
         (subckt_string, source_note, specs_or_None)
-        source_note is "cache:{mpn}", "lookup:{mpn}", "api:digikey:{mpn}", or "ideal"
+        source_note examples: "cache:LM358", "api:lcsc", "datasheet:LM358",
+                              "lookup:LM358", "ideal"
     """
     if not mpn or len(mpn) < 2:
         return None, "ideal", None
@@ -197,26 +203,49 @@ def get_model_for_part(mpn, component_type=None, context=None):
         if cached_subckt:
             return cached_subckt, f"cache:{mpn}", cached_specs
 
-    # --- Tier 1: Built-in lookup table ---
+    # --- Tier 1: Distributor API parametric specs ---
+    try:
+        from spice_spec_fetcher import fetch_specs
+        # Derive project dir from context for datasheet fallback
+        project_dir = None
+        if context:
+            source_file = context.get("file", "")
+            if source_file:
+                from pathlib import Path
+                project_dir = str(Path(source_file).parent)
+
+        api_specs, api_source = fetch_specs(mpn, component_type, project_dir)
+        if api_specs:
+            # Determine component type from the specs we got
+            resolved_type = component_type
+            if not resolved_type:
+                if api_specs.get("gbw_hz"):
+                    resolved_type = "opamp"
+                elif api_specs.get("dropout_mv") or api_specs.get("iout_max_ma"):
+                    resolved_type = "ldo"
+            generator = _GENERATORS.get(resolved_type)
+            if generator:
+                subckt = generator(mpn, api_specs)
+                if context:
+                    cache_dir = resolve_cache_dir(context)
+                    cache_model(cache_dir, mpn, subckt, api_specs,
+                                api_source, resolved_type)
+                return subckt, f"{api_source}", api_specs
+    except ImportError:
+        pass  # spice_spec_fetcher not available
+    except Exception:
+        pass  # API/datasheet extraction failed — fall through
+
+    # --- Tier 2: Built-in lookup table (offline fallback) ---
     specs, resolved_type = lookup_part_specs(mpn, component_type)
     if specs:
         generator = _GENERATORS.get(resolved_type)
         if generator:
             subckt = generator(mpn, specs)
-            # Cache locally for next run
             if context:
                 cache_dir = resolve_cache_dir(context)
                 cache_model(cache_dir, mpn, subckt, specs, "lookup", resolved_type)
             return subckt, f"lookup:{mpn}", specs
-
-    # --- Tier 2: API parametric fetch (TODO — spice_spec_fetcher.py) ---
-    # This will be implemented in Step 6 of the plan.
-    # try:
-    #     from spice_spec_fetcher import fetch_specs
-    #     api_specs = fetch_specs(mpn, component_type)
-    #     if api_specs: ...
-    # except ImportError:
-    #     pass
 
     # --- Fallback: ideal model ---
     return None, "ideal", None

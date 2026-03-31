@@ -260,8 +260,10 @@ When the analyzer detects an opamp with a recognized MPN (e.g., LM358, TL072, MC
 
 Model resolution cascade:
 1. **Project cache** (`<project>/spice/models/`) — previously resolved models
-2. **Built-in lookup table** — ~100 common parts with verified specs
-3. **Ideal model fallback** — if the MPN isn't recognized
+2. **Distributor API specs** — queries LCSC (no auth), DigiKey, element14, Mouser for real parametric data
+3. **Datasheet PDF extraction** — reads from `<project>/datasheets/` (synced by any distributor skill)
+4. **Built-in lookup table** — ~100 common parts as offline fallback
+5. **Ideal model fallback** — if the MPN isn't recognized by any source
 
 The `model_note` field in the report indicates which model was used: `"LM358 behavioral (lookup:LM358, GBW=1.0MHz)"` vs `"ideal opamp (Aol=1e6, GBW~10MHz)"`.
 

@@ -24,11 +24,13 @@ Documentation of the SPICE models used across all phases — ideal models, per-p
 
 When the skill encounters an active component (opamp, LDO, comparator), it resolves the model through this cascade:
 
-1. **Project cache** — `<project>/spice/models/index.json` stores previously resolved models
-2. **Built-in lookup table** — `spice_part_library.py` has ~100 common parts with datasheet-verified specs
-3. **Ideal model fallback** — generic model with fixed parameters (e.g., 10 MHz GBW for opamps)
+1. **Project cache** — `<project>/spice/models/index.json` stores previously resolved models (instant, no network)
+2. **Distributor API parametric data** — queries LCSC (no auth), DigiKey, element14, Mouser for real electrical specs like GBW, slew rate, offset voltage. Structured JSON, no PDF parsing.
+3. **Datasheet PDF extraction** — reads downloaded PDFs from `<project>/datasheets/` (synced by any distributor skill), extracts specs via text pattern matching. Requires `pdftotext`.
+4. **Built-in lookup table** — `spice_part_library.py` has ~100 common parts with datasheet-verified specs. Offline safety net.
+5. **Ideal model fallback** — generic model with fixed parameters (e.g., 10 MHz GBW for opamps)
 
-Passive components (R, C, L) always use ngspice's exact built-in primitives — no model resolution needed.
+Real data from APIs and datasheets takes priority over the lookup table. The table serves as an offline fallback when no network or downloaded PDFs are available. Passive components (R, C, L) always use ngspice's exact built-in primitives — no model resolution needed.
 
 The lookup table also includes crystal driver specs for ~30 MCU families (STM32, ESP32, nRF52, ATmega, RP2040) with oscillator transconductance values for startup margin analysis.
 
