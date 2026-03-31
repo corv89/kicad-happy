@@ -77,7 +77,7 @@ def run_ngspice(cir_file, timeout=5):
 
 
 def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
-                         parasitics=None):
+                         parasitics=None, simulator_backend=None):
     """Run SPICE simulations for all simulatable subcircuits in the analysis.
 
     Args:
@@ -158,13 +158,21 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                 # Generator decided this detection isn't simulatable
                 continue
 
+            # Handle SpiceTestbench objects (new) or raw strings (legacy)
+            from spice_templates import SpiceTestbench
+            if isinstance(cir_content, SpiceTestbench):
+                cir_content = cir_content.render(simulator_backend, out_file_spice)
+
             # Write .cir file
             with open(cir_file, "w") as f:
                 f.write(cir_content)
 
-            # Run ngspice
+            # Run simulation
             t0 = time.monotonic()
-            success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
+            if simulator_backend:
+                success, stdout, stderr = simulator_backend.run(cir_file, timeout=timeout)
+            else:
+                success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
             elapsed = time.monotonic() - t0
             total_time += elapsed
 
@@ -185,7 +193,10 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                 continue
 
             # Parse results
-            sim_data = parse_output_file(out_file)
+            if simulator_backend and hasattr(simulator_backend, 'parse_results'):
+                sim_data = simulator_backend.parse_results(out_file, stdout, stderr)
+            else:
+                sim_data = parse_output_file(out_file)
 
             # Evaluate
             if evaluator:
@@ -240,11 +251,18 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
             if cir_content is None:
                 continue
 
+            from spice_templates import SpiceTestbench
+            if isinstance(cir_content, SpiceTestbench):
+                cir_content = cir_content.render(simulator_backend, out_file_spice)
+
             with open(cir_file, "w") as f:
                 f.write(cir_content)
 
             t0 = time.monotonic()
-            success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
+            if simulator_backend:
+                success, stdout, stderr = simulator_backend.run(cir_file, timeout=timeout)
+            else:
+                success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
             elapsed = time.monotonic() - t0
             total_time += elapsed
 
@@ -263,7 +281,10 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                 })
                 continue
 
-            sim_data = parse_output_file(out_file)
+            if simulator_backend and hasattr(simulator_backend, 'parse_results'):
+                sim_data = simulator_backend.parse_results(out_file, stdout, stderr)
+            else:
+                sim_data = parse_output_file(out_file)
 
             if evaluator:
                 result = evaluator(det, sim_data)
@@ -459,6 +480,7 @@ def main():
         timeout=args.timeout,
         types=types,
         parasitics=parasitics_data,
+        simulator_backend=simulator_backend,
     )
 
     # Clean up file paths if compact mode
