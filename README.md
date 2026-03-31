@@ -72,7 +72,7 @@ The **kicad** skill is the core — the others enhance it with sourcing, datashe
 
 The analysis scripts are pure Python 3 with no required dependencies. Optional extras:
 
-- `ngspice` — SPICE simulation engine for the **spice** skill (`apt install ngspice` / `brew install ngspice`). Not bundled with KiCad — requires separate install. Without it, simulation is gracefully skipped.
+- A **SPICE simulator** for the **spice** skill — one of: `ngspice` (`apt install ngspice` / `brew install ngspice`), LTspice (free from analog.com), or Xyce (from xyce.sandia.gov). Auto-detected. Without one, simulation is gracefully skipped.
 - `requests` — better datasheet downloads (handles HTTP/2, manufacturer anti-bot)
 - `playwright` — last-resort fallback for JS-heavy datasheet sites (Broadcom, Espressif)
 - `pdftotext` (poppler-utils) — better PDF text extraction for datasheet verification
@@ -83,12 +83,13 @@ The distributor skills work best with API credentials, but none are strictly req
 
 > "Help me set up API keys for the distributor skills"
 
-| Distributor   | Env variables                                | How to get                                                                                             |
+| Service       | Env variables                                | How to get                                                                                             |
 | ------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | **DigiKey**   | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | [DigiKey API Portal](https://developer.digikey.com/) — register an app, get OAuth 2.0 credentials      |
 | **Mouser**    | `MOUSER_SEARCH_API_KEY`                      | My Mouser → APIs → register for Search API key                                                         |
 | **element14** | `ELEMENT14_API_KEY`                          | [element14 API Portal](https://partner.element14.com/) — one key covers Newark, Farnell, and element14 |
 | **LCSC**      | *none needed*                                | Uses the free [jlcsearch](https://jlcsearch.tscircuit.com/) community API                              |
+| **SPICE**     | `SPICE_SIMULATOR` *(optional)*               | Auto-detects ngspice/LTspice/Xyce. Set to force a specific one. `NGSPICE_PATH`/`LTSPICE_PATH`/`XYCE_PATH` for non-standard installs. |
 
 ## 🔬 What it looks like in practice
 
