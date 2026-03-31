@@ -26,6 +26,67 @@ from spice_models import (
 
 
 # ---------------------------------------------------------------------------
+# SpiceTestbench — simulator-agnostic testbench representation
+# ---------------------------------------------------------------------------
+
+class SpiceTestbench:
+    """Structured testbench with portable circuit + measurement intent.
+
+    Generators return this instead of raw strings. The simulator backend
+    renders it into a .cir file with the appropriate measurement syntax
+    (ngspice .control blocks, LTspice .meas statements, Xyce .measure).
+
+    The circuit string contains the portable netlist (components, sources,
+    models, subcircuits). The analyses and measurements lists describe
+    what to simulate and measure in a simulator-agnostic way.
+    """
+
+    def __init__(self, circuit, analyses, measurements, extra_vars=None):
+        """
+        Args:
+            circuit: Portable SPICE netlist string (everything except
+                     analysis/measurement commands and .end)
+            analyses: List of (type, spec) tuples.
+                      e.g., [("ac", "dec 100 1 100Meg")]
+            measurements: List of measurement tuples:
+                - ("name", "when", "expr", "value", [rise/fall])
+                - ("name", "find", "expr", "at=value")
+                - ("name", "max", "expr", [from_to])
+                - ("name", "min", "expr")
+                - ("name", "let", "expression")
+            extra_vars: Dict of extra key=value pairs for output
+        """
+        self.circuit = circuit
+        self.analyses = analyses
+        self.measurements = measurements
+        self.extra_vars = extra_vars or {}
+
+    def render(self, backend, output_file):
+        """Render complete .cir file for a specific simulator backend.
+
+        Args:
+            backend: SimulatorBackend instance (or None for ngspice default)
+            output_file: Path for measurement results
+
+        Returns:
+            Complete .cir file content string
+        """
+        if backend is None:
+            # Default to ngspice .control block rendering
+            from spice_simulator import NgspiceBackend
+            backend = NgspiceBackend()
+
+        meas_block = backend.format_measurement_block(
+            self.analyses, self.measurements, output_file, self.extra_vars
+        )
+        return f"{self.circuit}\n{meas_block}\n\n.end\n"
+
+    def render_ngspice(self, output_file):
+        """Convenience: render for ngspice (backward compat)."""
+        return self.render(None, output_file)
+
+
+# ---------------------------------------------------------------------------
 # Parasitic annotation helpers
 # ---------------------------------------------------------------------------
 
@@ -191,7 +252,7 @@ def generate_rc_filter(det, output_file):
     if parasitic_lines:
         model_note = "* Model: ideal passives + PCB trace parasitics"
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for RC filter: {r_ref}/{c_ref}
 * Type: {ftype}, expected fc = {fc:.1f} Hz
 {model_note}
@@ -203,18 +264,16 @@ def generate_rc_filter(det, output_file):
 
 * AC stimulus
 VAC {in_net} 0 DC 0 AC 1
-
-.control
-ac dec 100 {_format_eng(f_start)} {_format_eng(f_stop)}
-* For a simple RC filter, DC gain is ~0dB. Measure -3dB point directly.
-meas ac fc_sim when vdb({out_net})=-3
-meas ac phase_fc find vp({out_net}) at=fc_sim
-echo "fc_sim=$&fc_sim phase_fc=$&phase_fc has_parasitics={'1' if parasitic_lines else '0'}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", f"dec 100 {_format_eng(f_start)} {_format_eng(f_stop)}")]
+    measurements = [
+        ("fc_sim", "when", f"vdb({out_net})", "-3"),
+        ("phase_fc", "find", f"vp({out_net})", "at=fc_sim"),
+    ]
+    extra = {"has_parasitics": "1" if parasitic_lines else "0"}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_lc_filter(det, output_file):
@@ -245,7 +304,7 @@ def generate_lc_filter(det, output_file):
     r_series = 2 * math.pi * f_res * l_henries / 100  # Q=100
     in_net = "ac_in"
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for LC filter: {l_ref}/{c_ref}
 * Expected resonant frequency = {f_res:.1f} Hz, Z0 = {z0:.1f} ohms
 * Model: ideal passives + small inductor ESR (Q=100)
@@ -257,26 +316,21 @@ R_{l_ref}_esr {in_net} {in_net}_mid {_format_eng(r_series)}
 
 * AC stimulus
 VAC {in_net} 0 DC 0 AC 1
-
-.control
-ac dec 200 {_format_eng(f_start)} {_format_eng(f_stop)}
-meas ac gain_peak max vdb({shared})
-* Find peak frequency: narrow search around where gain is within 0.1dB of peak
-let target_lo = gain_peak - 0.1
-meas ac f_peak_lo when vdb({shared})=target_lo rise=1
-meas ac f_peak_hi when vdb({shared})=target_lo fall=1
-* Geometric mean of the two crossings is a good peak estimate
-let f_peak = (f_peak_lo + f_peak_hi) / 2
-* 3dB bandwidth
-let target_3db = gain_peak - 3
-meas ac bw_3db_lo when vdb({shared})=target_3db rise=1
-meas ac bw_3db_hi when vdb({shared})=target_3db fall=1
-echo "f_peak=$&f_peak gain_peak=$&gain_peak bw_3db_lo=$&bw_3db_lo bw_3db_hi=$&bw_3db_hi" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("ac", f"dec 200 {_format_eng(f_start)} {_format_eng(f_stop)}")]
+    measurements = [
+        ("gain_peak", "max", f"vdb({shared})"),
+        ("target_lo", "let", "gain_peak - 0.1"),
+        ("f_peak_lo", "when", f"vdb({shared})", "target_lo", "rise=1"),
+        ("f_peak_hi", "when", f"vdb({shared})", "target_lo", "fall=1"),
+        ("f_peak", "let", "(f_peak_lo + f_peak_hi) / 2"),
+        ("target_3db", "let", "gain_peak - 3"),
+        ("bw_3db_lo", "when", f"vdb({shared})", "target_3db", "rise=1"),
+        ("bw_3db_hi", "when", f"vdb({shared})", "target_3db", "fall=1"),
+    ]
+
+    return SpiceTestbench(circuit, analyses, measurements)
 
 
 def generate_voltage_divider(det, output_file, vin=3.3):
@@ -318,7 +372,7 @@ def generate_voltage_divider(det, output_file, vin=3.3):
     # Adding a load would shift the result and create false "errors".
     expected_vout = vin * ratio
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for voltage divider: {rt_ref}/{rb_ref}
 * Expected Vout = {vin} * {ratio:.6f} = {expected_vout:.4f} V
 * Model: ideal passives (exact, unloaded)
@@ -326,17 +380,16 @@ def generate_voltage_divider(det, output_file, vin=3.3):
 VIN {top_net} 0 DC {vin}
 {spice_element_for_passive(rt_ref, rt_ohms, top_net, mid_net)}
 {spice_element_for_passive(rb_ref, rb_ohms, mid_net, "0")}
-
-.control
-op
-let vout_sim = v({mid_net})
-let error_pct = abs(vout_sim - {expected_vout}) / {expected_vout} * 100
-echo "vout_sim=$&vout_sim error_pct=$&error_pct expected={expected_vout}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("op", "")]
+    measurements = [
+        ("vout_sim", "let", f"v({mid_net})"),
+        ("error_pct", "let", f"abs(vout_sim - {expected_vout}) / {expected_vout} * 100"),
+    ]
+    extra = {"expected": str(expected_vout)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_opamp_circuit(det, output_file):
@@ -793,7 +846,7 @@ def generate_feedback_network(det, output_file, vin=3.3):
 
     fb_note = f"Connected to {fb_ic} FB pin" if fb_ic else "Feedback network"
 
-    return f"""\
+    circuit = f"""\
 * Auto-generated testbench for feedback network: {rt_ref}/{rb_ref}
 * {fb_note}
 * Expected FB voltage = {vin} * {ratio:.6f} = {expected_vout:.4f} V
@@ -802,17 +855,16 @@ def generate_feedback_network(det, output_file, vin=3.3):
 VIN {top_net} 0 DC {vin}
 {spice_element_for_passive(rt_ref, rt_ohms, top_net, mid_net)}
 {spice_element_for_passive(rb_ref, rb_ohms, mid_net, "0")}
-
-.control
-op
-let vout_sim = v({mid_net})
-let error_pct = abs(vout_sim - {expected_vout}) / {expected_vout} * 100
-echo "vout_sim=$&vout_sim error_pct=$&error_pct expected={expected_vout}" > {output_file}
-quit
-.endc
-
-.end
 """
+
+    analyses = [("op", "")]
+    measurements = [
+        ("vout_sim", "let", f"v({mid_net})"),
+        ("error_pct", "let", f"abs(vout_sim - {expected_vout}) / {expected_vout} * 100"),
+    ]
+    extra = {"expected": str(expected_vout)}
+
+    return SpiceTestbench(circuit, analyses, measurements, extra)
 
 
 def generate_transistor_circuit(det, output_file):
