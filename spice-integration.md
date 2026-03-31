@@ -74,11 +74,12 @@ Parts not in the table fall back to generic ideal models with a note in the repo
 
 1. **Project cache** — `<project>/spice/models/` (previously resolved, instant)
 2. **Distributor API parametric data** — queries LCSC (no auth), DigiKey, element14, Mouser for real specs. Returns GBW, slew rate, etc. from structured parametric databases.
-3. **Datasheet PDF extraction** — reads downloaded PDFs from `<project>/datasheets/`, extracts electrical specs via text pattern matching. Requires `pdftotext`.
-4. **Built-in lookup table** — `spice_part_library.py` (~100 common parts with datasheet-verified specs). Offline safety net.
-5. **Ideal model fallback** — generic model with fixed parameters (10 MHz GBW for opamps)
+3. **Structured datasheet extraction** — reads pre-extracted specs from `<project>/datasheets/extracted/<MPN>.json`. Cached JSON with SPICE-relevant parameters extracted by Claude from PDF datasheets, scored for quality.
+4. **Datasheet PDF regex extraction** — reads downloaded PDFs from `<project>/datasheets/`, extracts electrical specs via text pattern matching. Requires `pdftotext`. Last-resort fallback.
+5. **Built-in lookup table** — `spice_part_library.py` (~100 common parts with datasheet-verified specs). Offline safety net.
+6. **Ideal model fallback** — generic model with fixed parameters (10 MHz GBW for opamps)
 
-Real data (APIs, datasheets) takes priority over the lookup table. The table is the offline fallback when no network or downloaded datasheets are available. Any distributor skill that has synced datasheets contributes — DigiKey, LCSC, element14, or Mouser.
+Real data (APIs, structured extractions, datasheets) takes priority over the lookup table. The table is the offline fallback when no network or downloaded datasheets are available. Any distributor skill that has synced datasheets contributes — DigiKey, LCSC, element14, or Mouser. Structured extractions are produced by the `kicad` skill's datasheet extraction workflow (see `kicad/references/datasheet-extraction.md`).
 
 Models are cached project-locally next to the schematic files, same pattern as the `datasheets/` directory. Once a model is resolved and cached, subsequent runs use the cache (tier 1) without any network calls.
 

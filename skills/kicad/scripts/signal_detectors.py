@@ -2073,11 +2073,105 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             entry["feedback_capacitor"] = {"ref": cf_ref, "farads": cf_val}
         if ri_ref:
             entry["input_resistor"] = {"ref": ri_ref, "ohms": ri_val}
+
+        # ---- Advanced opamp checks ----
+        warnings = []
+
+        # Bias current path check
+        if pos_net and config not in ("comparator_or_open_loop", "unknown"):
+            pos_net_info = ctx.nets.get(pos_net, {})
+            has_dc_path = False
+            has_cap_only = False
+            for p in pos_net_info.get("pins", []):
+                if p["component"] == ref:
+                    continue
+                neighbor = next((c for c in ctx.components if c["reference"] == p["component"]), None)
+                if not neighbor:
+                    continue
+                if neighbor["type"] == "resistor":
+                    has_dc_path = True
+                    break
+                elif neighbor["type"] in ("ic", "connector"):
+                    has_dc_path = True
+                    break
+                elif neighbor["type"] == "capacitor":
+                    has_cap_only = True
+            if pos_net and (ctx.is_power_net(pos_net) or ctx.is_ground(pos_net)):
+                has_dc_path = True
+            if has_cap_only and not has_dc_path:
+                warnings.append("Non-inverting input AC-coupled with no DC bias path — "
+                                "input bias current has no return path")
+
+        # Output capacitive loading check
+        if out_net and config not in ("comparator_or_open_loop", "unknown"):
+            out_net_info = ctx.nets.get(out_net, {})
+            for p in out_net_info.get("pins", []):
+                if p["component"] == ref:
+                    continue
+                neighbor = next((c for c in ctx.components if c["reference"] == p["component"]), None)
+                if not neighbor or neighbor["type"] != "capacitor":
+                    continue
+                cap_val = neighbor.get("parsed_value") or parse_value(neighbor.get("value", ""))
+                if cap_val and cap_val > 100e-12:
+                    formatted = f"{cap_val*1e9:.0f}nF" if cap_val >= 1e-9 else f"{cap_val*1e12:.0f}pF"
+                    warnings.append(f"Capacitive load {neighbor['reference']} ({formatted}) on "
+                                    f"output — verify opamp stability with this load")
+
+        # High-impedance feedback warning
+        if rf_ref and rf_val and rf_val > 1e6:
+            formatted_r = f"{rf_val/1e6:.1f}MΩ" if rf_val >= 1e6 else f"{rf_val/1e3:.0f}kΩ"
+            warnings.append(f"High-impedance feedback ({rf_ref}={formatted_r}) — "
+                            f"sensitive to PCB leakage and parasitic capacitance")
+
+        if warnings:
+            entry["warnings"] = warnings
+
         # Dedup
         dedup_key = (ref, out_net, neg_net)
         if dedup_key not in seen_opamp_units:
             seen_opamp_units.add(dedup_key)
             opamp_circuits.append(entry)
+
+    # ---- Unused channel detection for multi-channel opamps ----
+    units_by_ref = {}
+    for oa in opamp_circuits:
+        units_by_ref.setdefault(oa["reference"], set()).add(oa.get("unit", 1))
+
+    for ic in [c for c in ctx.components if c["type"] == "ic"]:
+        ref = ic["reference"]
+        if ref not in units_by_ref:
+            continue
+        lib = ic.get("lib_id", "").lower()
+        val = ic.get("value", "").lower()
+        expected_units = None
+        if "quad" in lib or "quad" in val or any(q in val for q in ("lm324", "tl074", "tl084", "mcp6004", "opa4")):
+            expected_units = 4
+        elif "dual" in lib or "dual" in val or any(d in val for d in ("lm358", "tl072", "tl082", "ne5532", "mcp6002", "opa2")):
+            expected_units = 2
+        if expected_units is None:
+            continue
+        used_units = units_by_ref[ref]
+        if len(used_units) < expected_units:
+            unused = sorted(set(range(1, expected_units + 1)) - used_units)
+            if unused:
+                inputs_floating = False
+                for u in unused:
+                    for pin in ic.get("pins", []):
+                        if pin.get("unit") == u:
+                            pname = pin.get("name", "").upper()
+                            if any(k in pname for k in ("+IN", "INP", "IN+", "NON_INV")):
+                                net_name, _ = ctx.pin_net.get((ref, pin["number"]), (None, None))
+                                if not net_name:
+                                    inputs_floating = True
+                for oa in opamp_circuits:
+                    if oa["reference"] == ref:
+                        oa["unused_channels"] = unused
+                        oa["unused_channel_status"] = "inputs_floating" if inputs_floating else "inputs_terminated"
+                        if inputs_floating:
+                            oa.setdefault("warnings", []).append(
+                                f"Unused opamp channel(s) {unused} have floating inputs — "
+                                f"tie inputs to a defined potential")
+                        break
 
     return opamp_circuits
 
