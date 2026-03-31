@@ -30,7 +30,7 @@ When the skill encounters an active component (opamp, LDO, comparator), it resol
 4. **Built-in lookup table** — `spice_part_library.py` has ~100 common parts with datasheet-verified specs. Offline safety net.
 5. **Ideal model fallback** — generic model with fixed parameters (e.g., 10 MHz GBW for opamps)
 
-Real data from APIs and datasheets takes priority over the lookup table. The table serves as an offline fallback when no network or downloaded PDFs are available. Passive components (R, C, L) always use ngspice's exact built-in primitives — no model resolution needed.
+Real data from APIs and datasheets takes priority over the lookup table. The table serves as an offline fallback when no network or downloaded PDFs are available. Passive components (R, C, L) always use the simulator's exact built-in primitives (standard SPICE R/C/L elements) — no model resolution needed. All three supported simulators (ngspice, LTspice, Xyce) handle these identically.
 
 The lookup table also includes crystal driver specs for ~30 MCU families (STM32, ESP32, nRF52, ATmega, RP2040) with oscillator transconductance values for startup margin analysis.
 
@@ -262,13 +262,19 @@ If the inferred voltage is wrong, the absolute Vout value will be wrong but the 
 
 ---
 
-## ngspice Measurement Techniques
+## Measurement Techniques
 
-The testbenches use `.control` blocks (ngspice scripting) rather than `.meas` statements in the netlist body. This is because:
+### ngspice Backend
+
+The ngspice backend uses `.control` blocks (ngspice scripting) rather than `.meas` statements in the netlist body. This is because:
 
 1. `.control` blocks allow `let` for computed values (e.g., `let target = gain_1k - 3`)
 2. Results are written as ASCII text via `echo`, avoiding binary `.raw` file parsing
 3. Flow control (`if`/`else`) is available for conditional measurement
+
+### LTspice and Xyce Backends
+
+LTspice and Xyce use `.meas`/`.measure` statements directly in the netlist body (no `.control` block). Measurement results are parsed from the `.log` file (LTspice) or stdout (Xyce). The `SpiceTestbench` class abstracts the difference — generators define measurement intent (what to measure), and the backend renders the simulator-specific syntax.
 
 ### Key ngspice Gotchas
 

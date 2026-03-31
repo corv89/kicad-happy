@@ -1,11 +1,11 @@
 ---
 name: spice
-description: Run automatic SPICE simulations on detected subcircuits from KiCad schematic analysis — validates filter frequencies, divider ratios, opamp gains, LC resonance, and crystal load capacitance against ngspice simulation results. Generates testbenches, runs them in batch mode, and produces a structured pass/warn/fail report. Requires ngspice installed separately (not bundled with KiCad). Use this skill whenever the user asks to simulate, verify, or validate any analog subcircuit — RC filters, LC filters, voltage dividers, opamp circuits, crystal oscillators. Also use when the user says things like "simulate my circuit", "run spice", "verify with simulation", "check my filter cutoff", "does this divider actually give 1.65V", "what's the actual bandwidth of this opamp stage", "validate the analyzer's calculations", or wants to go beyond static analysis to dynamic SPICE verification. Use during design reviews whenever the schematic analyzer detects simulatable subcircuits and ngspice is available — simulation adds a layer of confidence that calculated values (fc, gain, Vout) match real circuit behavior. Even if the user doesn't explicitly ask for simulation, consider suggesting it when the kicad skill's analysis reports RC filters, opamp circuits, or feedback networks where a numerical validation would catch errors.
+description: Run automatic SPICE simulations on detected subcircuits from KiCad schematic analysis — validates filter frequencies, divider ratios, opamp gains, LC resonance, and crystal load capacitance against simulation results. Supports ngspice, LTspice, and Xyce (auto-detected). Generates testbenches, runs them in batch mode, and produces a structured pass/warn/fail report. Use this skill whenever the user asks to simulate, verify, or validate any analog subcircuit — RC filters, LC filters, voltage dividers, opamp circuits, crystal oscillators. Also use when the user says things like "simulate my circuit", "run spice", "verify with simulation", "check my filter cutoff", "does this divider actually give 1.65V", "what's the actual bandwidth of this opamp stage", "validate the analyzer's calculations", or wants to go beyond static analysis to dynamic SPICE verification. Use during design reviews whenever the schematic analyzer detects simulatable subcircuits and a SPICE simulator is available — simulation adds a layer of confidence that calculated values (fc, gain, Vout) match real circuit behavior. Even if the user doesn't explicitly ask for simulation, consider suggesting it when the kicad skill's analysis reports RC filters, opamp circuits, or feedback networks where a numerical validation would catch errors.
 ---
 
 # SPICE Simulation Skill
 
-Automatically generates and runs ngspice testbenches for circuit subcircuits detected by the `kicad` skill's schematic analyzer. Validates calculated values (filter frequencies, divider ratios, opamp gains) against actual SPICE simulation results and produces a structured report.
+Automatically generates and runs SPICE testbenches for circuit subcircuits detected by the `kicad` skill's schematic analyzer. Supports ngspice, LTspice, and Xyce (auto-detected). Validates calculated values (filter frequencies, divider ratios, opamp gains) against actual simulation results and produces a structured report.
 
 This skill inverts the typical simulation workflow: instead of requiring users to create simulation sources and configure analysis (which ~2.5% of KiCad users do), it generates targeted testbenches automatically from the analyzer's subcircuit detections.
 
@@ -15,19 +15,19 @@ This skill inverts the typical simulation workflow: instead of requiring users t
 |-------|---------|
 | `kicad` | Schematic/PCB analysis — produces the analyzer JSON this skill consumes |
 
-**Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs ngspice, and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report.
+**Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report.
 
 ## Requirements
 
-- **ngspice** — must be installed separately (not bundled with KiCad on any platform as a standalone binary)
-  - Linux: `sudo apt install ngspice` or `sudo dnf install ngspice`
-  - macOS: `brew install ngspice`
-  - Windows: download from ngspice.sourceforge.io
-  - Flatpak KiCad users: the Flatpak bundles `libngspice.so` for KiCad's GUI simulator but does NOT include the `ngspice` executable — a separate system install is required
+- **A SPICE simulator** — one of the following (auto-detected, first available wins):
+  - **ngspice** — `sudo apt install ngspice` (Linux) / `brew install ngspice` (macOS) / ngspice.sourceforge.io (Windows). Most common choice.
+  - **LTspice** — free from analog.com/ltspice. Popular on Windows, works via wine on Linux.
+  - **Xyce** — from xyce.sandia.gov. Parallel SPICE for large circuits.
+  - Override with `--simulator ngspice|ltspice|xyce` or `SPICE_SIMULATOR` env var.
 - **Python 3.8+** — stdlib only, no pip dependencies
 - **Schematic analyzer JSON** — from `analyze_schematic.py --output`
 
-If ngspice is not installed, skip simulation gracefully and note it in the report. Do not treat a missing ngspice as an error — it's an optional enhancement.
+If no simulator is installed, skip simulation gracefully and note it in the report. Do not treat a missing simulator as an error — it's an optional enhancement.
 
 ## Workflow
 
@@ -132,7 +132,7 @@ The script selects subcircuits from the analyzer's `signal_analysis` section. No
   ],
   "workdir": "/tmp/spice_sim_xxx",
   "total_elapsed_s": 0.032,
-  "ngspice": "/usr/bin/ngspice"
+  "simulator": "ngspice"
 }
 ```
 
@@ -143,7 +143,7 @@ The script selects subcircuits from the analyzer's `signal_analysis` section. No
 | **pass** | Simulation confirms the analyzer's detection within tolerance | Report as confirmed. No action needed. |
 | **warn** | Simulation shows something worth noting — small deviation, model limitation, or edge case | Report with context. Often the "warn" reflects a real but minor issue (e.g., slight gain error from ideal opamp model). |
 | **fail** | Simulation contradicts the analyzer — wrong frequency, large gain error, unexpected behavior | Investigate. Could be a real design issue, a topology misdetection by the analyzer, or a testbench generation bug. Check the `.cir` file and log. |
-| **skip** | Could not simulate — missing data, unsupported configuration, ngspice error | Note in report. Check the `note` field for the reason. |
+| **skip** | Could not simulate — missing data, unsupported configuration, simulator error | Note in report. Check the `note` field for the reason. |
 
 ## Interpreting Results
 
@@ -180,12 +180,12 @@ Check the `note` field first. Common causes:
 
 | Note | Cause | Fix |
 |------|-------|-----|
-| "ngspice could not measure -3dB frequency" | AC sweep range doesn't include the -3dB point | Check if the filter fc is very low (<0.1 Hz) or very high (>100 MHz) |
-| "ngspice AC measurement failed" | Testbench topology error — the circuit doesn't converge | Check `.cir` file for floating nodes or missing connections |
+| "could not measure -3dB frequency" | AC sweep range doesn't include the -3dB point | Check if the filter fc is very low (<0.1 Hz) or very high (>100 MHz) |
+| "AC measurement failed" | Testbench topology error — the circuit doesn't converge | Check `.cir` file for floating nodes or missing connections |
 | "Testbench generation failed: KeyError" | Analyzer detection is missing expected fields | Check analyzer JSON — the detection may be incomplete |
-| "ngspice failed: ..." | ngspice error during simulation | Check `.log` file for ngspice error messages |
+| "ngspice/ltspice/xyce failed: ..." | Simulator error | Check `.log` file for error messages |
 
-When debugging, use `--workdir` to preserve simulation files. The `.cir` file is a standard ngspice netlist that can be run manually (`ngspice -b file.cir`) or opened in any SPICE-compatible tool. The `.log` file contains ngspice stdout/stderr.
+When debugging, use `--workdir` to preserve simulation files. The `.cir` file is a standard SPICE netlist that can be run manually (`ngspice -b file.cir`, or opened in LTspice/Xyce). The `.log` file contains simulator stdout/stderr.
 
 ## Presenting Results to Users
 
@@ -230,7 +230,7 @@ Active oscillator module — no external load caps to validate.
 
 ```
 ## Simulation Verification (4 pass, 1 warn, 0 fail, 1 skip)
-ngspice verified 5 subcircuits in 0.03s. All passive circuits confirmed.
+Verified 5 subcircuits in 0.03s. All passive circuits confirmed.
 One opamp result requires interpretation (see U4A above).
 ```
 
@@ -245,10 +245,11 @@ For detailed information about the behavioral models used, their accuracy envelo
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/simulate_subcircuits.py` | Main orchestrator — CLI entry point, reads JSON, generates testbenches, runs ngspice, produces report |
+| `scripts/simulate_subcircuits.py` | Main orchestrator — CLI entry point, reads JSON, generates testbenches, runs simulator, produces report |
 | `scripts/spice_templates.py` | Testbench generators per detector type — one function per signal_analysis key |
 | `scripts/spice_models.py` | Behavioral model definitions (ideal opamp, generic semiconductors), net sanitization, engineering notation formatting |
-| `scripts/spice_results.py` | ngspice output parsing and per-type evaluation with pass/warn/fail/skip logic |
+| `scripts/spice_results.py` | Simulation output parsing and per-type evaluation with pass/warn/fail/skip logic |
+| `scripts/spice_simulator.py` | Simulator backends — ngspice, LTspice, Xyce auto-detection and batch execution |
 | `scripts/spice_part_library.py` | Lookup table of electrical specs for ~100 common opamps, LDOs, comparators, voltage references, crystal drivers |
 | `scripts/spice_model_generator.py` | Parameterized behavioral .subckt generation from specs dicts |
 | `scripts/spice_model_cache.py` | Project-local model cache in `spice/models/` next to the schematic |
