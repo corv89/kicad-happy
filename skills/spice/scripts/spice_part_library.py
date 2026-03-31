@@ -31,13 +31,13 @@ import re
 OPAMP_SPECS = {
     # TI — general purpose
     "LM358":    {"gbw_hz": 1e6,   "slew_vus": 0.3,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 2e6,   "supply_min": 3,   "supply_max": 32,  "rro": False, "rri": False, "swing_v": 1.5},
-    "LM324":    {"gbw_hz": 1e6,   "slew_vus": 0.4,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 2e6,   "supply_min": 3,   "supply_max": 32,  "rro": False, "rri": False, "swing_v": 1.5},
-    "TL072":    {"gbw_hz": 3e6,   "slew_vus": 13,   "vos_mv": 3.0,  "aol_db": 106, "rin_ohms": 1e12,  "supply_min": 7,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
-    "TL074":    {"gbw_hz": 3e6,   "slew_vus": 13,   "vos_mv": 3.0,  "aol_db": 106, "rin_ohms": 1e12,  "supply_min": 7,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "LM324":    {"gbw_hz": 1e6,   "slew_vus": 0.5,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 2e6,   "supply_min": 3,   "supply_max": 32,  "rro": False, "rri": False, "swing_v": 1.5},
+    "TL072":    {"gbw_hz": 3e6,   "slew_vus": 8,    "vos_mv": 3.0,  "aol_db": 106, "rin_ohms": 1e12,  "supply_min": 7,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "TL074":    {"gbw_hz": 3e6,   "slew_vus": 8,    "vos_mv": 3.0,  "aol_db": 106, "rin_ohms": 1e12,  "supply_min": 7,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "TL082":    {"gbw_hz": 4e6,   "slew_vus": 13,   "vos_mv": 3.0,  "aol_db": 106, "rin_ohms": 1e12,  "supply_min": 7,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "TL084":    {"gbw_hz": 4e6,   "slew_vus": 13,   "vos_mv": 3.0,  "aol_db": 106, "rin_ohms": 1e12,  "supply_min": 7,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "NE5532":   {"gbw_hz": 10e6,  "slew_vus": 9,    "vos_mv": 0.5,  "aol_db": 100, "rin_ohms": 300e3, "supply_min": 8,   "supply_max": 44,  "rro": False, "rri": False, "swing_v": 2.0},
-    "OPA2134":  {"gbw_hz": 8e6,   "slew_vus": 20,   "vos_mv": 0.5,  "aol_db": 120, "rin_ohms": 1e13,  "supply_min": 5,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OPA2134":  {"gbw_hz": 8e6,   "slew_vus": 20,   "vos_mv": 1.0,  "aol_db": 120, "rin_ohms": 1e13,  "supply_min": 5,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "LM741":    {"gbw_hz": 1.5e6, "slew_vus": 0.5,  "vos_mv": 1.0,  "aol_db": 106, "rin_ohms": 2e6,   "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
 
     # Microchip — low-power CMOS
@@ -56,7 +56,7 @@ OPAMP_SPECS = {
     "AD8605":   {"gbw_hz": 10e6,  "slew_vus": 5,    "vos_mv": 0.02, "aol_db": 120, "rin_ohms": 1e12,  "supply_min": 2.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
     "AD8607":   {"gbw_hz": 0.4e6, "slew_vus": 0.1,  "vos_mv": 0.02, "aol_db": 120, "rin_ohms": 1e12,  "supply_min": 2.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
     "AD8099":   {"gbw_hz": 710e6, "slew_vus": 1350, "vos_mv": 0.2,  "aol_db": 92,  "rin_ohms": 6.5e6, "supply_min": 9,   "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.3},
-    "OP07":     {"gbw_hz": 0.6e6, "slew_vus": 0.3,  "vos_mv": 0.075,"aol_db": 126, "rin_ohms": 33e6,  "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OP07":     {"gbw_hz": 0.6e6, "slew_vus": 0.3,  "vos_mv": 0.06, "aol_db": 126, "rin_ohms": 33e6,  "supply_min": 6,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "OP27":     {"gbw_hz": 8e6,   "slew_vus": 2.8,  "vos_mv": 0.03, "aol_db": 126, "rin_ohms": 6e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "AD620":    {"gbw_hz": 1e6,   "slew_vus": 1.2,  "vos_mv": 0.03, "aol_db": 120, "rin_ohms": 10e9,  "supply_min": 5,   "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.2},
 
@@ -79,12 +79,12 @@ OPAMP_SPECS = {
     # TI — high-speed / wideband
     "OPA695":   {"gbw_hz": 1700e6,"slew_vus": 4300, "vos_mv": 1.5,  "aol_db": 70,  "rin_ohms": 160e3, "supply_min": 10,  "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.5},
     "OPA4991":  {"gbw_hz": 4.5e6, "slew_vus": 21,   "vos_mv": 0.025,"aol_db": 140, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 40,  "rro": False, "rri": False, "swing_v": 1.5},
-    "OPA1602":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
-    "OPA1604":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OPA1602":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.1,  "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OPA1604":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.1,  "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "OPA4202":  {"gbw_hz": 1e6,   "slew_vus": 0.35, "vos_mv": 0.025,"aol_db": 142, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.5},
 
     # TI — low-power / precision
-    "TLV9151":  {"gbw_hz": 4.5e6, "slew_vus": 20,   "vos_mv": 0.7,  "aol_db": 114, "rin_ohms": 1e12,  "supply_min": 1.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
+    "TLV9151":  {"gbw_hz": 4.5e6, "slew_vus": 21,   "vos_mv": 0.7,  "aol_db": 114, "rin_ohms": 1e12,  "supply_min": 1.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
     "LM6361":   {"gbw_hz": 50e6,  "slew_vus": 300,  "vos_mv": 2.0,  "aol_db": 80,  "rin_ohms": 1e12,  "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
 
     # Analog Devices — precision / low-noise
@@ -139,11 +139,11 @@ LDO_SPECS = {
 
     # TI
     "TPS7A05":  {"vref": 0.5,  "dropout_mv": 110,  "iq_ua": 1,     "iout_max_ma": 100},
-    "TPS7A20":  {"vref": 0.5,  "dropout_mv": 300,  "iq_ua": 1,     "iout_max_ma": 200},
+    "TPS7A20":  {"vref": 0.5,  "dropout_mv": 300,  "iq_ua": 6.5,   "iout_max_ma": 300},
     "TPS7230":  {"vref": 1.21, "dropout_mv": 300,  "iq_ua": 260,   "iout_max_ma": 200},
 
     # AMS
-    "AMS1117":  {"vref": 1.25, "dropout_mv": 1000, "iq_ua": 5000,  "iout_max_ma": 1000, "vout_fixed": {"-3.3": 3.3, "-5.0": 5.0, "-2.5": 2.5, "-1.8": 1.8}},
+    "AMS1117":  {"vref": 1.25, "dropout_mv": 1300, "iq_ua": 5000,  "iout_max_ma": 1000, "vout_fixed": {"-3.3": 3.3, "-5.0": 5.0, "-2.5": 2.5, "-1.8": 1.8}},
 
     # Microchip
     "MCP1700":  {"vref": 1.2,  "dropout_mv": 178,  "iq_ua": 1.6,   "iout_max_ma": 250},
@@ -166,7 +166,7 @@ LDO_SPECS = {
 
     # TI — low-Iq
     "TPS7A02":  {"vref": 0.5,  "dropout_mv": 200,  "iq_ua": 0.025, "iout_max_ma": 50},
-    "LP5907":   {"vref": 0.5,  "dropout_mv": 120,  "iq_ua": 7,     "iout_max_ma": 250},
+    "LP5907":   {"vref": 0.5,  "dropout_mv": 120,  "iq_ua": 12,    "iout_max_ma": 250},
     "TLV755":   {"vref": 0.6,  "dropout_mv": 200,  "iq_ua": 12,    "iout_max_ma": 500},
     "TPS709":   {"vref": 1.15, "dropout_mv": 300,  "iq_ua": 1,     "iout_max_ma": 150},
     "LP2985":   {"vref": 1.25, "dropout_mv": 280,  "iq_ua": 400,   "iout_max_ma": 150},
@@ -188,7 +188,7 @@ LDO_SPECS = {
 COMPARATOR_SPECS = {
     "LM393":    {"prop_delay_ns": 1300, "output_type": "open_collector", "supply_min": 2,   "supply_max": 36},
     "LM339":    {"prop_delay_ns": 1300, "output_type": "open_collector", "supply_min": 2,   "supply_max": 36},
-    "LM311":    {"prop_delay_ns": 200,  "output_type": "open_collector", "supply_min": 5,   "supply_max": 36},
+    "LM311":    {"prop_delay_ns": 165,  "output_type": "open_collector", "supply_min": 3.5, "supply_max": 30},
     "LM2903":   {"prop_delay_ns": 1300, "output_type": "open_collector", "supply_min": 2,   "supply_max": 36},
     "TLV1805":  {"prop_delay_ns": 40,   "output_type": "push_pull",     "supply_min": 2.5, "supply_max": 5.5},
     "TLV3201":  {"prop_delay_ns": 40,   "output_type": "push_pull",     "supply_min": 2.7, "supply_max": 5.5},
@@ -207,9 +207,9 @@ COMPARATOR_SPECS = {
 #   iq_ua:      Quiescent current (µA)
 # ---------------------------------------------------------------------------
 VREF_SPECS = {
-    "TL431":    {"vref": 2.5,   "tempco_ppm": 50,  "zout_ohms": 0.22, "iq_ua": 1000},
+    "TL431":    {"vref": 2.5,   "tempco_ppm": 50,  "zout_ohms": 0.2,  "iq_ua": 1000},
     "TLV431":   {"vref": 1.24,  "tempco_ppm": 50,  "zout_ohms": 0.22, "iq_ua": 80},
-    "LM4040":   {"vref": {"":   2.048, "-2.5": 2.5, "-4.1": 4.096, "-5.0": 5.0, "-10": 10.0}, "tempco_ppm": 100, "zout_ohms": 1.0, "iq_ua": 100},
+    "LM4040":   {"vref": {"": 2.5, "-2.5": 2.5, "-3.0": 3.0, "-3.3": 3.3, "-4.1": 4.096, "-5.0": 5.0}, "tempco_ppm": 100, "zout_ohms": 0.5, "iq_ua": 60},
     "LM385":    {"vref": 1.235, "tempco_ppm": 20,  "zout_ohms": 0.6,  "iq_ua": 20},
     "REF3033":  {"vref": 3.3,   "tempco_ppm": 50,  "zout_ohms": 0.05, "iq_ua": 200},
     "REF3025":  {"vref": 2.5,   "tempco_ppm": 50,  "zout_ohms": 0.05, "iq_ua": 200},
