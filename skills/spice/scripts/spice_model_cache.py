@@ -19,7 +19,9 @@ The model resolution cascade:
     1. Project cache (spice/models/) — instant, previously resolved
     2. Lookup table (spice_part_library.py) — instant, offline
     3. API parametric data (spice_spec_fetcher.py) — ~1s, needs creds
-    4. Ideal/generic model fallback — instant, always available
+    4. Structured datasheet extraction (datasheets/extracted/) — cached JSON
+    5. Heuristic PDF regex extraction — pdftotext + regex patterns
+    6. Ideal/generic model fallback — instant, always available
 """
 
 import json
@@ -190,9 +192,10 @@ def get_model_for_part(mpn, component_type=None, context=None):
     Resolution order:
         1. Project cache — previously resolved models (instant)
         2. Distributor API parametric data — LCSC, DigiKey, element14, Mouser
-        3. Datasheet PDF extraction — from project datasheets/ directory
-        4. Built-in lookup table — ~100 common parts with verified specs
-        5. Ideal/generic model fallback
+        3. Structured datasheet extraction — from datasheets/extracted/ cache
+        4. Heuristic PDF regex extraction — from datasheets/ PDFs
+        5. Built-in lookup table — ~100 common parts with verified specs
+        6. Ideal/generic model fallback
 
     Real data (APIs, datasheets) takes priority over the lookup table.
     The lookup table is the offline safety net when no network/datasheet

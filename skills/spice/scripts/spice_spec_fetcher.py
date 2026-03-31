@@ -544,10 +544,55 @@ def fetch_specs_from_datasheet(mpn, project_dir):
 # Unified fetch interface
 # ---------------------------------------------------------------------------
 
+def fetch_specs_from_extraction(mpn, project_dir):
+    """Extract SPICE-relevant specs from a cached datasheet extraction."""
+    if not project_dir:
+        return None
+    from pathlib import Path
+    extract_dir = Path(project_dir) / "datasheets" / "extracted"
+    index_path = extract_dir / "index.json"
+    if not index_path.exists():
+        return None
+    try:
+        with open(index_path) as f:
+            index = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    import re as _re
+    key = _re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip())
+    entry = index.get("extractions", {}).get(key)
+    if not entry:
+        for k, v in index.get("extractions", {}).items():
+            if k.upper() == key.upper():
+                entry = v
+                break
+    if not entry:
+        return None
+    json_file = extract_dir / entry.get("file", "")
+    if not json_file.exists():
+        return None
+    try:
+        with open(json_file) as f:
+            extraction = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    spice = extraction.get("spice_specs", {})
+    if not spice:
+        return None
+    specs = {k: v for k, v in spice.items() if v is not None}
+    if not specs:
+        return None
+    if specs.get("gbw_hz") or specs.get("vref") or specs.get("dropout_mv"):
+        specs["_source"] = f"extraction:{mpn}"
+        return specs
+    return None
+
+
 def fetch_specs(mpn, component_type=None, project_dir=None):
     """Try all available sources for component specs.
 
-    Order: LCSC (no auth) → DigiKey → element14 → Mouser → datasheet PDF
+    Order: LCSC (no auth) → DigiKey → element14 → Mouser →
+           extraction cache → datasheet PDF regex
 
     Args:
         mpn: Manufacturer part number
@@ -575,7 +620,17 @@ def fetch_specs(mpn, component_type=None, project_dir=None):
         except Exception:
             continue
 
-    # Try datasheet PDF extraction
+    # Try structured datasheet extraction cache
+    if project_dir:
+        try:
+            specs = fetch_specs_from_extraction(mpn, project_dir)
+            if specs:
+                source = specs.pop("_source", f"extraction:{mpn}")
+                return specs, source
+        except Exception:
+            pass
+
+    # Try heuristic datasheet PDF regex extraction (last resort)
     if project_dir:
         try:
             specs = fetch_specs_from_datasheet(mpn, project_dir)

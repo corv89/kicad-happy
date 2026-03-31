@@ -4972,102 +4972,439 @@ def analyze_sleep_current(components: list[dict], nets: dict, pin_net: dict,
     }
 
 
-def analyze_voltage_derating(components: list[dict], nets: dict,
-                             signal_analysis: dict, pin_net: dict) -> dict:
-    """Check capacitor voltage ratings against applied rail voltage.
+_DERATING_PROFILES = {
+    "commercial": {
+        "ceramic_cap": 0.50, "electrolytic_cap": 0.80, "tantalum_cap": 0.80, "unknown_cap": 0.50,
+        "ic_abs_max": 0.90, "resistor_power": 0.50,
+        "over_designed_cap_margin": 0.80, "over_designed_res_margin": 0.90,
+    },
+    "military": {
+        "ceramic_cap": 0.40, "electrolytic_cap": 0.60, "tantalum_cap": 0.50, "unknown_cap": 0.40,
+        "ic_abs_max": 0.80, "resistor_power": 0.50,
+        "over_designed_cap_margin": 0.85, "over_designed_res_margin": 0.95,
+    },
+    "automotive": {
+        "ceramic_cap": 0.50, "electrolytic_cap": 0.70, "tantalum_cap": 0.60, "unknown_cap": 0.50,
+        "ic_abs_max": 0.85, "resistor_power": 0.50,
+        "over_designed_cap_margin": 0.80, "over_designed_res_margin": 0.90,
+    },
+}
 
-    Parses voltage rating from cap value string (e.g. '100nF/25V' -> 25V),
-    compares against the power rail voltage, and flags caps with insufficient
-    derating margin.
+
+def analyze_voltage_derating(components: list[dict], nets: dict,
+                             signal_analysis: dict, pin_net: dict,
+                             project_dir: str | None = None,
+                             derating_profile: str = "commercial") -> dict:
+    """Check component voltage/power ratings against applied conditions.
+
+    Checks capacitors (voltage derating by dielectric type), IC absolute
+    max voltage (from datasheet extraction cache), and resistor power
+    dissipation (from footprint package size). Also flags over-designed
+    components as cost/size optimization opportunities.
+
+    Derating profiles: 'commercial' (default), 'military', 'automotive'.
     """
 
     def _parse_voltage_rating(value_str: str) -> float | None:
-        """Extract voltage rating from value string."""
         if not value_str:
             return None
-        # Patterns: "100nF/25V", "10uF 16V", "4.7u/10V/X5R", "100n 50V 0805"
-        # Also: "25V", "16V" as standalone segments
         for part in re.split(r'[/\s]+', value_str):
             m = re.match(r'^(\d+\.?\d*)\s*[Vv]$', part.strip())
             if m:
                 return float(m.group(1))
         return None
 
-    derating_issues = []
-    caps_checked = 0
+    def _classify_cap_dielectric(comp: dict) -> str:
+        text = " ".join([comp.get("value", ""), comp.get("footprint", ""),
+                         comp.get("description", "")]).upper()
+        if any(kw in text for kw in ("X5R", "X7R", "X6S", "X8R", "C0G", "NP0", "COG", "Y5V", "Z5U", "MLCC")):
+            return "ceramic"
+        if any(kw in text for kw in ("ELECTROLYTIC", "ELCO", "POLAR")) or "CP_ELEC" in text or "CP_" in text:
+            return "electrolytic"
+        if any(kw in text for kw in ("TANTALUM", "TANT")):
+            return "tantalum"
+        if "Capacitor_SMD:C_" in comp.get("footprint", ""):
+            return "ceramic"
+        return "unknown"
 
+    def _get_rail_voltage(net_name):
+        for reg in signal_analysis.get("power_regulators", []):
+            if reg.get("output_rail") == net_name:
+                v = reg.get("estimated_vout")
+                if v:
+                    return v
+        return _estimate_rail_voltage(net_name)
+
+    def _find_power_net(ref):
+        n1, _ = pin_net.get((ref, "1"), (None, None))
+        n2, _ = pin_net.get((ref, "2"), (None, None))
+        pwr_net = gnd_net = None
+        if n1 and _is_power_net_name(n1) and not _is_ground_name(n1):
+            pwr_net = n1
+        if n2 and _is_power_net_name(n2) and not _is_ground_name(n2):
+            pwr_net = pwr_net or n2
+        if n1 and _is_ground_name(n1):
+            gnd_net = n1
+        if n2 and _is_ground_name(n2):
+            gnd_net = gnd_net or n2
+        return pwr_net, gnd_net, n1, n2
+
+    def _read_ic_abs_max(mpn: str) -> dict | None:
+        if not project_dir or not mpn:
+            return None
+        sanitized = re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip())
+        extract_path = Path(project_dir) / "datasheets" / "extracted" / f"{sanitized}.json"
+        if not extract_path.exists():
+            idx_path = Path(project_dir) / "datasheets" / "extracted" / "index.json"
+            if idx_path.exists():
+                try:
+                    with open(idx_path) as f:
+                        idx = json.load(f)
+                    for k, v in idx.get("extractions", {}).items():
+                        if k.upper() == sanitized.upper():
+                            extract_path = Path(project_dir) / "datasheets" / "extracted" / v.get("file", "")
+                            break
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if not extract_path.exists():
+                return None
+        try:
+            with open(extract_path) as f:
+                return json.load(f).get("absolute_maximum_ratings")
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    profile = _DERATING_PROFILES.get(derating_profile, _DERATING_PROFILES["commercial"])
+    _CAP_DERATING = {"ceramic": profile["ceramic_cap"], "electrolytic": profile["electrolytic_cap"],
+                     "tantalum": profile["tantalum_cap"], "unknown": profile["unknown_cap"]}
+    _RESISTOR_POWER_RATING = {"0201": 0.05, "0402": 0.0625, "0603": 0.1, "0805": 0.125,
+                              "1206": 0.25, "1210": 0.5, "2010": 0.75, "2512": 1.0}
+
+    derating_issues = []
+    over_designed = []
+    caps_checked = ics_checked = resistors_checked = 0
+
+    # ---- Capacitor voltage derating ----
     for comp in components:
         if comp["type"] != "capacitor":
             continue
         rated_v = _parse_voltage_rating(comp.get("value", ""))
         if not rated_v:
             continue
-
         ref = comp["reference"]
-        # Find which power rail this cap is on
-        n1, _ = pin_net.get((ref, "1"), (None, None))
-        n2, _ = pin_net.get((ref, "2"), (None, None))
-
-        pwr_net = None
-        if n1 and _is_power_net_name(n1) and not _is_ground_name(n1):
-            pwr_net = n1
-        elif n2 and _is_power_net_name(n2) and not _is_ground_name(n2):
-            pwr_net = n2
-
+        pwr_net, gnd_net, n1, n2 = _find_power_net(ref)
         if not pwr_net:
             continue
-
-        # Get rail voltage — first try regulators, then name-based estimate
-        v_rail = None
-        for reg in signal_analysis.get("power_regulators", []):
-            if reg.get("output_rail") == pwr_net:
-                v_rail = reg.get("estimated_vout")
-                break
-        if v_rail is None:
-            v_rail = _estimate_rail_voltage(pwr_net)
+        v_rail = _get_rail_voltage(pwr_net)
         if v_rail is None or v_rail <= 0:
             continue
-
+        dielectric = _classify_cap_dielectric(comp)
+        derating_factor = _CAP_DERATING.get(dielectric, 0.50)
+        max_working_v = rated_v * derating_factor
         caps_checked += 1
         margin_pct = ((rated_v - v_rail) / rated_v) * 100 if rated_v > 0 else 0
-        severity = None
+        severity = derating_rule = None
         if v_rail > rated_v:
-            severity = "critical"
-        elif margin_pct < 20:
-            severity = "warning"
-
+            severity, derating_rule = "critical", "exceeds_rated_voltage"
+        elif v_rail > max_working_v:
+            severity, derating_rule = "warning", f"{dielectric}_{int(derating_factor * 100)}pct"
         if severity:
-            derating_issues.append({
-                "ref": ref,
-                "value": comp["value"],
-                "rail": pwr_net,
-                "rail_voltage": v_rail,
-                "rated_voltage": rated_v,
-                "margin_pct": round(margin_pct, 1),
-                "severity": severity,
-            })
+            derating_issues.append({"ref": ref, "value": comp["value"], "component_type": "capacitor",
+                                    "rail": pwr_net, "rail_voltage": v_rail, "rated_voltage": rated_v,
+                                    "margin_pct": round(margin_pct, 1), "dielectric": dielectric,
+                                    "derating_rule": derating_rule, "severity": severity})
+        elif margin_pct > profile["over_designed_cap_margin"] * 100:
+            suggested_v = v_rail * 2.5
+            suggested_ratings = [v for v in (6.3, 10, 16, 25, 50, 100) if v >= suggested_v]
+            suggestion = ""
+            if suggested_ratings and suggested_ratings[0] < rated_v:
+                suggestion = (f"Consider {suggested_ratings[0]:.0f}V rating — "
+                              f"{rated_v:.0f}V is significantly over-designed for a {v_rail:.1f}V rail")
+            over_designed.append({"ref": ref, "value": comp["value"], "component_type": "capacitor",
+                                  "rail": pwr_net, "rail_voltage": v_rail, "rated_voltage": rated_v,
+                                  "margin_pct": round(margin_pct, 1), "suggestion": suggestion})
 
-    if not derating_issues and caps_checked == 0:
+    # ---- IC absolute max voltage check ----
+    for comp in components:
+        if comp["type"] != "ic":
+            continue
+        mpn = comp.get("mpn", "").strip()
+        if not mpn or len(mpn) < 3:
+            continue
+        abs_max = _read_ic_abs_max(mpn)
+        if not abs_max:
+            continue
+        ref = comp["reference"]
+        vin_max = None
+        for key in ("vin_max_v", "vcc_max_v", "supply_max_v", "vdd_max_v"):
+            if abs_max.get(key) is not None:
+                vin_max = abs_max[key]
+                break
+        if vin_max is None:
+            continue
+        max_rail_v = 0
+        max_rail_name = ""
+        for pin in comp.get("pins", []):
+            net_name, _ = pin_net.get((ref, pin["number"]), (None, None))
+            if not net_name or _is_ground_name(net_name):
+                continue
+            if _is_power_net_name(net_name):
+                v = _get_rail_voltage(net_name)
+                if v is not None and v > max_rail_v:
+                    max_rail_v, max_rail_name = v, net_name
+        if max_rail_v <= 0:
+            continue
+        ics_checked += 1
+        margin_pct = ((vin_max - max_rail_v) / vin_max) * 100 if vin_max > 0 else 0
+        if max_rail_v > vin_max:
+            derating_issues.append({"ref": ref, "value": comp["value"], "component_type": "ic",
+                                    "rail": max_rail_name, "rail_voltage": max_rail_v,
+                                    "abs_max_vin": vin_max, "margin_pct": round(margin_pct, 1),
+                                    "derating_rule": "exceeds_abs_max", "data_source": "extraction_cache",
+                                    "severity": "critical"})
+        elif margin_pct < 10:
+            derating_issues.append({"ref": ref, "value": comp["value"], "component_type": "ic",
+                                    "rail": max_rail_name, "rail_voltage": max_rail_v,
+                                    "abs_max_vin": vin_max, "margin_pct": round(margin_pct, 1),
+                                    "derating_rule": "ic_10pct_abs_max", "data_source": "extraction_cache",
+                                    "severity": "warning"})
+
+    # ---- Resistor power dissipation check ----
+    for comp in components:
+        if comp["type"] != "resistor":
+            continue
+        pv = comp.get("parsed_value") or parse_value(comp.get("value", ""))
+        if not pv or pv <= 0:
+            continue
+        ref = comp["reference"]
+        pwr_net, gnd_net, n1, n2 = _find_power_net(ref)
+        if not pwr_net or not gnd_net:
+            v1 = _get_rail_voltage(n1) if n1 and _is_power_net_name(n1) else None
+            v2 = _get_rail_voltage(n2) if n2 and _is_power_net_name(n2) else None
+            if v1 is not None and v2 is not None and v1 != v2:
+                v_across = abs(v1 - v2)
+            elif pwr_net and gnd_net:
+                v_across = _get_rail_voltage(pwr_net)
+            else:
+                continue
+        else:
+            v_across = _get_rail_voltage(pwr_net)
+        if v_across is None or v_across <= 0:
+            continue
+        power_w = (v_across ** 2) / pv
+        fp = comp.get("footprint", "")
+        pkg_match = re.search(r'(\d{4})_\d{4}Metric', fp)
+        if not pkg_match:
+            continue
+        pkg = pkg_match.group(1)
+        rated_power = _RESISTOR_POWER_RATING.get(pkg)
+        if not rated_power:
+            continue
+        resistors_checked += 1
+        max_working_power = rated_power * profile["resistor_power"]
+        margin_pct = ((rated_power - power_w) / rated_power) * 100 if rated_power > 0 else 0
+        severity = derating_rule = None
+        if power_w > rated_power:
+            severity, derating_rule = "critical", "exceeds_rated_power"
+        elif power_w > max_working_power:
+            severity, derating_rule = "warning", "resistor_50pct_power"
+        if severity:
+            derating_issues.append({"ref": ref, "value": comp["value"], "component_type": "resistor",
+                                    "rail": pwr_net or n1, "voltage_across": v_across,
+                                    "resistance_ohms": pv, "estimated_power_w": round(power_w, 4),
+                                    "rated_power_w": rated_power, "package": pkg,
+                                    "margin_pct": round(margin_pct, 1), "derating_rule": derating_rule,
+                                    "severity": severity})
+        elif margin_pct > profile["over_designed_res_margin"] * 100:
+            pkg_sizes = ["0201", "0402", "0603", "0805", "1206", "1210", "2010", "2512"]
+            suggested_pkg = None
+            for p in pkg_sizes:
+                p_rated = _RESISTOR_POWER_RATING.get(p, 0)
+                if p_rated > 0 and power_w <= p_rated * profile["resistor_power"]:
+                    suggested_pkg = p
+                    break
+            suggestion = ""
+            if suggested_pkg and suggested_pkg != pkg:
+                suggestion = (f"Consider {suggested_pkg} package — {pkg} is significantly "
+                              f"over-designed ({power_w*1000:.1f}mW vs {rated_power*1000:.0f}mW rated)")
+            over_designed.append({"ref": ref, "value": comp["value"], "component_type": "resistor",
+                                  "package": pkg, "estimated_power_w": round(power_w, 4),
+                                  "rated_power_w": rated_power, "margin_pct": round(margin_pct, 1),
+                                  "suggestion": suggestion})
+
+    # ---- Build result ----
+    total_checked = caps_checked + ics_checked + resistors_checked
+    if not derating_issues and not over_designed and total_checked == 0:
         return {}
 
     result: dict = {
-        "caps_checked": caps_checked,
+        "derating_profile": derating_profile,
+        "caps_checked": caps_checked, "ics_checked": ics_checked, "resistors_checked": resistors_checked,
         "issues": derating_issues,
     }
     observations = []
-    critical = [i for i in derating_issues if i["severity"] == "critical"]
-    warnings = [i for i in derating_issues if i["severity"] == "warning"]
-    if critical:
-        observations.append(
-            f"{len(critical)} cap(s) exceed rated voltage — risk of failure"
-        )
-    if warnings:
-        observations.append(
-            f"{len(warnings)} cap(s) have <20% voltage derating margin"
-        )
+    cap_critical = [i for i in derating_issues if i.get("component_type") == "capacitor" and i["severity"] == "critical"]
+    cap_warnings = [i for i in derating_issues if i.get("component_type") == "capacitor" and i["severity"] == "warning"]
+    ic_issues = [i for i in derating_issues if i.get("component_type") == "ic"]
+    res_issues = [i for i in derating_issues if i.get("component_type") == "resistor"]
+    if cap_critical:
+        observations.append(f"{len(cap_critical)} cap(s) exceed rated voltage — risk of failure")
+    if cap_warnings:
+        observations.append(f"{len(cap_warnings)} cap(s) have insufficient voltage derating margin")
+    if ic_issues:
+        observations.append(f"{len(ic_issues)} IC(s) operating near or beyond absolute maximum voltage")
+    if res_issues:
+        observations.append(f"{len(res_issues)} resistor(s) exceed power derating limit")
+    if over_designed:
+        result["over_designed"] = over_designed
+        observations.append(f"{len(over_designed)} component(s) significantly over-designed — potential cost/size optimization")
     if observations:
         result["observations"] = observations
     return result
+
+
+def analyze_protocol_compliance(components: list[dict], nets: dict,
+                                design_analysis: dict, signal_analysis: dict,
+                                pin_net: dict) -> dict:
+    """Validate electrical characteristics of detected communication buses."""
+    buses = design_analysis.get("bus_analysis", {})
+    cross_domain = design_analysis.get("cross_domain_signals", [])
+    power_domains = design_analysis.get("power_domains", {}).get("ic_power_rails", {})
+    findings = []
+
+    # ---- I2C validation ----
+    i2c_buses = buses.get("i2c", [])
+    if i2c_buses:
+        sda_entries = [b for b in i2c_buses if b.get("line") == "SDA"]
+        scl_entries = [b for b in i2c_buses if b.get("line") == "SCL"]
+        for sda in sda_entries:
+            checks, issues, obs = {}, [], []
+            sda_net = sda["net"]
+            sda_devs = set(sda.get("devices", []))
+            scl = scl_net = None
+            for s in scl_entries:
+                if set(s.get("devices", [])) & sda_devs:
+                    scl, scl_net = s, s["net"]
+                    break
+            sda_pullups = sda.get("pull_ups", [])
+            scl_pullups = scl.get("pull_ups", []) if scl else []
+            checks["pull_ups_present"] = {"sda": len(sda_pullups) > 0, "scl": len(scl_pullups) > 0,
+                                          "status": "pass" if sda_pullups and scl_pullups else "fail"}
+            if not sda_pullups:
+                issues.append("SDA line missing pull-up resistor")
+            if scl and not scl_pullups:
+                issues.append("SCL line missing pull-up resistor")
+            pullup_checks = {}
+            for line_name, pullups in [("sda", sda_pullups), ("scl", scl_pullups)]:
+                for pu in pullups:
+                    ohms = pu.get("ohms", 0)
+                    if ohms <= 0:
+                        continue
+                    valid_100k, valid_400k = 1000 <= ohms <= 10000, 1000 <= ohms <= 4700
+                    pullup_checks[line_name] = {"ref": pu["ref"], "ohms": ohms,
+                                                "valid_100khz": valid_100k, "valid_400khz": valid_400k}
+                    if not valid_100k:
+                        issues.append(f"{line_name.upper()} pull-up {pu['ref']}={pu['value']} "
+                                      f"({ohms:.0f}Ω) outside valid range for standard mode (1K-10K)")
+                    elif not valid_400k:
+                        obs.append(f"{line_name.upper()} pull-up {pu['ref']}={pu['value']} valid for "
+                                   f"standard mode but too high for fast mode (max 4.7K)")
+            if pullup_checks:
+                all_100k = all(v.get("valid_100khz", False) for v in pullup_checks.values())
+                checks["pull_up_value"] = {**pullup_checks, "status": "pass" if all_100k else "fail"}
+            rise_checks = {}
+            for line_name, pullups, entry in [("sda", sda_pullups, sda), ("scl", scl_pullups, scl)]:
+                if not pullups or not entry:
+                    continue
+                ohms = pullups[0].get("ohms", 0)
+                if ohms <= 0:
+                    continue
+                c_bus_pf = entry.get("estimated_bus_capacitance_pF", 10) + 10
+                t_rise_ns = 0.8473 * ohms * c_bus_pf * 1e-3
+                rise_checks[line_name] = {"rise_time_ns": round(t_rise_ns, 1), "bus_capacitance_pF": c_bus_pf,
+                                          "max_100khz_ns": 1000, "max_400khz_ns": 300,
+                                          "valid_100khz": t_rise_ns <= 1000, "valid_400khz": t_rise_ns <= 300}
+                if t_rise_ns > 1000:
+                    issues.append(f"{line_name.upper()} rise time {t_rise_ns:.0f}ns exceeds standard mode max (1000ns)")
+                elif t_rise_ns > 300:
+                    obs.append(f"{line_name.upper()} rise time {t_rise_ns:.0f}ns OK for standard mode but exceeds fast mode max (300ns)")
+            if rise_checks:
+                checks["rise_time"] = rise_checks
+            if sda_pullups:
+                pu_rail = sda_pullups[0].get("to_rail", "")
+                pu_voltage = _estimate_rail_voltage(pu_rail) if pu_rail else None
+                device_voltages = set()
+                for dev in sda.get("devices", []):
+                    for rail_info in power_domains.get(dev, {}).get("power_rails", []):
+                        v = _estimate_rail_voltage(rail_info) if isinstance(rail_info, str) else None
+                        if v:
+                            device_voltages.add(v)
+                if pu_voltage and device_voltages:
+                    mismatched = [v for v in device_voltages if abs(v - pu_voltage) > 0.5]
+                    status = "fail" if mismatched else "pass"
+                    checks["voltage_compatibility"] = {"pull_up_rail": pu_rail, "pull_up_voltage": pu_voltage,
+                                                       "device_voltages": sorted(device_voltages), "status": status}
+                    if mismatched:
+                        issues.append(f"Pull-up rail {pu_rail} ({pu_voltage}V) but device(s) on "
+                                      f"{', '.join(f'{v}V' for v in mismatched)} — voltage mismatch")
+            if checks:
+                entry_result = {"protocol": "i2c", "sda_net": sda_net, "scl_net": scl_net,
+                                "devices": sorted(set(sda.get("devices", []) + (scl.get("devices", []) if scl else []))),
+                                "checks": checks}
+                if issues:
+                    entry_result["issues"] = issues
+                if obs:
+                    entry_result["observations"] = obs
+                findings.append(entry_result)
+
+    # ---- SPI validation ----
+    for spi in buses.get("spi", []):
+        issues = []
+        load_count = spi.get("load_count", 0)
+        cs_count = spi.get("chip_select_count", 0)
+        if load_count > 1 and cs_count < load_count - 1:
+            issues.append(f"{load_count} SPI devices but only {cs_count} CS line(s) — need {load_count - 1}")
+        if issues:
+            findings.append({"protocol": "spi", "bus_id": spi.get("bus_id", ""),
+                             "load_count": load_count, "chip_select_count": cs_count, "issues": issues})
+
+    # ---- UART validation ----
+    uart_buses = buses.get("uart", [])
+    if uart_buses and cross_domain:
+        uart_nets = {u["net"] for u in uart_buses}
+        for xd in cross_domain:
+            if xd.get("net", "") in uart_nets:
+                domains = xd.get("power_domains", [])
+                if len(domains) >= 2:
+                    findings.append({"protocol": "uart", "net": xd["net"],
+                                     "issues": [f"UART signal crosses voltage domains ({', '.join(domains)}) — level shifter may be needed"]})
+
+    # ---- CAN validation ----
+    diff_pairs = design_analysis.get("differential_pairs", [])
+    for can in buses.get("can", []):
+        issues, obs = [], []
+        has_term = can.get("has_termination", False)
+        term_value = can.get("termination_ohms")
+        if not has_term:
+            for dp in diff_pairs:
+                if dp.get("type") == "CAN" or "CAN" in dp.get("name", "").upper():
+                    if dp.get("has_termination"):
+                        has_term, term_value = True, dp.get("termination_ohms")
+        if not has_term:
+            issues.append("CAN bus missing 120Ω termination resistor")
+        elif term_value and abs(term_value - 120) > 12:
+            issues.append(f"CAN termination is {term_value}Ω (expected 120Ω ±10%)")
+        elif term_value:
+            obs.append("CAN 120Ω termination present (verify remote end has matching termination)")
+        if issues or obs:
+            findings.append({"protocol": "can", "nets": [can.get("canh_net", ""), can.get("canl_net", "")],
+                             "has_termination": has_term, "termination_ohms": term_value,
+                             "issues": issues or None, "observations": obs or None})
+
+    if not findings:
+        return {}
+    return {"protocols_checked": list({f["protocol"] for f in findings}), "findings": findings,
+            "total_issues": sum(len(f.get("issues", []) or []) for f in findings)}
 
 
 def analyze_power_budget(components: list[dict], nets: dict,
@@ -6245,7 +6582,8 @@ def analyze_schematic(path: str) -> dict:
     # ---- Tier 3: High-level design analyses ----
     pdn_analysis = analyze_pdn_impedance(all_components, nets, pin_net)
     sleep_current = analyze_sleep_current(all_components, nets, pin_net, signal_analysis)
-    voltage_derating = analyze_voltage_derating(all_components, nets, signal_analysis, pin_net)
+    voltage_derating = analyze_voltage_derating(all_components, nets, signal_analysis, pin_net,
+                                                 project_dir=str(Path(path).parent))
     power_budget = analyze_power_budget(all_components, nets, signal_analysis, pin_net)
     power_sequencing = analyze_power_sequencing(all_components, nets, signal_analysis, pin_net)
     bom_optimization = analyze_bom_optimization(all_components)
@@ -6253,6 +6591,7 @@ def analyze_schematic(path: str) -> dict:
     assembly_complexity = analyze_assembly_complexity(all_components)
     usb_compliance = analyze_usb_compliance(all_components, nets, signal_analysis, pin_net)
     inrush_analysis = analyze_inrush_current(all_components, nets, signal_analysis, pin_net)
+    protocol_compliance = analyze_protocol_compliance(all_components, nets, design_analysis, signal_analysis, pin_net)
 
     # Add parsed numeric values to all passive components and category field
     for comp in all_components:
@@ -6331,6 +6670,8 @@ def analyze_schematic(path: str) -> dict:
         result["usb_compliance"] = usb_compliance
     if inrush_analysis:
         result["inrush_analysis"] = inrush_analysis
+    if protocol_compliance:
+        result["protocol_compliance"] = protocol_compliance
 
     if len(sheets_parsed) > 1:
         result["sheets"] = sheets_parsed

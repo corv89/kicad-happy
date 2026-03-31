@@ -259,7 +259,7 @@ For detailed information about the behavioral models used, their accuracy envelo
 | `scripts/spice_part_library.py` | Lookup table of electrical specs for ~100 common opamps, LDOs, comparators, voltage references, crystal drivers |
 | `scripts/spice_model_generator.py` | Parameterized behavioral .subckt generation from specs dicts |
 | `scripts/spice_model_cache.py` | Project-local model cache in `spice/models/` next to the schematic |
-| `scripts/spice_spec_fetcher.py` | Queries distributor APIs (LCSC, DigiKey, element14, Mouser) and datasheets for parametric specs |
+| `scripts/spice_spec_fetcher.py` | Queries distributor APIs (LCSC, DigiKey, element14, Mouser), structured datasheet extractions, and PDF regex for parametric specs |
 | `scripts/extract_parasitics.py` | Compute trace R, via L, coupling C from PCB analysis JSON (Phase 3) |
 
 ## Per-Part Behavioral Models (Phase 2)
@@ -269,9 +269,10 @@ When the analyzer detects an opamp with a recognized MPN (e.g., LM358, TL072, MC
 Model resolution cascade:
 1. **Project cache** (`<project>/spice/models/`) — previously resolved models
 2. **Distributor API specs** — queries LCSC (no auth), DigiKey, element14, Mouser for real parametric data
-3. **Datasheet PDF extraction** — reads from `<project>/datasheets/` (synced by any distributor skill)
-4. **Built-in lookup table** — ~100 common parts as offline fallback
-5. **Ideal model fallback** — if the MPN isn't recognized by any source
+3. **Structured datasheet extraction** — reads pre-extracted specs from `<project>/datasheets/extracted/` (cached JSON with SPICE-relevant parameters, scored for quality)
+4. **Datasheet PDF regex extraction** — reads from `<project>/datasheets/`, extracts via text pattern matching (last resort)
+5. **Built-in lookup table** — ~100 common parts as offline fallback
+6. **Ideal model fallback** — if the MPN isn't recognized by any source
 
 The `model_note` field in the report indicates which model was used: `"LM358 behavioral (lookup:LM358, GBW=1.0MHz)"` vs `"ideal opamp (Aol=1e6, GBW~10MHz)"`.
 
