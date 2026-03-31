@@ -102,6 +102,21 @@ Use this template. Include sections that are relevant to the design — skip sec
 ### Current Sense
 [Shunt values, sense amplifier, measurement range]
 
+### Simulation Verification
+[**Include when ngspice is available.** Run `simulate_subcircuits.py` on the analyzer JSON output (from the `spice` skill). Present results as a summary table grouped by status:]
+
+[Summary line: "ngspice verified N subcircuits in X.Xs. N pass, N warn, N fail, N skip."]
+
+[**Pass** — one line each, grouped: "RC filter R5/C3 (fc=15.9kHz): confirmed, <0.3% error." These confirm the analyzer's calculations are correct.]
+
+[**Warn** — explain context: "Opamp U4A (inverting, gain=-10): gain confirmed at 20.0dB. Bandwidth 98.8kHz (ideal model). Note: LM358 GBW is ~1MHz — actual bandwidth ~100kHz." Opamp and transistor results always carry model fidelity caveats.]
+
+[**Fail** — investigate and explain: "RC filter R12/C8: simulated fc=3.2kHz vs expected 15.9kHz (80% deviation). Likely topology misdetection — verify R12's role in the circuit." Failures in passive circuits indicate analyzer bugs; in active circuits they may indicate real design issues.]
+
+[**Skip** — note the gap: "Crystal Y1 (32.768kHz): active oscillator, no external load caps to validate." Skips are expected for unsimulatable configurations.]
+
+[Model fidelity notes: passive circuit simulations (RC, LC, dividers, current sense) use ideal components and are mathematically exact. Active circuit simulations (opamps, transistors) use generic behavioral models — qualify bandwidth and threshold results with the actual part's specifications.]
+
 ### Decoupling Analysis
 [Table: Rail | Cap Count | Total uF | Bulk | Bypass — one row per rail. Flag rails with inadequate decoupling.]
 
