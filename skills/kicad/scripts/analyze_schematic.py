@@ -3077,10 +3077,15 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                                 "to_rail": other_net,
                             })
             if devices:  # Skip connector-only routing with no ICs
+                load_count = len(devices)
+                # Typical I2C input capacitance: ~5pF per device pin
+                estimated_cin_pF = load_count * 5
                 buses["i2c"].append({
                     "net": net_name,
                     "line": line,
                     "devices": devices,
+                    "load_count": load_count,
+                    "estimated_bus_capacitance_pF": estimated_cin_pF,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
                 })
@@ -3127,10 +3132,13 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
                        if comp_lookup.get(p["component"], {}).get("type") == "ic"]
 
             if devices:  # Skip connector-only routing with no ICs
+                load_count = len(devices)
                 buses["i2c"].append({
                     "net": net_name,
                     "line": bus_type,
                     "devices": devices,
+                    "load_count": load_count,
+                    "estimated_bus_capacitance_pF": load_count * 5,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
                 })
@@ -3177,9 +3185,14 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
             has_ic = any(s.get("devices") for s in signals.values())
             if not has_ic:
                 continue
+            # Count unique devices across all SPI signals
+            all_spi_devs = set()
+            for sig_data in signals.values():
+                all_spi_devs.update(sig_data.get("devices", []))
             buses["spi"].append({
                 "bus_id": bus_id,
                 "signals": signals,
+                "load_count": len(all_spi_devs),
             })
 
     # UART: look for TX/RX pairs (exclude other protocols that happen to contain TX/RX)

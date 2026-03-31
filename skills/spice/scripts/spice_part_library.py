@@ -54,14 +54,14 @@ OPAMP_SPECS = {
 
     # Analog Devices
     "AD8605":   {"gbw_hz": 10e6,  "slew_vus": 5,    "vos_mv": 0.02, "aol_db": 120, "rin_ohms": 1e12,  "supply_min": 2.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
-    "AD8607":   {"gbw_hz": 10e6,  "slew_vus": 5,    "vos_mv": 0.02, "aol_db": 120, "rin_ohms": 1e12,  "supply_min": 2.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
+    "AD8607":   {"gbw_hz": 0.4e6, "slew_vus": 0.1,  "vos_mv": 0.02, "aol_db": 120, "rin_ohms": 1e12,  "supply_min": 2.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
     "AD8099":   {"gbw_hz": 710e6, "slew_vus": 1350, "vos_mv": 0.2,  "aol_db": 92,  "rin_ohms": 6.5e6, "supply_min": 9,   "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.3},
     "OP07":     {"gbw_hz": 0.6e6, "slew_vus": 0.3,  "vos_mv": 0.075,"aol_db": 126, "rin_ohms": 33e6,  "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "OP27":     {"gbw_hz": 8e6,   "slew_vus": 2.8,  "vos_mv": 0.03, "aol_db": 126, "rin_ohms": 6e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "AD620":    {"gbw_hz": 1e6,   "slew_vus": 1.2,  "vos_mv": 0.03, "aol_db": 120, "rin_ohms": 10e9,  "supply_min": 5,   "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.2},
 
     # STMicroelectronics
-    "LM2904":   {"gbw_hz": 1e6,   "slew_vus": 0.4,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 2e6,   "supply_min": 3,   "supply_max": 32,  "rro": False, "rri": False, "swing_v": 1.5},
+    "LM2904":   {"gbw_hz": 0.7e6, "slew_vus": 0.3,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 2e6,   "supply_min": 3,   "supply_max": 32,  "rro": False, "rri": False, "swing_v": 1.5},
     "TSV912":   {"gbw_hz": 8e6,   "slew_vus": 4.5,  "vos_mv": 0.3,  "aol_db": 130, "rin_ohms": 1e12,  "supply_min": 1.5, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.01},
 
     # TI — current sense / instrumentation
@@ -73,18 +73,18 @@ OPAMP_SPECS = {
     "MC4558":   {"gbw_hz": 5.5e6, "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "RC4558":   {"gbw_hz": 3e6,   "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
     "NJM4558":  {"gbw_hz": 3e6,   "slew_vus": 1.7,  "vos_mv": 2.0,  "aol_db": 100, "rin_ohms": 5e6,   "supply_min": 8,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
-    "OPA1678":  {"gbw_hz": 24e6,  "slew_vus": 13,   "vos_mv": 0.2,  "aol_db": 135, "rin_ohms": 1e13,  "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.0},
+    "OPA1678":  {"gbw_hz": 16e6,  "slew_vus": 9,    "vos_mv": 0.2,  "aol_db": 135, "rin_ohms": 1e13,  "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.0},
 
     # Top coverage-gap parts from corpus analysis (2026-03-30)
     # TI — high-speed / wideband
     "OPA695":   {"gbw_hz": 1700e6,"slew_vus": 4300, "vos_mv": 1.5,  "aol_db": 70,  "rin_ohms": 160e3, "supply_min": 10,  "supply_max": 24,  "rro": False, "rri": False, "swing_v": 1.5},
-    "OPA4991":  {"gbw_hz": 4.5e6, "slew_vus": 1.3,  "vos_mv": 0.025,"aol_db": 140, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 40,  "rro": False, "rri": False, "swing_v": 1.5},
+    "OPA4991":  {"gbw_hz": 4.5e6, "slew_vus": 21,   "vos_mv": 0.025,"aol_db": 140, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 40,  "rro": False, "rri": False, "swing_v": 1.5},
     "OPA1602":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
-    "OPA1604":  {"gbw_hz": 20e6,  "slew_vus": 12,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
-    "OPA4202":  {"gbw_hz": 20e6,  "slew_vus": 10,   "vos_mv": 0.025,"aol_db": 142, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.5},
+    "OPA1604":  {"gbw_hz": 35e6,  "slew_vus": 20,   "vos_mv": 0.12, "aol_db": 130, "rin_ohms": 1e13,  "supply_min": 9,   "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
+    "OPA4202":  {"gbw_hz": 1e6,   "slew_vus": 0.35, "vos_mv": 0.025,"aol_db": 142, "rin_ohms": 100e9, "supply_min": 4.5, "supply_max": 36,  "rro": False, "rri": False, "swing_v": 1.5},
 
     # TI — low-power / precision
-    "TLV9151":  {"gbw_hz": 3e6,   "slew_vus": 1.5,  "vos_mv": 0.7,  "aol_db": 114, "rin_ohms": 1e12,  "supply_min": 1.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
+    "TLV9151":  {"gbw_hz": 4.5e6, "slew_vus": 20,   "vos_mv": 0.7,  "aol_db": 114, "rin_ohms": 1e12,  "supply_min": 1.7, "supply_max": 5.5, "rro": True,  "rri": True,  "swing_v": 0.02},
     "LM6361":   {"gbw_hz": 50e6,  "slew_vus": 300,  "vos_mv": 2.0,  "aol_db": 80,  "rin_ohms": 1e12,  "supply_min": 10,  "supply_max": 36,  "rro": False, "rri": False, "swing_v": 2.0},
 
     # Analog Devices — precision / low-noise
@@ -218,6 +218,68 @@ VREF_SPECS = {
     "MCP1541":  {"vref": 4.096, "tempco_ppm": 50,  "zout_ohms": 1.0,  "iq_ua": 120},
     "ADR3412":  {"vref": 1.2,   "tempco_ppm": 10,  "zout_ohms": 0.2,  "iq_ua": 90},
 }
+
+# ---------------------------------------------------------------------------
+# Crystal oscillator driver specs — MCU/IC transconductance for startup margin
+#
+# Keys:
+#   gm_uA_V:   Oscillator driver transconductance (µA/V)
+#   max_esr:    Maximum crystal ESR the driver can sustain (ohms)
+#   drive_level_uW: Maximum crystal drive level (µW)
+#   freq_range: (min_hz, max_hz) supported crystal frequency range
+# Sources: MCU datasheets, app notes (AN2867, AN12061, etc.)
+# ---------------------------------------------------------------------------
+CRYSTAL_DRIVER_SPECS = {
+    # STM32 families — from AN2867 "Oscillator design guide for STM8/STM32"
+    "STM32F0":  {"gm_uA_V": 1000, "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (4e6, 32e6)},
+    "STM32F1":  {"gm_uA_V": 2000, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (4e6, 16e6)},
+    "STM32F4":  {"gm_uA_V": 2500, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (4e6, 26e6)},
+    "STM32L0":  {"gm_uA_V": 500,  "max_esr": 100,  "drive_level_uW": 0.5, "freq_range": (1e6, 25e6)},
+    "STM32L4":  {"gm_uA_V": 1500, "max_esr": 300,  "drive_level_uW": 1,   "freq_range": (4e6, 48e6)},
+    "STM32H7":  {"gm_uA_V": 3000, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (4e6, 48e6)},
+    "STM32G0":  {"gm_uA_V": 1000, "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (4e6, 48e6)},
+    "STM32G4":  {"gm_uA_V": 2000, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (4e6, 48e6)},
+    "STM32U5":  {"gm_uA_V": 1500, "max_esr": 300,  "drive_level_uW": 1,   "freq_range": (4e6, 48e6)},
+    "STM32WB":  {"gm_uA_V": 1500, "max_esr": 300,  "drive_level_uW": 1,   "freq_range": (32e6, 32e6)},
+    # 32.768kHz LSE on STM32 — separate oscillator with lower gm
+    "STM32_LSE":{"gm_uA_V": 5,    "max_esr": 40000,"drive_level_uW": 0.5, "freq_range": (32768, 32768)},
+
+    # Nordic nRF — from product specs
+    "NRF52":    {"gm_uA_V": 1000, "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (32e6, 32e6)},
+    "NRF52_LSE":{"gm_uA_V": 5,    "max_esr": 50000,"drive_level_uW": 0.25,"freq_range": (32768, 32768)},
+    "NRF53":    {"gm_uA_V": 1500, "max_esr": 300,  "drive_level_uW": 1,   "freq_range": (32e6, 32e6)},
+
+    # Espressif ESP32
+    "ESP32":    {"gm_uA_V": 2000, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (26e6, 40e6)},
+    "ESP32S3":  {"gm_uA_V": 2000, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (26e6, 40e6)},
+    "ESP32C3":  {"gm_uA_V": 2000, "max_esr": 500,  "drive_level_uW": 1,   "freq_range": (26e6, 40e6)},
+
+    # Atmel/Microchip AVR — from AN2519
+    "ATMEGA":   {"gm_uA_V": 800,  "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (0.4e6, 20e6)},
+    "ATTINY":   {"gm_uA_V": 500,  "max_esr": 150,  "drive_level_uW": 0.5, "freq_range": (0.4e6, 20e6)},
+    "SAMD21":   {"gm_uA_V": 1000, "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (0.4e6, 32e6)},
+    "SAMD51":   {"gm_uA_V": 1500, "max_esr": 300,  "drive_level_uW": 1,   "freq_range": (8e6, 48e6)},
+
+    # Raspberry Pi RP2040/RP2350
+    "RP2040":   {"gm_uA_V": 1000, "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (1e6, 15e6)},
+    "RP2350":   {"gm_uA_V": 1500, "max_esr": 300,  "drive_level_uW": 1,   "freq_range": (1e6, 15e6)},
+
+    # TI MSP430
+    "MSP430":   {"gm_uA_V": 500,  "max_esr": 200,  "drive_level_uW": 1,   "freq_range": (4e6, 25e6)},
+}
+
+
+def lookup_crystal_driver_specs(ic_mpn):
+    """Look up crystal oscillator driver specs for an IC.
+
+    Args:
+        ic_mpn: IC part number (e.g., "STM32F411CEU6", "ESP32-S3-WROOM")
+
+    Returns:
+        specs dict or None
+    """
+    _, specs = _prefix_match(ic_mpn, CRYSTAL_DRIVER_SPECS)
+    return specs
 
 
 # ---------------------------------------------------------------------------

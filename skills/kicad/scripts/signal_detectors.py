@@ -1171,6 +1171,24 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
     return current_sense
 
 
+def _infer_rail_voltage(net_name):
+    """Infer voltage from a power rail net name. Returns float or None."""
+    if not net_name:
+        return None
+    name = net_name.upper().strip()
+    m = re.match(r'[+]?(\d+)V(\d+)', name)
+    if m:
+        return float(f"{m.group(1)}.{m.group(2)}")
+    m = re.match(r'[+]?(\d+\.?\d*)V', name)
+    if m:
+        return float(m.group(1))
+    if "VBUS" in name or "USB" in name:
+        return 5.0
+    if "VBAT" in name:
+        return 3.7
+    return None
+
+
 def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) -> list[dict]:
     """Detect power regulator topology. Takes voltage_dividers for feedback matching."""
     power_regulators: list[dict] = []
@@ -1580,6 +1598,29 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 })
             if comp_caps:
                 reg["compensation_capacitors"] = comp_caps
+
+    # Estimate power dissipation for LDO regulators
+    for reg in power_regulators:
+        topology = reg.get("topology", "")
+        vin_rail = reg.get("input_rail")
+        vout = reg.get("estimated_vout")
+        if topology == "LDO" and vin_rail and vout and vout > 0:
+            vin = _infer_rail_voltage(vin_rail)
+            if vin and vin > vout:
+                dropout = vin - vout
+                # Estimate load current from output cap total (heuristic:
+                # ~100mA per 10µF of output capacitance is a rough proxy)
+                output_caps = reg.get("output_capacitors", [])
+                total_cout = sum(c.get("farads", 0) for c in output_caps)
+                # Conservative estimate: assume typical load from cap sizing
+                estimated_iout_a = min(total_cout * 1e4, 1.0) if total_cout > 0 else 0.1
+                reg["power_dissipation"] = {
+                    "vin_estimated_V": vin,
+                    "vout_V": vout,
+                    "dropout_V": round(dropout, 3),
+                    "estimated_iout_A": round(estimated_iout_a, 3),
+                    "estimated_pdiss_W": round(dropout * estimated_iout_a, 3),
+                }
 
     return power_regulators
 
