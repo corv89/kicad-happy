@@ -226,12 +226,28 @@ For detailed information about the behavioral models used, their accuracy envelo
 | `scripts/spice_templates.py` | Testbench generators per detector type — one function per signal_analysis key |
 | `scripts/spice_models.py` | Behavioral model definitions (ideal opamp, generic semiconductors), net sanitization, engineering notation formatting |
 | `scripts/spice_results.py` | ngspice output parsing and per-type evaluation with pass/warn/fail/skip logic |
+| `scripts/spice_part_library.py` | Lookup table of electrical specs for ~100 common opamps, LDOs, comparators, voltage references |
+| `scripts/spice_model_generator.py` | Parameterized behavioral .subckt generation from specs dicts |
+| `scripts/spice_model_cache.py` | Project-local model cache in `spice/models/` next to the schematic |
+
+## Per-Part Behavioral Models (Phase 2)
+
+When the analyzer detects an opamp with a recognized MPN (e.g., LM358, TL072, MCP6002), the skill uses a **per-part behavioral model** instead of the generic ideal opamp. The model captures the actual GBW, slew rate, input offset, and output swing from the part's datasheet.
+
+Model resolution cascade:
+1. **Project cache** (`<project>/spice/models/`) — previously resolved models
+2. **Built-in lookup table** — ~100 common parts with verified specs
+3. **Ideal model fallback** — if the MPN isn't recognized
+
+The `model_note` field in the report indicates which model was used: `"LM358 behavioral (lookup:LM358, GBW=1.0MHz)"` vs `"ideal opamp (Aol=1e6, GBW~10MHz)"`.
+
+Models are cached project-locally in a `spice/` directory alongside the schematic files (same pattern as `datasheets/`). This keeps models co-located with the design and handles board revisions and subprojects naturally.
 
 ## Known Limitations
 
-- **No manufacturer SPICE models.** KiCad does not bundle manufacturer models, and neither does this skill. All simulations use ideal or generic behavioral models. This is accurate for passives but approximate for active devices.
-- **Opamp GBW is fixed at 10MHz.** The ideal opamp model cannot be adjusted per-part without manufacturer data. Bandwidth results should always be qualified with the actual part's GBW.
 - **Voltage dividers are simulated unloaded.** The analyzer's ratio is R_bot/(R_top+R_bot) without loading. Adding a load resistor would make the simulation more "real" but would create false "errors" relative to the analyzer's calculated value. The purpose is to validate the calculation, not model the full circuit.
 - **LC filter Q factor uses estimated inductor ESR.** A default Q=100 is assumed for the inductor. Real inductor Q varies from 10 (power inductors) to 300+ (RF inductors). The resonant frequency is accurate regardless of Q.
-- **Single-supply opamps default to +/-5V.** The testbench doesn't detect the actual supply rails from the schematic. This affects rail-to-rail clipping behavior but not gain or bandwidth for signals well within the rails.
+- **Opamp supply rails are inferred from net names.** May default to +/-5V if the power nets aren't labeled with voltage. Single-supply designs are detected when only VCC is found (VEE defaults to 0V).
+- **Per-part models cover ~100 common parts.** Uncommon opamps/LDOs fall back to ideal models. The lookup table can be extended by adding entries to `spice_part_library.py`.
+- **High-gain opamp circuits with realistic GBW** may show lower-than-expected gain at the 1 kHz measurement point when bandwidth is limited. This is physically correct behavior (the model correctly captures the GBW limitation) but may need lower-frequency measurement for accurate gain comparison.
 - **Net names from the analyzer may be `__unnamed_N`.** These are KiCad internal net names for unlabeled wires. They work correctly in simulation but make `.cir` files less readable.
