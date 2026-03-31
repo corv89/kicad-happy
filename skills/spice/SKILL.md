@@ -56,6 +56,23 @@ python3 <skill-path>/scripts/simulate_subcircuits.py analysis.json --timeout 10
 python3 <skill-path>/scripts/simulate_subcircuits.py analysis.json --compact
 ```
 
+### Step 2b (optional): PCB parasitic-aware simulation
+
+When both schematic and PCB exist, run parasitic-annotated simulation for more accurate results on analog circuits:
+
+```bash
+# Analyze PCB with full trace segment detail
+python3 <kicad-skill-path>/scripts/analyze_pcb.py design.kicad_pcb --full --output pcb.json
+
+# Extract parasitic R/L/C from PCB geometry
+python3 <skill-path>/scripts/extract_parasitics.py pcb.json --output parasitics.json
+
+# Run simulation with PCB parasitics injected into testbenches
+python3 <skill-path>/scripts/simulate_subcircuits.py analysis.json --parasitics parasitics.json --output sim_report.json
+```
+
+With `--parasitics`, testbenches include trace resistance and via inductance between components. The report shows the parasitic impact — e.g., "48mΩ trace resistance shifts RC filter fc down 0.3%." This is most valuable for high-impedance filters, LC matching networks, and long analog signal paths.
+
 ### Step 3: Interpret results and present to user
 
 Read the JSON report and incorporate findings into the design review. See the "Interpreting Results" and "Presenting to Users" sections below.
@@ -66,25 +83,32 @@ The script selects subcircuits from the analyzer's `signal_analysis` section. No
 
 | Detector | Analysis | What's Measured | Model Fidelity | Trustworthiness |
 |----------|----------|-----------------|----------------|-----------------|
-| `rc_filters` | AC sweep | -3dB frequency, phase at fc | Exact (ideal passives) | High — results are mathematically exact |
-| `lc_filters` | AC sweep | Resonant frequency, Q factor, bandwidth | Near-exact (ideal L/C + ESR estimate) | High — small Q error from estimated ESR |
-| `voltage_dividers` | DC operating point | Output voltage, error vs expected | Exact (ideal passives, unloaded) | High — but real loading not modeled |
-| `feedback_networks` | DC operating point | FB pin voltage, divider ratio | Exact (ideal passives, unloaded) | High — confirms regulator Vout setting |
-| `opamp_circuits` | AC sweep | Gain at 1kHz, -3dB bandwidth | Approximate (ideal opamp) | Medium — confirms feedback math but not real GBW |
-| `crystal_circuits` | AC impedance | Load capacitance validation | Approximate (generic BVD model) | Medium — validates cap selection, not oscillation |
-| `transistor_circuits` | DC sweep | Threshold voltage, on-state current | Approximate (generic FET/BJT) | Medium — confirms switching behavior, not exact Vth |
-| `current_sense` | DC operating point | Current at 50mV/100mV drop | Exact (ideal resistor) | High — validates sense resistor value |
-| `protection_devices` | DC sweep | Diode presence, clamping onset | Approximate (generic diode) | Low — confirms device exists, not real clamping voltage |
+| `rc_filters` | AC sweep | -3dB frequency, phase at fc | Exact (ideal passives) | High — mathematically exact |
+| `lc_filters` | AC sweep | Resonant frequency, Q factor, bandwidth | Near-exact (ideal L/C + ESR) | High — small Q error from ESR |
+| `voltage_dividers` | DC operating point | Output voltage, error % | Exact (ideal passives) | High — unloaded |
+| `feedback_networks` | DC operating point | FB pin voltage, regulator Vout | Exact (ideal passives) | High — cross-refs power_regulators |
+| `opamp_circuits` | AC sweep | Gain, -3dB bandwidth | Per-part or ideal | High with behavioral model, medium with ideal |
+| `crystal_circuits` | AC impedance | Load capacitance validation | Approximate (generic BVD) | Medium |
+| `transistor_circuits` | DC sweep | Threshold voltage, on-state current | Approximate (generic FET/BJT) | Medium |
+| `current_sense` | DC operating point | Current at 50mV/100mV drop | Exact (ideal resistor) | High |
+| `protection_devices` | DC sweep | Diode presence, clamping onset | Approximate (generic diode) | Low |
+| `decoupling_analysis` | AC impedance | PDN impedance profile | Exact + ESR estimates | High for passives |
+| `power_regulators` | DC operating point | Feedback divider Vout | Exact (ideal passives) | High |
+| `rf_matching` | AC sweep | Matching network resonance | Exact (ideal L/C) | High |
+| `bridge_circuits` | DC sweep | FET switching verification | Approximate (generic) | Medium |
+| `snubber_circuits` | AC impedance | Snubber damping frequency | Exact (ideal R/C) | High |
+| `rf_chains` | Gain budget | Per-stage gain/loss estimate | Heuristic | Low — role-based |
+| `bms_systems` | DC operating point | Cell balance resistor validation | Exact | High |
+| `inrush_analysis` | Transient | Inrush current profile | Approximate | Medium |
 
 ### What is NOT simulated
 
 - **Comparators / open-loop opamps** — no feedback network to validate, skipped
 - **Active oscillators** — self-contained modules, nothing to verify externally
-- **Power regulators** — require real control loop models for stability analysis (Phase 2)
+- **Regulator control loop stability** — requires full compensator model (behavioral models cover DC feedback only)
 - **Level-shifter FETs** — require modeling both FETs together, skipped
 - **High-side power switches** — source and drain both on power rails, need full load context
 - **Fuses and varistors** — require manufacturer-specific models
-- **Snubbers** — detected as a boolean flag on transistor circuits but component refs not captured; noted in transistor sim output
 - **Anything without parsed component values** — if `parse_value()` couldn't extract R/C/L values, the detection is skipped
 
 ## Output Format
@@ -136,16 +160,15 @@ In testing across real projects, passive simulations consistently show <0.3% err
 
 ### Opamp circuits
 
-The ideal opamp model (Aol=1e6, single-pole GBW=10MHz) validates the **feedback network math** — it confirms that the resistor/capacitor values produce the expected gain. It does NOT validate bandwidth accurately because real opamp GBW varies dramatically:
+For recognized parts (~100 common opamps in the lookup table), the skill uses a **per-part behavioral model** with the correct GBW, slew rate, input offset, and output swing. For unrecognized parts, it falls back to the ideal model (Aol=1e6, GBW=10MHz).
 
-| Part | Typical GBW | Ideal model GBW |
-|------|-------------|-----------------|
-| LM358 | 1 MHz | 10 MHz |
-| OPA2340 | 5.5 MHz | 10 MHz |
-| AD8605 | 10 MHz | 10 MHz |
-| OPA1612 | 80 MHz | 10 MHz |
+The `model_note` field in the report indicates which model was used:
+- `"LM358 behavioral (lookup:LM358, GBW=1.0MHz)"` — per-part model, bandwidth results are accurate
+- `"ideal opamp (Aol=1e6, GBW~10MHz)"` — fallback, bandwidth results are approximate
 
-Always include the `model_note` field in reports. When reporting opamp simulation results, frame them as: "The feedback network produces the expected gain of X dB. The simulated bandwidth of Y kHz is based on an ideal 10MHz GBW model — the actual [part name] has a GBW of Z MHz, which would give a bandwidth of W kHz."
+When the behavioral model is used, the simulation correctly captures bandwidth limitations. An LM358 at gain=-100 shows bandwidth of ~10 kHz (correct for 1 MHz GBW), while the ideal model would misleadingly report ~100 kHz.
+
+For opamps with behavioral models, gain-bandwidth limitation warnings are informational — they flag where the part's GBW constrains the circuit. These are valuable design insights, not simulation errors.
 
 ### Crystal circuits
 
@@ -226,9 +249,10 @@ For detailed information about the behavioral models used, their accuracy envelo
 | `scripts/spice_templates.py` | Testbench generators per detector type — one function per signal_analysis key |
 | `scripts/spice_models.py` | Behavioral model definitions (ideal opamp, generic semiconductors), net sanitization, engineering notation formatting |
 | `scripts/spice_results.py` | ngspice output parsing and per-type evaluation with pass/warn/fail/skip logic |
-| `scripts/spice_part_library.py` | Lookup table of electrical specs for ~100 common opamps, LDOs, comparators, voltage references |
+| `scripts/spice_part_library.py` | Lookup table of electrical specs for ~100 common opamps, LDOs, comparators, voltage references, crystal drivers |
 | `scripts/spice_model_generator.py` | Parameterized behavioral .subckt generation from specs dicts |
 | `scripts/spice_model_cache.py` | Project-local model cache in `spice/models/` next to the schematic |
+| `scripts/extract_parasitics.py` | Compute trace R, via L, coupling C from PCB analysis JSON (Phase 3) |
 
 ## Per-Part Behavioral Models (Phase 2)
 

@@ -1,18 +1,36 @@
 # Simulation Models Reference
 
-Detailed documentation of the behavioral SPICE models used in Phase 1 simulation, their accuracy envelopes, and when to trust or qualify their results.
+Documentation of the SPICE models used across all phases — ideal models, per-part behavioral models, and PCB parasitic extraction. Covers accuracy envelopes, when to trust or qualify results, and the model resolution cascade.
 
 ## Table of Contents
 
-1. [Passive Components](#passive-components)
-2. [Ideal Opamp Model](#ideal-opamp-model)
-3. [Generic Semiconductor Models](#generic-semiconductor-models)
-4. [Crystal Equivalent Circuit](#crystal-equivalent-circuit)
-5. [Ideal LDO Model](#ideal-ldo-model)
-6. [Net Name Handling](#net-name-handling)
-7. [ngspice Measurement Techniques](#ngspice-measurement-techniques)
-8. [Testbench Topology Reconstruction](#testbench-topology-reconstruction)
-9. [Voltage Inference from Net Names](#voltage-inference-from-net-names)
+1. [Model Resolution Cascade](#model-resolution-cascade)
+2. [Passive Components](#passive-components)
+3. [Ideal Opamp Model](#ideal-opamp-model)
+4. [Per-Part Behavioral Models (Phase 2)](#per-part-behavioral-models)
+5. [Generic Semiconductor Models](#generic-semiconductor-models)
+6. [Crystal Equivalent Circuit](#crystal-equivalent-circuit)
+7. [Ideal LDO Model](#ideal-ldo-model)
+8. [PCB Parasitic Extraction (Phase 3)](#pcb-parasitic-extraction)
+9. [Net Name Handling](#net-name-handling)
+10. [ngspice Measurement Techniques](#ngspice-measurement-techniques)
+11. [Testbench Topology Reconstruction](#testbench-topology-reconstruction)
+12. [Voltage Inference from Net Names](#voltage-inference-from-net-names)
+13. [Analyzer Integration Points](#analyzer-integration-points)
+
+---
+
+## Model Resolution Cascade
+
+When the skill encounters an active component (opamp, LDO, comparator), it resolves the model through this cascade:
+
+1. **Project cache** — `<project>/spice/models/index.json` stores previously resolved models
+2. **Built-in lookup table** — `spice_part_library.py` has ~100 common parts with datasheet-verified specs
+3. **Ideal model fallback** — generic model with fixed parameters (e.g., 10 MHz GBW for opamps)
+
+Passive components (R, C, L) always use ngspice's exact built-in primitives — no model resolution needed.
+
+The lookup table also includes crystal driver specs for ~30 MCU families (STM32, ESP32, nRF52, ATmega, RP2040) with oscillator transconductance values for startup margin analysis.
 
 ---
 
@@ -302,3 +320,100 @@ This is the most complex reconstruction. The testbench must:
 ### Voltage Divider Topology
 
 Straightforward: VIN → R_top → mid_net → R_bottom → ground. No load resistor is added — the simulation validates the unloaded ratio, which matches what the analyzer calculates.
+
+---
+
+## Per-Part Behavioral Models
+
+When a recognized MPN is detected (e.g., LM358, TL072, MCP6002), the skill generates a parameterized `.subckt` with the part's actual GBW, slew rate, input offset, and output swing from the lookup table in `spice_part_library.py`.
+
+### Model Parameters Used
+
+| Parameter | Source | Impact |
+|-----------|--------|--------|
+| `gbw_hz` | Datasheet GBW | Sets the dominant pole → correct bandwidth at any gain |
+| `aol_db` | Datasheet open-loop gain | Determines loop gain margin and gain accuracy |
+| `slew_vus` | Datasheet slew rate | (Reserved for future transient simulation) |
+| `vos_mv` | Datasheet input offset | Shifts DC operating point by Vos |
+| `rin_ohms` | Datasheet input impedance | Affects high-impedance source loading |
+| `swing_v` | Datasheet output swing from rail | Determines output clipping points |
+| `rro`/`rri` | Rail-to-rail output/input | Affects clamp behavior near supply rails |
+
+### Adaptive Measurement Frequency
+
+The gain measurement frequency adapts to each circuit's expected bandwidth:
+
+```
+f_measure = GBW / (100 × |gain|)
+```
+
+Clamped to [1, 1000] Hz. This ensures the measurement is in the passband even for high-gain circuits with low-GBW parts, preventing false failures from measuring above the bandwidth.
+
+### Behavioral Model Gain Warnings
+
+When a behavioral model shows a large gain deviation (>2 dB) from expected, the result is a **warn** (not fail). This is because the lower Aol in real parts makes the testbench topology reconstruction more sensitive — small feedback path errors that the ideal model's massive loop gain masked can produce gain discrepancies with realistic models. These warnings flag circuits worth investigating but are not automatically design bugs.
+
+---
+
+## PCB Parasitic Extraction
+
+Phase 3 adds the ability to inject PCB layout parasitics into SPICE testbenches for pre-layout vs post-layout comparison.
+
+### Extraction Pipeline
+
+```
+analyze_pcb.py --full → pcb.json (with trace_segments and via_details)
+extract_parasitics.py → parasitics.json (per-net R, L, C values)
+simulate_subcircuits.py --parasitics parasitics.json → annotated simulation
+```
+
+### Parasitic Formulas
+
+**Trace resistance (IPC-2221A):**
+```
+R = ρ_Cu × L / (W × T)
+ρ_Cu = 1.68×10⁻⁸ Ω·m (copper at 20°C)
+```
+For 1oz copper (T=0.035mm), 0.254mm wide, 25.4mm long: R = 48 mΩ
+
+**Via resistance:**
+```
+R_via = ρ_Cu × H / (π × ((D/2)² - ((D-2T_plating)/2)²))
+T_plating ≈ 25 µm typical
+```
+
+**Via inductance:**
+```
+L_via ≈ (µ₀ × H / 2π) × ln(2H/D)
+```
+Typical 0.3mm drill through 1.6mm board: ~0.7 nH
+
+### Injection Thresholds
+
+Parasitics are only injected when significant relative to the circuit:
+- Trace R injected if >0.1% of the smallest resistor in the subcircuit
+- Via L injected if the circuit operates above ~10 MHz
+- Coupling C injected if >1% of any capacitor in the subcircuit
+
+---
+
+## Analyzer Integration Points
+
+The SPICE skill consumes data from multiple analyzer outputs:
+
+### From Schematic Analyzer (`analyze_schematic.py`)
+- **signal_analysis** — all 21+ subcircuit detections
+- **Component MPN** — `det["value"]` used for behavioral model lookup
+- **Power rail nets** — for opamp supply inference
+- **Regulator output capacitors** — values, package sizes, ESR estimates
+- **Compensation capacitors** — feed-forward/compensation role on FB nets
+
+### From PCB Analyzer (`analyze_pcb.py --full`)
+- **trace_segments** — per-segment width, length, layer, impedance
+- **via_details** — drill size, layer span, stub length
+- **pad_to_pad_distances** — actual routed distance between components
+- **return_path_continuity** — ground plane coverage under signal traces
+- **stackup** — εr, dielectric thickness, copper weight for impedance
+
+### From Gerber Analyzer (`analyze_gerbers.py`)
+- **net_copper_usage** — per-net draw/flash operation counts (proxy for copper area)
