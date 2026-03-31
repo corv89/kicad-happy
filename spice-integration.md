@@ -60,11 +60,15 @@ Parts not in the table fall back to generic ideal models with a note in the repo
 
 ### Model Resolution Cascade
 
-1. **Project cache** — `<project>/spice/models/` (previously resolved models)
-2. **Built-in lookup table** — `spice_part_library.py` (~100 parts)
-3. **Ideal model fallback** — generic model with fixed parameters
+1. **Project cache** — `<project>/spice/models/` (previously resolved, instant)
+2. **Distributor API parametric data** — queries LCSC (no auth), DigiKey, element14, Mouser for real specs. Returns GBW, slew rate, etc. from structured parametric databases.
+3. **Datasheet PDF extraction** — reads downloaded PDFs from `<project>/datasheets/`, extracts electrical specs via text pattern matching. Requires `pdftotext`.
+4. **Built-in lookup table** — `spice_part_library.py` (~100 common parts with datasheet-verified specs). Offline safety net.
+5. **Ideal model fallback** — generic model with fixed parameters (10 MHz GBW for opamps)
 
-Models are cached project-locally next to the schematic files, same pattern as the `datasheets/` directory.
+Real data (APIs, datasheets) takes priority over the lookup table. The table is the offline fallback when no network or downloaded datasheets are available. Any distributor skill that has synced datasheets contributes — DigiKey, LCSC, element14, or Mouser.
+
+Models are cached project-locally next to the schematic files, same pattern as the `datasheets/` directory. Once a model is resolved and cached, subsequent runs use the cache (tier 1) without any network calls.
 
 ## PCB Parasitic Extraction
 
@@ -147,10 +151,16 @@ Several schematic and PCB analyzer features were added to feed deeper simulation
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `NGSPICE_PATH` | No | Explicit path to ngspice binary (overrides PATH lookup) |
-| `DIGIKEY_CLIENT_ID` | No | Enables Tier 2 API parametric spec lookup for parts not in lookup table (future) |
+| `DIGIKEY_CLIENT_ID` | No | Enables DigiKey API parametric spec lookup (OAuth 2.0 client credentials) |
 | `DIGIKEY_CLIENT_SECRET` | No | Paired with CLIENT_ID |
+| `ELEMENT14_API_KEY` | No | Enables element14/Newark/Farnell API parametric spec lookup |
+| `MOUSER_SEARCH_API_KEY` | No | Enables Mouser API parametric spec lookup |
+
+**LCSC requires no credentials** — the jlcsearch community API is free and is tried first in the cascade.
 
 ngspice is found automatically via PATH on Linux/macOS. On Windows, the skill checks `C:\Spice64\bin\ngspice.exe` as a fallback.
+
+Without any API credentials, the skill still works — it falls through to the built-in lookup table (100+ parts) and then to ideal models. API credentials expand coverage to any part the distributors carry.
 
 ## Testing
 

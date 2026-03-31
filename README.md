@@ -186,7 +186,7 @@ The agent runs the analysis scripts, then autonomously digs deeper — tracing n
 
 The **spice** skill goes beyond static analysis. It automatically generates ngspice testbenches for detected subcircuits — RC/LC filters, voltage dividers, opamp stages, feedback networks, transistor switches, crystal oscillators, and more — runs them, and reports whether the simulated behavior matches the calculated values.
 
-For common opamps like LM358, TL072, and MCP6002 (~100 parts in the lookup table), it uses **per-part behavioral models** with the real GBW, slew rate, and output swing from the datasheet. An LM358 at gain=-100 correctly shows bandwidth limited to ~10kHz — something the static analysis can't tell you.
+For recognized opamps, it uses **per-part behavioral models** with the real GBW, slew rate, and output swing. It pulls specs from distributor APIs (LCSC, DigiKey, element14, Mouser), downloaded datasheets, or a built-in lookup table of ~100 common parts — in that priority order. An LM358 at gain=-100 correctly shows bandwidth limited to ~10kHz — something the static analysis can't tell you.
 
 When both schematic and PCB exist, it can inject **PCB trace parasitics** into the simulation — trace resistance, via inductance, and inter-trace coupling extracted from the actual board geometry. A 50mm trace adding 133mΩ to your 10kΩ RC filter? The simulation shows the actual impact.
 
