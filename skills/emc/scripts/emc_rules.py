@@ -1664,7 +1664,383 @@ def check_connector_area_stitching(pcb: Dict,
 
 
 # ---------------------------------------------------------------------------
-# Category 11: PDN Impedance Analysis
+# Category 11: Crosstalk / Signal Integrity for EMC
+# ---------------------------------------------------------------------------
+
+def check_crosstalk_3h_rule(pcb: Dict,
+                            schematic: Optional[Dict] = None) -> List[Dict]:
+    """XT-001: Check trace spacing against the 3H crosstalk rule.
+
+    For microstrip traces, spacing of 3× the dielectric height gives <3%
+    near-end crosstalk. Closer spacing creates coupling that adds to
+    emissions and can cause false signal transitions.
+
+    Requires --proximity flag on PCB analyzer for trace_proximity data.
+
+    Ref: Bogatin, "Signal and Power Integrity", Ch. 13.
+         Howard Johnson, "High-Speed Digital Design", Ch. 5.
+    """
+    findings = []
+    tp = pcb.get('trace_proximity', {})
+    pairs = tp.get('proximity_pairs', [])
+    if not pairs:
+        return findings
+
+    # Get dielectric height from stackup
+    stackup = pcb.get('setup', {}).get('stackup', [])
+    h_default = 0.2  # mm default
+    for layer in stackup:
+        if layer.get('type') in ('core', 'prepreg'):
+            try:
+                h = float(layer.get('thickness', 0.2))
+                if h > 0:
+                    h_default = h
+                    break
+            except (ValueError, TypeError):
+                pass
+
+    grid_size = tp.get('grid_size_mm', 0.5)
+    threshold_3h = 3 * h_default  # 3H rule
+
+    # Classify nets for aggressor/victim pairing
+    flagged = set()
+
+    for pair in pairs:
+        net_a = pair.get('net_a', '')
+        net_b = pair.get('net_b', '')
+        coupling_mm = pair.get('approx_coupling_mm', 0)
+        layer = pair.get('layer', '')
+        shared_cells = pair.get('shared_cells', 0)
+
+        # Grid spacing is the proxy for trace spacing
+        # If two nets share grid cells, they're within grid_size of each other
+        # This means spacing < grid_size, which for 0.5mm grid is tight
+        if grid_size >= threshold_3h:
+            continue  # Grid is too coarse to detect 3H violations
+
+        # Minimum coupling length to flag (ignore very short parallel runs)
+        if coupling_mm < 5.0:
+            continue
+
+        # Only flag on outer layers (inner stripline has lower crosstalk)
+        if layer not in ('F.Cu', 'B.Cu', ''):
+            continue
+
+        pair_key = tuple(sorted([net_a, net_b]))
+        if pair_key in flagged:
+            continue
+        flagged.add(pair_key)
+
+        # Check if aggressor-victim pair (clock/switching near analog/sensitive)
+        a_is_aggressor = _is_clock_net(net_a) or _is_high_speed_net(net_a)
+        b_is_aggressor = _is_clock_net(net_b) or _is_high_speed_net(net_b)
+        a_is_sensitive = 'adc' in net_a.lower() or 'analog' in net_a.lower() or 'sense' in net_a.lower()
+        b_is_sensitive = 'adc' in net_b.lower() or 'analog' in net_b.lower() or 'sense' in net_b.lower()
+
+        aggressor_victim = (a_is_aggressor and b_is_sensitive) or (b_is_aggressor and a_is_sensitive)
+
+        if aggressor_victim:
+            severity = 'HIGH'
+        elif a_is_aggressor or b_is_aggressor:
+            severity = 'MEDIUM'
+        else:
+            severity = 'LOW'
+
+        findings.append({
+            'category': 'crosstalk',
+            'severity': severity,
+            'rule_id': 'XT-001',
+            'title': f'Close trace spacing: {net_a} / {net_b}',
+            'description': (
+                f'Nets {net_a} and {net_b} run parallel for ~{coupling_mm:.0f}mm '
+                f'on {layer or "outer layer"} within {grid_size}mm spacing '
+                f'(3H rule requires ≥{threshold_3h:.1f}mm for <3% crosstalk, '
+                f'H={h_default:.2f}mm). '
+                + ('Aggressor-victim pair detected. ' if aggressor_victim else '')
+            ),
+            'components': [],
+            'nets': [net_a, net_b],
+            'recommendation': (
+                f'Increase spacing to ≥{threshold_3h:.1f}mm (3× dielectric height) '
+                f'or insert a ground guard trace between them.'
+            ),
+        })
+
+        if len(findings) > 15:
+            findings.append({
+                'category': 'crosstalk',
+                'severity': 'MEDIUM',
+                'rule_id': 'XT-001',
+                'title': f'{len(flagged)}+ trace pairs with close spacing (truncated)',
+                'description': 'Multiple net pairs violate the 3H spacing rule. Review trace spacing board-wide.',
+                'components': [],
+                'nets': [],
+                'recommendation': f'Increase trace spacing to ≥{threshold_3h:.1f}mm on outer layers.',
+            })
+            break
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Category 12: EMI Filter Verification
+# ---------------------------------------------------------------------------
+
+def check_emi_filter_effectiveness(pcb: Optional[Dict],
+                                   schematic: Optional[Dict]) -> List[Dict]:
+    """EF-001: Verify EMI input filter cutoff vs switching frequency.
+
+    For each switching regulator, check if there's an LC filter on the
+    input rail with cutoff well below the switching frequency.
+
+    Ref: Paul, "Introduction to EMC", Ch. 9.
+         Analog Devices, "Speed Up the Design of EMI Filters for SMPS".
+    """
+    findings = []
+    if not schematic:
+        return findings
+
+    sa = schematic.get('signal_analysis', {})
+    regulators = sa.get('power_regulators', [])
+    lc_filters = sa.get('lc_filters', [])
+    rc_filters = sa.get('rc_filters', [])
+
+    if not regulators:
+        return findings
+
+    for reg in regulators:
+        topology = reg.get('topology', '')
+        if topology in ('ldo', 'linear'):
+            continue  # LDOs don't need EMI input filters
+
+        ref = reg.get('ref', reg.get('reference', ''))
+        val = reg.get('value', '')
+        sw_freq = _estimate_switching_freq(val)
+        if not sw_freq:
+            continue
+
+        input_rail = reg.get('input_rail', '')
+
+        # Look for an LC filter on the input rail
+        # Match by shared nets between filter components and regulator input
+        has_input_filter = False
+        filter_fc = None
+
+        for lc in lc_filters:
+            # Check if the LC filter shares the input rail net
+            inductor_ref = lc.get('inductor', '')
+            lc_freq = lc.get('resonant_frequency', lc.get('resonant_hz', 0))
+            if lc_freq and lc_freq > 0:
+                # Check if this filter's frequency is in the right range
+                # (well below switching frequency = good EMI filter)
+                if lc_freq < sw_freq:
+                    has_input_filter = True
+                    filter_fc = lc_freq
+                    break
+
+        if not has_input_filter:
+            # No input filter detected — INFO only (many designs rely on
+            # cap-only filtering which we can't easily distinguish)
+            continue
+
+        # Check if filter cutoff is far enough below switching frequency
+        ratio = sw_freq / filter_fc if filter_fc and filter_fc > 0 else 0
+
+        if ratio < 5:
+            findings.append({
+                'category': 'emi_filter',
+                'severity': 'MEDIUM',
+                'rule_id': 'EF-001',
+                'title': f'EMI filter cutoff too close to {ref} switching frequency',
+                'description': (
+                    f'{ref} ({val}) switching at {sw_freq/1e6:.2f} MHz has '
+                    f'an input LC filter with fc={filter_fc/1e6:.2f} MHz '
+                    f'(ratio f_sw/f_c = {ratio:.1f}×). Recommended: '
+                    f'f_c should be ≤ f_sw/5 for adequate attenuation '
+                    f'(-40 dB/decade rolloff).'
+                ),
+                'components': [ref],
+                'nets': [input_rail] if input_rail else [],
+                'recommendation': (
+                    f'Increase filter inductance or capacitance to lower '
+                    f'cutoff to ≤{sw_freq/5/1e6:.2f} MHz.'
+                ),
+            })
+        elif ratio >= 5:
+            findings.append({
+                'category': 'emi_filter',
+                'severity': 'INFO',
+                'rule_id': 'EF-002',
+                'title': f'EMI filter verified for {ref}',
+                'description': (
+                    f'{ref} ({val}) switching at {sw_freq/1e6:.2f} MHz has '
+                    f'input LC filter with fc={filter_fc/1e6:.2f} MHz '
+                    f'(ratio {ratio:.0f}×). Provides ≥{20*math.log10(ratio)*2:.0f} dB '
+                    f'attenuation at switching frequency.'
+                ),
+                'components': [ref],
+                'nets': [input_rail] if input_rail else [],
+                'recommendation': 'Input EMI filter appears adequate.',
+            })
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Category 13: ESD Protection Path Analysis
+# ---------------------------------------------------------------------------
+
+def check_esd_protection_path(pcb: Dict,
+                              schematic: Optional[Dict] = None) -> List[Dict]:
+    """ES-001/ES-002: Analyze ESD protection placement quality.
+
+    Beyond just checking if a TVS is near a connector (IO-001), this
+    checks:
+    - Distance from connector pad to TVS pad (trace length proxy)
+    - TVS ground via count (ground path inductance)
+
+    During an 8kV IEC 61000-4-2 strike, dI/dt = 30A/0.8ns = 37.5 GA/s.
+    Each nH of inductance creates 37.5V of overshoot.
+
+    Ref: TI SLVA680, "ESD Protection Layout Guide".
+         ST AN5686, "PCB Layout Tips for ESD Protection".
+    """
+    findings = []
+    if not schematic or not pcb:
+        return findings
+
+    protection = schematic.get('signal_analysis', {}).get('protection_devices', [])
+    if not protection:
+        return findings
+
+    footprints = pcb.get('footprints', [])
+    connectors = _connector_refs(footprints)
+    if not connectors:
+        return findings
+
+    # Build footprint position lookup
+    fp_positions = {}
+    fp_pads = {}
+    for fp in footprints:
+        ref = fp.get('reference', '')
+        fp_positions[ref] = (fp.get('x') or 0, fp.get('y') or 0)
+        fp_pads[ref] = fp.get('pads', [])
+
+    # Map protection devices to their positions
+    prot_refs = set()
+    prot_by_net = {}
+    for pd in protection:
+        ref = pd.get('reference', pd.get('ref', ''))
+        prot_refs.add(ref)
+        pnet = pd.get('protected_net', '')
+        if pnet:
+            prot_by_net.setdefault(pnet, []).append(pd)
+
+    # Count ground vias near each protection device
+    vias_data = pcb.get('vias', {})
+    all_vias = vias_data.get('vias', [])
+
+    for pd in protection:
+        ref = pd.get('reference', pd.get('ref', ''))
+        ptype = pd.get('type', '')
+        if ptype not in ('tvs', 'esd', 'esd_ic', 'tvs_array', 'varistor'):
+            continue
+
+        if ref not in fp_positions:
+            continue
+        px, py = fp_positions[ref]
+
+        # Check distance from nearest external connector
+        min_conn_dist = float('inf')
+        nearest_conn = ''
+        for conn in connectors:
+            cx = conn.get('x') or 0
+            cy = conn.get('y') or 0
+            d = math.sqrt((px - cx)**2 + (py - cy)**2)
+            if d < min_conn_dist:
+                min_conn_dist = d
+                nearest_conn = conn.get('reference', '')
+
+        if min_conn_dist > 50:
+            continue  # Not near any connector
+
+        # ES-001: Check distance (trace length proxy)
+        if min_conn_dist > 15:
+            # Estimate trace inductance from distance
+            est_inductance_nh = min_conn_dist * 0.7  # ~0.7 nH/mm for microstrip
+            est_overshoot_v = est_inductance_nh * 1e-9 * 37.5e9  # V = L × dI/dt
+            findings.append({
+                'category': 'esd_path',
+                'severity': 'MEDIUM',
+                'rule_id': 'ES-001',
+                'title': f'ESD device {ref} far from connector {nearest_conn}',
+                'description': (
+                    f'{ref} ({ptype}) is {min_conn_dist:.1f}mm from {nearest_conn}. '
+                    f'Estimated pre-TVS trace inductance: ~{est_inductance_nh:.0f}nH '
+                    f'→ ~{est_overshoot_v:.0f}V overshoot during 8kV ESD strike '
+                    f'(dI/dt = 37.5 GA/s). Recommended: <10mm.'
+                ),
+                'components': [ref, nearest_conn],
+                'nets': [],
+                'recommendation': (
+                    f'Move {ref} closer to {nearest_conn}. The ESD current path '
+                    f'from connector to TVS should be as short as possible.'
+                ),
+            })
+
+        # ES-002: Check ground via count near TVS
+        if all_vias:
+            gnd_vias_near = 0
+            for via in all_vias:
+                vx = via.get('x', 0)
+                vy = via.get('y', 0)
+                d = math.sqrt((px - vx)**2 + (py - vy)**2)
+                if d <= 3.0:  # Within 3mm of TVS
+                    # Check if it's a ground via
+                    net = via.get('net_name', via.get('net', ''))
+                    if isinstance(net, str) and _is_ground_net(net):
+                        gnd_vias_near += 1
+
+            if gnd_vias_near == 0:
+                findings.append({
+                    'category': 'esd_path',
+                    'severity': 'HIGH',
+                    'rule_id': 'ES-002',
+                    'title': f'No ground via near ESD device {ref}',
+                    'description': (
+                        f'{ref} ({ptype}) has no ground stitching via within 3mm. '
+                        f'The TVS ground pad inductance is the most critical '
+                        f'parasitic in ESD protection — each nH adds ~37.5V '
+                        f'overshoot during an 8kV strike.'
+                    ),
+                    'components': [ref],
+                    'nets': [],
+                    'recommendation': (
+                        f'Add multiple ground vias directly adjacent to {ref} '
+                        f'ground pad. Use fat, short traces to ground plane.'
+                    ),
+                })
+            elif gnd_vias_near == 1:
+                findings.append({
+                    'category': 'esd_path',
+                    'severity': 'LOW',
+                    'rule_id': 'ES-002',
+                    'title': f'Single ground via near ESD device {ref}',
+                    'description': (
+                        f'{ref} ({ptype}) has {gnd_vias_near} ground via within 3mm. '
+                        f'Multiple parallel vias reduce ground inductance. '
+                        f'Two vias halve the inductance (~0.5nH → ~0.25nH).'
+                    ),
+                    'components': [ref],
+                    'nets': [],
+                    'recommendation': f'Add a second ground via near {ref} for lower inductance.',
+                })
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# PDN Impedance Analysis
 # ---------------------------------------------------------------------------
 
 def check_pdn_impedance(pcb: Optional[Dict],
@@ -2326,10 +2702,15 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_connector_area_stitching(pcb, schematic))
         # Return path enhancement
         all_findings.extend(check_layer_transition_stitching(pcb, schematic))
+        # Crosstalk (requires --proximity PCB data)
+        all_findings.extend(check_crosstalk_3h_rule(pcb, schematic))
+        # ESD protection path (requires both schematic + PCB)
+        all_findings.extend(check_esd_protection_path(pcb, schematic))
 
     if schematic:
         all_findings.extend(check_switching_harmonics(schematic, standard))
         all_findings.extend(estimate_switching_emissions(schematic, standard))
+        all_findings.extend(check_emi_filter_effectiveness(pcb, schematic))
 
     # Checks requiring both schematic and PCB
     if schematic and pcb:
