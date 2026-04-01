@@ -140,6 +140,8 @@ def format_text_report(result: dict) -> str:
         'crosstalk': 'Crosstalk / Signal Integrity',
         'emi_filter': 'EMI Filter Verification',
         'esd_path': 'ESD Protection Path',
+        'thermal_emc': 'Thermal-EMC Interaction',
+        'shielding': 'Shielding / Enclosure',
         'pdn': 'PDN Impedance',
         'return_path': 'Return Path Analysis',
         'emission_estimate': 'Emission Estimates',
