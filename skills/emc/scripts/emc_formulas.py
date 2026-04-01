@@ -800,6 +800,23 @@ def diff_pair_cm_voltage(v_diff: float, skew_ps: float,
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
+def polygon_area(points: List[Tuple[float, float]]) -> float:
+    """Area of a polygon from a list of (x, y) vertices (shoelace formula).
+
+    Works for any simple (non-self-intersecting) polygon.
+    Returns area in the same units squared as the input coordinates.
+    """
+    n = len(points)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        area += points[i][0] * points[j][1]
+        area -= points[j][0] * points[i][1]
+    return abs(area) / 2.0
+
+
 def point_to_segment_distance(px: float, py: float,
                               x1: float, y1: float,
                               x2: float, y2: float) -> float:
