@@ -430,6 +430,7 @@ def check_decoupling_via_distance(pcb: Dict) -> List[Dict]:
     Ref: LearnEMC, "Estimating the Connection Inductance of Decoupling
     Capacitors" — via placement matters more than cap-to-IC distance.
     """
+    # EQ-086: d = √(Δx²+Δy²) (cap-to-via distance for connection inductance)
     findings = []
     decoupling = pcb.get('decoupling_placement', [])
     if not decoupling:
@@ -895,6 +896,7 @@ def check_clock_near_connector(pcb: Dict,
 
     Requires --full mode for track segment coordinates.
     """
+    # EQ-087: d = √(Δx²+Δy²) (clock trace midpoint to connector distance)
     findings = []
     tracks = pcb.get('tracks', {})
     segments = tracks.get('segments', [])
@@ -1361,6 +1363,7 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
     When SPICE is available, estimates radiated E-field from loop area ×
     switching current × frequency using dm_radiation_dbuv_m().
     """
+    # EQ-088: A = polygon_area(cap, IC, inductor) (hot loop area estimation)
     findings = []
     if not schematic or not pcb:
         return findings
