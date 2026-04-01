@@ -137,6 +137,8 @@ def format_text_report(result: dict) -> str:
         'stackup': 'Stackup Quality',
         'diff_pair': 'Differential Pair EMC',
         'board_edge': 'Board Edge Analysis',
+        'pdn': 'PDN Impedance',
+        'return_path': 'Return Path Analysis',
         'emission_estimate': 'Emission Estimates',
     }
 

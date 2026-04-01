@@ -541,6 +541,133 @@ MLCC_ESR = {
 }
 
 
+def pdn_target_impedance(v_rail: float, ripple_pct: float = 5.0,
+                         i_transient_a: float = 0.5) -> float:
+    """Target impedance for a power distribution network.
+
+    Z_target = V_rail × ripple% / (0.5 × I_transient)
+
+    The factor 0.5 accounts for the worst-case scenario where the
+    transient current is split equally between supply and return.
+
+    Ref: Bogatin, "Signal and Power Integrity — Simplified", Ch. 10.
+
+    Args:
+        v_rail: Rail voltage in Volts.
+        ripple_pct: Allowable voltage ripple as percentage (default 5%).
+        i_transient_a: Transient current demand in Amps.
+
+    Returns:
+        Target impedance in Ohms.
+    """
+    if i_transient_a <= 0:
+        return float('inf')
+    return v_rail * (ripple_pct / 100) / (0.5 * i_transient_a)
+
+
+def parallel_cap_impedance(freq_hz: float,
+                           caps: List[Dict]) -> float:
+    """Impedance of multiple capacitors in parallel at a given frequency.
+
+    Each cap dict should have: farads (float), esr_ohm (float), esl_h (float).
+    Missing fields use defaults from package lookup.
+
+    The parallel impedance: 1/Z_total = sum(1/Z_i)
+    """
+    if freq_hz <= 0 or not caps:
+        return float('inf')
+
+    sum_admittance = 0.0
+    for cap in caps:
+        c = cap.get('farads', 0)
+        if c <= 0:
+            continue
+        esr = cap.get('esr_ohm', 0.1)
+        esl = cap.get('esl_h', 1e-9)
+        z = cap_impedance_at_freq(freq_hz, c, esr, esl)
+        if z > 0:
+            sum_admittance += 1.0 / z
+
+    if sum_admittance <= 0:
+        return float('inf')
+    return 1.0 / sum_admittance
+
+
+def pdn_impedance_sweep(caps: List[Dict],
+                        plane_cap_f: float = 0,
+                        freq_start: float = 1e3,
+                        freq_stop: float = 1e9,
+                        points_per_decade: int = 50) -> List[Dict]:
+    """Sweep frequency and compute PDN impedance at each point.
+
+    Args:
+        caps: List of capacitor dicts with farads, esr_ohm, esl_h.
+        plane_cap_f: Interplane capacitance in Farads (parallel with caps).
+        freq_start: Start frequency in Hz.
+        freq_stop: Stop frequency in Hz.
+        points_per_decade: Resolution.
+
+    Returns:
+        List of {freq_hz, impedance_ohm} dicts.
+    """
+    if not caps and plane_cap_f <= 0:
+        return []
+
+    all_caps = list(caps)
+    if plane_cap_f > 0:
+        # Model interplane capacitance as a low-ESR, low-ESL cap
+        all_caps.append({
+            'farads': plane_cap_f,
+            'esr_ohm': 0.001,  # Very low ESR for plane cap
+            'esl_h': 0.05e-9,  # Very low ESL
+        })
+
+    results = []
+    decades = math.log10(freq_stop / freq_start)
+    n_points = max(10, int(decades * points_per_decade))
+
+    for i in range(n_points + 1):
+        f = freq_start * (10 ** (i * decades / n_points))
+        z = parallel_cap_impedance(f, all_caps)
+        results.append({'freq_hz': f, 'impedance_ohm': z})
+
+    return results
+
+
+def find_anti_resonances(sweep: List[Dict],
+                         z_target: float = None) -> List[Dict]:
+    """Find anti-resonance peaks (local maxima) in a PDN impedance sweep.
+
+    Args:
+        sweep: Output from pdn_impedance_sweep().
+        z_target: Target impedance. If provided, only peaks exceeding it
+                  are returned.
+
+    Returns:
+        List of {freq_hz, impedance_ohm, exceeds_target} dicts for each peak.
+    """
+    peaks = []
+    if len(sweep) < 3:
+        return peaks
+
+    for i in range(1, len(sweep) - 1):
+        z_prev = sweep[i - 1]['impedance_ohm']
+        z_curr = sweep[i]['impedance_ohm']
+        z_next = sweep[i + 1]['impedance_ohm']
+
+        if z_curr > z_prev and z_curr > z_next:
+            exceeds = z_curr > z_target if z_target else False
+            if z_target is None or exceeds:
+                peaks.append({
+                    'freq_hz': sweep[i]['freq_hz'],
+                    'freq_mhz': sweep[i]['freq_hz'] / 1e6,
+                    'impedance_ohm': z_curr,
+                    'exceeds_target': exceeds,
+                })
+
+    return peaks
+
+
 def estimate_esl(package: str) -> float:
     """Estimate ESL for an MLCC package. Returns Henries."""
     return MLCC_ESL.get(package, 1.0e-9)
