@@ -2040,6 +2040,343 @@ def check_esd_protection_path(pcb: Dict,
 
 
 # ---------------------------------------------------------------------------
+# Thermal-EMC Interaction
+# ---------------------------------------------------------------------------
+
+# MLCC DC bias derating — approximate effective capacitance as a fraction
+# of nominal at given voltage ratio (applied / rated). Dielectric-dependent.
+# Source: Murata/TDK DC bias characteristic data, Analog Devices MT-101.
+_DC_BIAS_DERATING = {
+    # (dielectric, package): {voltage_ratio: remaining_fraction}
+    # Interpolate linearly between points
+    'X5R_0402': [(0.0, 1.0), (0.25, 0.85), (0.5, 0.50), (0.75, 0.25), (1.0, 0.10)],
+    'X5R_0603': [(0.0, 1.0), (0.25, 0.90), (0.5, 0.60), (0.75, 0.35), (1.0, 0.15)],
+    'X5R_0805': [(0.0, 1.0), (0.25, 0.92), (0.5, 0.70), (0.75, 0.45), (1.0, 0.20)],
+    'X7R_0402': [(0.0, 1.0), (0.25, 0.90), (0.5, 0.65), (0.75, 0.40), (1.0, 0.15)],
+    'X7R_0603': [(0.0, 1.0), (0.25, 0.93), (0.5, 0.75), (0.75, 0.50), (1.0, 0.25)],
+    'X7R_0805': [(0.0, 1.0), (0.25, 0.95), (0.5, 0.80), (0.75, 0.55), (1.0, 0.30)],
+    'X7R_1206': [(0.0, 1.0), (0.25, 0.96), (0.5, 0.85), (0.75, 0.65), (1.0, 0.40)],
+    'C0G_any':  [(0.0, 1.0), (0.5, 1.0), (1.0, 1.0)],  # C0G has no DC bias effect
+}
+
+
+def _estimate_dc_bias_derating(dielectric: str, package: str,
+                               voltage_ratio: float) -> float:
+    """Estimate remaining capacitance fraction under DC bias.
+
+    Returns a value between 0 and 1 (1 = no derating).
+    """
+    if voltage_ratio <= 0:
+        return 1.0
+    voltage_ratio = min(voltage_ratio, 1.0)
+
+    # Look for specific dielectric+package, fall back to generic
+    key = f'{dielectric}_{package}'
+    if key not in _DC_BIAS_DERATING:
+        # Try generic dielectric
+        key_generic = f'{dielectric}_0603'
+        if key_generic in _DC_BIAS_DERATING:
+            key = key_generic
+        elif 'C0G' in dielectric.upper() or 'NP0' in dielectric.upper():
+            return 1.0  # C0G/NP0: no DC bias derating
+        else:
+            # Default: moderate derating
+            return max(0.1, 1.0 - voltage_ratio * 0.7)
+
+    curve = _DC_BIAS_DERATING[key]
+    # Linear interpolation
+    for i in range(len(curve) - 1):
+        v0, f0 = curve[i]
+        v1, f1 = curve[i + 1]
+        if v0 <= voltage_ratio <= v1:
+            t = (voltage_ratio - v0) / (v1 - v0) if v1 > v0 else 0
+            return f0 + t * (f1 - f0)
+    return curve[-1][1]
+
+
+def _classify_dielectric(value_str: str, desc_str: str = '') -> str:
+    """Extract MLCC dielectric type from component value/description."""
+    text = (value_str + ' ' + desc_str).upper()
+    for d in ('C0G', 'NP0', 'COG'):
+        if d in text:
+            return 'C0G'
+    for d in ('X7R', 'X7S', 'X6S'):
+        if d in text:
+            return 'X7R'
+    for d in ('X5R', 'X5S'):
+        if d in text:
+            return 'X5R'
+    for d in ('Y5V', 'Z5U', 'X7T'):
+        if d in text:
+            return 'Y5V'
+    return 'X7R'  # default assumption for unmarked MLCC
+
+
+def check_thermal_emc(pcb: Optional[Dict],
+                      schematic: Optional[Dict]) -> List[Dict]:
+    """TH-001/TH-002: Check for thermal effects that degrade EMC performance.
+
+    TH-001: MLCC DC bias derating — flags caps that may have significantly
+    reduced effective capacitance, shifting SRF and creating PDN gaps.
+
+    TH-002: Ferrite bead near hot component — flags ferrite beads within
+    10mm of switching regulators (thermal permeability degradation).
+
+    Ref: Analog Devices, "Temperature and Voltage Variation of Ceramic
+    Capacitors"; Murata DC bias characteristic documentation.
+    """
+    findings = []
+    if not schematic:
+        return findings
+
+    # TH-001: Cap DC bias derating on power rails
+    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    for reg in regulators:
+        vout = reg.get('vout_estimated') or reg.get('estimated_vout')
+        if not vout or vout <= 0:
+            continue
+
+        output_caps = reg.get('output_capacitors', [])
+        ref_reg = reg.get('ref', reg.get('reference', ''))
+        output_rail = reg.get('output_rail', '')
+
+        for cap in output_caps:
+            farads = cap.get('farads', 0)
+            if not farads or farads <= 0:
+                continue
+
+            cap_ref = cap.get('ref', '?')
+            package = cap.get('package', '0603')
+            value_str = cap.get('value', '')
+
+            # Estimate rated voltage from common cap values
+            # Without datasheet data, assume rated voltage from value heuristic
+            # Most small caps on 3.3V rails are rated 6.3V or 10V
+            # On 5V rails, rated 10V or 16V
+            rated_v = 10.0  # conservative default
+            if vout <= 1.8:
+                rated_v = 6.3
+            elif vout <= 3.3:
+                rated_v = 6.3
+            elif vout <= 5.0:
+                rated_v = 10.0
+            elif vout <= 12.0:
+                rated_v = 25.0
+
+            voltage_ratio = vout / rated_v
+            dielectric = _classify_dielectric(value_str)
+            remaining = _estimate_dc_bias_derating(dielectric, package, voltage_ratio)
+
+            effective_uf = farads * remaining * 1e6
+            nominal_uf = farads * 1e6
+
+            if remaining < 0.5:
+                findings.append({
+                    'category': 'thermal_emc',
+                    'severity': 'MEDIUM',
+                    'rule_id': 'TH-001',
+                    'title': f'{cap_ref} may have significant DC bias derating',
+                    'description': (
+                        f'{cap_ref} ({nominal_uf:.1f}µF {dielectric} {package}) on '
+                        f'{output_rail or ref_reg} {vout}V rail: estimated '
+                        f'{remaining*100:.0f}% effective capacitance under DC bias '
+                        f'({effective_uf:.1f}µF actual vs {nominal_uf:.1f}µF nominal). '
+                        f'SRF shifts by {1/math.sqrt(remaining):.1f}× — may create '
+                        f'gaps in decoupling coverage.'
+                    ),
+                    'components': [cap_ref, ref_reg],
+                    'nets': [output_rail] if output_rail else [],
+                    'recommendation': (
+                        f'Use a larger package (lower derating), higher voltage '
+                        f'rating, or C0G/NP0 dielectric for critical decoupling. '
+                        f'Alternatively, add more caps to compensate.'
+                    ),
+                })
+
+    # TH-002: Ferrite bead near switching regulator (thermal degradation)
+    if pcb:
+        footprints = pcb.get('footprints', [])
+
+        # Find switching regulator positions
+        reg_positions = []
+        for reg in regulators:
+            if reg.get('topology') in ('ldo', 'linear'):
+                continue
+            ref = reg.get('ref', reg.get('reference', ''))
+            for fp in footprints:
+                if fp.get('reference') == ref:
+                    reg_positions.append({
+                        'ref': ref,
+                        'x': fp.get('x') or 0,
+                        'y': fp.get('y') or 0,
+                    })
+                    break
+
+        # Find ferrite beads
+        for fp in footprints:
+            ref = fp.get('reference', '')
+            val = fp.get('value', '').lower()
+            lib = fp.get('lib_id', '').lower()
+            is_ferrite = ref.startswith('FB') or ('ferrite' in val) or ('bead' in val) or ('ferrite' in lib)
+            if not is_ferrite:
+                continue
+
+            fx = fp.get('x') or 0
+            fy = fp.get('y') or 0
+
+            for reg_pos in reg_positions:
+                dist = math.sqrt((fx - reg_pos['x'])**2 + (fy - reg_pos['y'])**2)
+                if dist <= 10.0:
+                    findings.append({
+                        'category': 'thermal_emc',
+                        'severity': 'LOW',
+                        'rule_id': 'TH-002',
+                        'title': f'Ferrite {ref} near switching regulator {reg_pos["ref"]}',
+                        'description': (
+                            f'{ref} ({fp.get("value","")}) is {dist:.1f}mm from '
+                            f'switching regulator {reg_pos["ref"]}. Ferrite '
+                            f'permeability decreases with temperature — if the '
+                            f'regulator runs hot, the ferrite impedance may '
+                            f'drop 30-50% above 85°C, reducing filtering.'
+                        ),
+                        'components': [ref, reg_pos['ref']],
+                        'nets': [],
+                        'recommendation': (
+                            'Verify ferrite bead thermal rating. Consider '
+                            'relocating away from heat source or using a '
+                            'higher-temperature-rated ferrite.'
+                        ),
+                    })
+                    break  # One finding per ferrite
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Shielding / Enclosure Advisory
+# ---------------------------------------------------------------------------
+
+def check_shielding_advisory(pcb: Dict,
+                             schematic: Optional[Dict] = None,
+                             standard: str = 'fcc-class-b') -> List[Dict]:
+    """SH-001: Advisory on connector aperture slot antenna frequencies.
+
+    Calculates the frequency at which each connector cutout acts as a
+    resonant slot antenna (f = c / 2L). If this coincides with a known
+    emission source, the connector becomes an efficient radiator.
+
+    SH-002: Estimate minimum shielding effectiveness needed.
+
+    Ref: Ott, "EMC Engineering", Ch. 6 — aperture theory.
+    """
+    findings = []
+    stats = pcb.get('statistics', {})
+    footprints = pcb.get('footprints', [])
+    connectors = _connector_refs(footprints)
+
+    if not connectors:
+        return findings
+
+    # Collect known emission frequencies
+    emission_freqs = []
+    if schematic:
+        for xtal in schematic.get('signal_analysis', {}).get('crystal_circuits', []):
+            f = xtal.get('frequency') or 0
+            if isinstance(f, (int, float)) and f > 0:
+                emission_freqs.append(f)
+                emission_freqs.append(f * 2)  # 2nd harmonic
+                emission_freqs.append(f * 3)  # 3rd harmonic
+
+        for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
+            if reg.get('topology') in ('ldo', 'linear'):
+                continue
+            sw = _estimate_switching_freq(reg.get('value', ''))
+            if sw:
+                # Add harmonics that fall in EMC test range
+                for n in range(1, 20):
+                    h = sw * n
+                    if h > 30e6:
+                        emission_freqs.append(h)
+                    if h > 1e9:
+                        break
+
+    # Common connector sizes (approximate aperture dimensions in mm)
+    # USB-A: ~12mm, USB-C: ~9mm, RJ45: ~16mm, HDMI: ~15mm, barrel: ~8mm
+    connector_sizes = {
+        'usb': 12, 'usb_c': 9, 'usb-c': 9, 'type_c': 9, 'type-c': 9,
+        'rj45': 16, 'rj11': 12, 'ethernet': 16,
+        'hdmi': 15, 'vga': 20, 'dsub': 25, 'db9': 18, 'db25': 40,
+        'sma': 8, 'bnc': 12, 'barrel': 8, 'dc_jack': 10,
+        'audio': 8, 'jack': 8,
+    }
+
+    for conn in connectors:
+        conn_ref = conn.get('reference', '')
+        conn_val = conn.get('value', '')
+        combined = (conn_val + ' ' + conn.get('lib_id', '')).lower()
+
+        # Estimate aperture size
+        aperture_mm = 12  # default
+        for kw, size in connector_sizes.items():
+            if kw in combined:
+                aperture_mm = size
+                break
+
+        # Calculate slot resonance: f = c / (2 × L)
+        aperture_m = aperture_mm / 1000
+        f_slot = 3e8 / (2 * aperture_m)  # Hz
+
+        # Check if any emission frequency is near the slot resonance (within 20%)
+        coincidence = False
+        coincident_freqs = []
+        for ef in emission_freqs:
+            if 0.8 * f_slot <= ef <= 1.2 * f_slot:
+                coincidence = True
+                coincident_freqs.append(ef)
+
+        if coincidence:
+            freq_strs = [f'{f/1e6:.0f} MHz' for f in coincident_freqs[:3]]
+            findings.append({
+                'category': 'shielding',
+                'severity': 'MEDIUM',
+                'rule_id': 'SH-001',
+                'title': f'{conn_ref} aperture resonates near emission source',
+                'description': (
+                    f'{conn_ref} ({conn_val}) has ~{aperture_mm}mm aperture → '
+                    f'slot resonance at {f_slot/1e9:.1f} GHz. Board emission '
+                    f'sources at {", ".join(freq_strs)} are near this resonance. '
+                    f'The connector cutout may act as an efficient radiator '
+                    f'at these frequencies.'
+                ),
+                'components': [conn_ref],
+                'nets': [],
+                'recommendation': (
+                    'Ensure the enclosure provides adequate shielding around '
+                    'this connector. Consider a shielded connector variant '
+                    'or adding absorber material.'
+                ),
+            })
+        else:
+            # Always report the slot frequency for test planning
+            findings.append({
+                'category': 'shielding',
+                'severity': 'INFO',
+                'rule_id': 'SH-001',
+                'title': f'{conn_ref} aperture slot resonance',
+                'description': (
+                    f'{conn_ref} ({conn_val}) ~{aperture_mm}mm aperture → '
+                    f'slot antenna resonance at {f_slot/1e9:.1f} GHz. '
+                    f'No known board emission sources coincide with this frequency.'
+                ),
+                'components': [conn_ref],
+                'nets': [],
+                'recommendation': 'No action needed — slot resonance is above emission frequencies.',
+            })
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # PDN Impedance Analysis
 # ---------------------------------------------------------------------------
 
@@ -2706,6 +3043,8 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_crosstalk_3h_rule(pcb, schematic))
         # ESD protection path (requires both schematic + PCB)
         all_findings.extend(check_esd_protection_path(pcb, schematic))
+        # Shielding advisory
+        all_findings.extend(check_shielding_advisory(pcb, schematic, standard))
 
     if schematic:
         all_findings.extend(check_switching_harmonics(schematic, standard))
@@ -2719,6 +3058,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_diff_pair_reference_plane(pcb, schematic))
         all_findings.extend(check_diff_pair_layer(pcb, schematic))
         all_findings.extend(check_pdn_impedance(pcb, schematic))
+        all_findings.extend(check_thermal_emc(pcb, schematic))
 
     # Filter by severity
     if severity_threshold.lower() != 'all':
