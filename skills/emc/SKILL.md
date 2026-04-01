@@ -62,15 +62,15 @@ Read the JSON report and incorporate findings into the design review. Each findi
 
 ## What Gets Checked
 
-35 rule IDs across 18 categories. Each rule has a specific threshold, rationale, and source citation — see `references/pcb-emc-rules.md` for full details.
+40 rule IDs across 18 categories. Each rule has a specific threshold, rationale, and source citation — see `references/pcb-emc-rules.md` for full details.
 
 | Category | Rules | What it detects |
 |----------|-------|-----------------|
 | **Ground plane** | GP-001 to GP-005 | Signal crossing voids, zone fragmentation, missing ground planes, low fill ratio, multiple ground domains |
-| **Decoupling** | DC-001, DC-002 | Cap too far from IC, IC with no decoupling cap |
-| **I/O filtering** | IO-001 | External connector without ferrite/CM choke/ESD protection |
-| **Switching EMC** | SW-001 | Regulator harmonics overlapping FCC/CISPR test bands |
-| **Clock routing** | CK-001, CK-002 | Clock on outer layer when inner available, clock trace >100mm |
+| **Decoupling** | DC-001 to DC-003 | Cap too far from IC, IC with no decoupling cap, cap too far from via |
+| **I/O filtering** | IO-001, IO-002 | Connector without filtering, insufficient ground pins |
+| **Switching EMC** | SW-001 to SW-003 | Harmonic overlap, switching node copper area, input cap loop area |
+| **Clock routing** | CK-001 to CK-003 | Clock on outer layer, long trace, clock near connector |
 | **Via stitching** | VS-001 | Ground via spacing exceeds λ/20 at highest frequency |
 | **Stackup** | SU-001 to SU-003 | Adjacent signal layers, signal far from reference plane, thin interplane capacitance |
 | **Diff pair** | DP-001 to DP-004 | Intra-pair skew vs protocol limits, CM radiation, reference plane change, outer layer routing |
@@ -109,6 +109,9 @@ Read the JSON report and incorporate findings into the design review. Each findi
       "nets": ["SPI_CLK"],
       "recommendation": "Route around the gap, or fill the void"
     }
+  ],
+  "per_net_scores": [
+    {"net": "SPI_CLK", "score": 67, "finding_count": 3, "rules": ["GP-001", "CK-001", "BE-001"]}
   ],
   "test_plan": {
     "frequency_bands": [{"band": "30-88 MHz", "risk_level": "high", "source_count": 12}],

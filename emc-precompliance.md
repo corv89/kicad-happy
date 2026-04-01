@@ -21,15 +21,15 @@ No external tools required — all checks work with analytical formulas alone. W
 
 ## Check Categories
 
-18 categories covering the full spectrum of PCB-level EMC issues:
+40 rule IDs across 18 categories:
 
 | Category | Rule IDs | What it detects | Requires |
 |----------|----------|-----------------|----------|
 | **Ground plane integrity** | GP-001 to GP-005 | Signal crossing voids, zone fragmentation, missing ground planes, low fill ratio, multiple ground domains | PCB |
-| **Decoupling** | DC-001, DC-002 | Cap too far from IC (>5mm warn, >8mm critical), IC with no decoupling cap | PCB |
-| **I/O filtering** | IO-001 | External connector without ferrite/CM choke/ESD within 25mm | PCB + schematic |
-| **Switching harmonics** | SW-001 | Regulator harmonics overlapping FCC/CISPR test bands | Schematic |
-| **Clock routing** | CK-001, CK-002 | Clock on outer layer when inner available, clock trace >100mm | PCB + schematic |
+| **Decoupling** | DC-001 to DC-003 | Cap too far from IC, IC with no decoupling cap, cap too far from via (connection inductance) | PCB |
+| **I/O filtering** | IO-001, IO-002 | Connector without filtering, insufficient ground pins for signal count | PCB + schematic |
+| **Switching EMC** | SW-001 to SW-003 | Harmonic overlap with test bands, switching node copper area, input cap loop area | Schematic + PCB |
+| **Clock routing** | CK-001 to CK-003 | Clock on outer layer, long clock trace, clock routed near connector | PCB + schematic |
 | **Via stitching** | VS-001 | Ground via spacing exceeds 2x lambda/20 at highest frequency | PCB + schematic |
 | **Stackup** | SU-001 to SU-003 | Adjacent signal layers, signal far from reference plane, thin interplane cap | PCB |
 | **Differential pair** | DP-001 to DP-004 | Intra-pair skew vs protocol limits, CM radiation from skew, reference plane change, outer layer routing | PCB + schematic |
@@ -146,6 +146,20 @@ score = 100 - (CRITICAL x 15) - (HIGH x 8) - (MEDIUM x 3) - (LOW x 1)
 | 70-89 | Moderate risk — some issues to address |
 | 50-69 | Significant risk — multiple issues likely to cause failures |
 | <50 | High risk — fundamental design issues |
+
+## Per-Net Scoring
+
+In addition to the board-level risk score, the analyzer computes a per-net EMC score. Each net that appears in any finding gets its own score using the same formula. This lets you identify the highest-risk signals at a glance:
+
+```
+Highest-risk nets:
+  SPI_CLK: 67/100 (3 findings: GP-001, CK-001, BE-001)
+  USB_DP:  84/100 (2 findings: DP-001, DP-004)
+  USB_DM:  84/100 (2 findings: DP-001, DP-004)
+  SW_NODE: 92/100 (1 finding: SW-002)
+```
+
+Output as `per_net_scores` in the JSON, sorted worst-first.
 
 ## Pre-Compliance Test Plan
 
