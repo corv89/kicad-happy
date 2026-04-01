@@ -96,11 +96,18 @@ Clamped to [0, 100]. Interpretation:
 
 6. **2-layer board limitations.** The adjacent signal layer check (SU-001) will always fire on 2-layer boards. This is technically correct (2-layer boards inherently have worse EMC than multi-layer) but may generate noise for simple designs where EMC compliance isn't a goal.
 
+## SPICE-Enhanced Mode
+
+When `--spice-enhanced` is passed and a SPICE simulator is detected (via the `spice` skill's `detect_simulator()`), two checks use AC analysis for improved accuracy:
+
+- **PDN impedance (PD-001/PD-002):** Generates an AC sweep testbench with series R-L-C models for each decoupling cap and a 1A current source. Measures V(rail) = Z(f) across 1 kHz to 1 GHz. Captures phase interactions at anti-resonance peaks that the analytical parallel-impedance model underestimates. The SPICE path uses `SpiceTestbench` from `spice_templates.py` for portable rendering across ngspice/LTspice/Xyce.
+
+- **EMI filter (EF-001/EF-002):** Simulates actual insertion loss of the input LC filter including cap parasitics (ESR + ESL). Reports attenuation in dB at the switching frequency and 3rd harmonic.
+
+Implementation: `emc_spice.py` imports from the spice skill's `spice_simulator.py` and `spice_templates.py`. Falls back to analytical if import fails or simulation errors.
+
 ## Future Enhancements
 
-- **Board edge proximity checks** — flag traces near PCB edges without ground pour
 - **Switching node area estimation** — measure copper area on switch node nets
-- **Differential pair EMC quality** — verify impedance continuity through connectors
-- **ESD protection distance measurement** — verify TVS within 25mm using trace routing, not just Euclidean distance
-- **SPICE-based PDN impedance** — model decoupling network and find anti-resonance peaks
 - **Trace-level ground plane crossing** — when full zone polygon data becomes available, check per-trace-segment crossing of specific voids
+- **SPICE-based switching harmonic FFT** — transient simulation + FFT for actual harmonic amplitudes instead of trapezoidal envelope approximation

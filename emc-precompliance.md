@@ -17,7 +17,7 @@ Both JSONs
   -> analyze_emc.py -> emc.json (findings, risk score, test plan, regulatory coverage)
 ```
 
-No SPICE simulator or external tools needed. All checks are deterministic — same input always produces the same output.
+No external tools required — all checks work with analytical formulas alone. When ngspice, LTspice, or Xyce is available, the `--spice-enhanced` flag enables SPICE-verified PDN impedance and EMI filter insertion loss analysis for higher accuracy. Without a simulator, the analytical path runs unchanged.
 
 ## Check Categories
 
@@ -157,6 +157,23 @@ The analyzer generates a test plan to help you prepare for lab testing:
 
 **Suggested probe points** — lists XY coordinates of switching inductors, crystal oscillators, and unfiltered connectors. These are the spots to probe during near-field scanning.
 
+## SPICE-Enhanced Mode
+
+When a SPICE simulator is available (ngspice, LTspice, or Xyce), the `--spice-enhanced` flag improves two check categories:
+
+**PDN impedance (PD-001, PD-002)** — Instead of the analytical parallel-RLC model, SPICE runs an actual AC sweep of the decoupling network. This captures phase interactions between capacitors that the analytical model misses, particularly at anti-resonance peaks. In testing, SPICE found a 33 ohm anti-resonance peak where the analytical model estimated 3.4 ohm — a 10x difference that could mean the difference between catching a real PDN problem and missing it.
+
+**EMI filter insertion loss (EF-001, EF-002)** — Instead of just checking cutoff frequency vs switching frequency, SPICE simulates the actual insertion loss including capacitor parasitics. Reports attenuation in dB at the switching frequency and its 3rd harmonic.
+
+```bash
+# Enable SPICE-enhanced mode
+python3 analyze_emc.py --schematic sch.json --pcb pcb.json --spice-enhanced
+
+# The GitHub Action enables this automatically when ngspice is installed
+```
+
+Findings from SPICE-enhanced checks are annotated "(SPICE-verified)" in the description. Without a simulator, the analytical model runs unchanged and findings are annotated "(analytical)".
+
 ## Limitations
 
 **What this analyzer cannot do:**
@@ -187,6 +204,10 @@ python3 skills/emc/scripts/analyze_emc.py \
 # Select target market (sets all applicable standards)
 python3 skills/emc/scripts/analyze_emc.py \
   --schematic schematic.json --pcb pcb.json --market eu
+
+# SPICE-enhanced mode (improved PDN and filter accuracy)
+python3 skills/emc/scripts/analyze_emc.py \
+  --schematic schematic.json --pcb pcb.json --spice-enhanced
 
 # Human-readable text output
 python3 skills/emc/scripts/analyze_emc.py \

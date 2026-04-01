@@ -69,7 +69,7 @@ Ask your agent:
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 mkdir -p ~/.claude/skills
-for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway spice emc; do
+for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.claude/skills/$skill
 done
 ```
@@ -81,7 +81,7 @@ done
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 mkdir -p ~/.codex/skills
-for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway spice emc; do
+for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.codex/skills/$skill
 done
 ```
@@ -261,7 +261,7 @@ Requires ngspice, LTspice, or Xyce (auto-detected). Without one, simulation is s
 
 > "Check my differential pairs for skew-induced common-mode radiation"
 
-The **emc** skill predicts the most common causes of EMC test failures — ground plane voids, insufficient decoupling, unfiltered I/O cables, switching regulator harmonics, differential pair skew, and more. It operates purely on the schematic and PCB analyzer output using geometric rule checks and analytical emission formulas (Ott, Paul, Bogatin). No SPICE simulator or external tools needed.
+The **emc** skill predicts the most common causes of EMC test failures — ground plane voids, insufficient decoupling, unfiltered I/O cables, switching regulator harmonics, differential pair skew, and more. It operates on the schematic and PCB analyzer output using geometric rule checks and analytical emission formulas (Ott, Paul, Bogatin). When ngspice is available, PDN impedance and EMI filter checks are SPICE-verified for higher accuracy — otherwise analytical models are used as fallback.
 
 ```
 EMC risk score: 73/100

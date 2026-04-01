@@ -18,9 +18,9 @@ This skill inverts the typical simulation workflow: instead of requiring users t
 | `mouser` | Parametric specs (secondary source), datasheet downloads |
 | `lcsc` | Parametric specs (no auth needed), datasheet downloads |
 | `element14` | Parametric specs (international), datasheet downloads |
-| `emc` | EMC pre-compliance — sibling verification skill, also consumes analyzer output |
+| `emc` | EMC pre-compliance — uses this skill's simulator infrastructure for SPICE-enhanced PDN impedance and EMI filter analysis |
 
-**Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report.
+**Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report. The `emc` skill reuses this skill's simulator backend for SPICE-enhanced PDN impedance and EMI filter insertion loss checks — when ngspice is available, the EMC skill's `--spice-enhanced` flag activates these checks automatically.
 
 ## Requirements
 
