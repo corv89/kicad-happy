@@ -392,12 +392,15 @@ Everything above was validated against a [corpus of 1,035 open-source KiCad proj
 | Schematic files analyzed | 6,845 (100% success) |
 | PCB files analyzed | 3,498 (99.9% — 2 failures are empty stub files) |
 | Gerber directories analyzed | 1,050 (100% success) |
+| EMC pre-compliance analyses | 6,853 (100% success, 151K+ findings) |
 | Components parsed | 312,956 |
 | Nets traced | 531,418 |
 | SPICE subcircuit simulations | 30,646 across 17 types |
-| Regression assertions | 294,883 at 99.8% pass rate |
+| SPICE-verified EMC findings | 169 (PDN impedance via ngspice) |
+| Regression assertions | 520K+ at 100% pass rate |
+| Equations tracked & verified | 88 with source citations |
 | Bugfix regression guards | 77 (100% pass — no fixed bugs have returned) |
-| Closed analyzer issues | 186 |
+| Closed analyzer issues | 191 |
 
 Three-layer regression testing catches drift at every level:
 
