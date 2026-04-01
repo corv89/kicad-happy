@@ -24,7 +24,7 @@ Automated EMC risk analysis for KiCad PCB designs. Identifies the most common ca
 - **Schematic analyzer JSON** — from `analyze_schematic.py --output`
 - **PCB analyzer JSON** — from `analyze_pcb.py --full --output` (strongly recommended with `--full`)
 
-No SPICE simulator or external tools required. All checks are deterministic.
+No external tools required — all checks work with analytical formulas. When a SPICE simulator is available (ngspice, LTspice, or Xyce), the `--spice-enhanced` flag enables SPICE-verified PDN impedance and EMI filter insertion loss for higher accuracy. Without a simulator, analytical models run unchanged.
 
 ## Workflow
 
