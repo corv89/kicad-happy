@@ -197,6 +197,9 @@ if [ -n "$SCH_JSON" ] || [ -n "$PCB_JSON" ]; then
     [ -n "$SCH_JSON" ] && [ -f "$SCH_JSON" ] && EMC_ARGS+=(--schematic "$SCH_JSON")
     [ -n "$PCB_JSON" ] && [ -f "$PCB_JSON" ] && EMC_ARGS+=(--pcb "$PCB_JSON")
     EMC_ARGS+=(--output "$EMC_JSON")
+    if command -v ngspice &>/dev/null; then
+        EMC_ARGS+=(--spice-enhanced)
+    fi
     if python3 "$ACTION_PATH/skills/emc/scripts/analyze_emc.py" "${EMC_ARGS[@]}" 2>"$OUTDIR/emc.err"; then
         SUMMARY=$(python3 -c "import json; d=json.load(open('$EMC_JSON')); s=d.get('summary',{}); print(f\"score {s.get('emc_risk_score',0)}/100, {s.get('critical',0)} crit, {s.get('high',0)} high, {s.get('medium',0)} med\")" 2>/dev/null || echo "?")
         echo "EMC: $SUMMARY"

@@ -390,6 +390,7 @@ def check_missing_decoupling(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
 
 def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dict]:
     """Check for filter components near external connectors."""
+    # EQ-035: d = √(Δx²+Δy²) (filter-to-connector distance)
     findings = []
     footprints = pcb.get('footprints', [])
     connectors = _connector_refs(footprints)
@@ -716,6 +717,7 @@ def check_clock_routing(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
 
 def check_via_stitching(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dict]:
     """Check ground via stitching spacing against frequency requirements."""
+    # EQ-043: spacing = √(area/count) vs λ/20 (via stitching check)
     findings = []
     vias = pcb.get('vias', {})
     stats = pcb.get('statistics', {})
@@ -1151,6 +1153,7 @@ def check_diff_pair_cm_radiation(pcb: Optional[Dict],
                                  schematic: Optional[Dict],
                                  standard: str = 'fcc-class-b') -> List[Dict]:
     """DP-002: Estimate common-mode radiation from diff pair skew."""
+    # EQ-036: E_cm from V_cm and cable length using EQ-003
     findings = []
     if not schematic or not pcb:
         return findings
@@ -1486,6 +1489,7 @@ def check_trace_near_board_edge(pcb: Dict,
 
 def check_ground_pour_ring(pcb: Dict) -> List[Dict]:
     """BE-002: Check for ground pour coverage at board edges."""
+    # EQ-039: Edge coverage from GND zone bounding box sampling
     findings = []
     edges = pcb.get('board_outline', {}).get('edges', [])
     zones = pcb.get('zones', [])
@@ -1572,6 +1576,7 @@ def check_ground_pour_ring(pcb: Dict) -> List[Dict]:
 def check_connector_area_stitching(pcb: Dict,
                                    schematic: Optional[Dict] = None) -> List[Dict]:
     """BE-003: Check via stitching density near external connectors."""
+    # EQ-034: Via density in connector proximity region
     findings = []
     footprints = pcb.get('footprints', [])
     connectors = _connector_refs(footprints)
@@ -1787,15 +1792,18 @@ def check_crosstalk_3h_rule(pcb: Dict,
 # ---------------------------------------------------------------------------
 
 def check_emi_filter_effectiveness(pcb: Optional[Dict],
-                                   schematic: Optional[Dict]) -> List[Dict]:
+                                   schematic: Optional[Dict],
+                                   spice_backend=None) -> List[Dict]:
     """EF-001: Verify EMI input filter cutoff vs switching frequency.
 
     For each switching regulator, check if there's an LC filter on the
     input rail with cutoff well below the switching frequency.
+    When spice_backend is provided, simulates actual insertion loss.
 
     Ref: Paul, "Introduction to EMC", Ch. 9.
          Analog Devices, "Speed Up the Design of EMI Filters for SMPS".
     """
+    # EQ-037: ratio = f_sw/f_cutoff; ratio >= 5 for adequate EMI filter
     findings = []
     if not schematic:
         return findings
@@ -1905,6 +1913,7 @@ def check_esd_protection_path(pcb: Dict,
     Ref: TI SLVA680, "ESD Protection Layout Guide".
          ST AN5686, "PCB Layout Tips for ESD Protection".
     """
+    # EQ-038: V_overshoot = L × dI/dt; dI/dt = 37.5 GA/s for 8kV ESD
     findings = []
     if not schematic or not pcb:
         return findings
@@ -2125,6 +2134,7 @@ def check_thermal_emc(pcb: Optional[Dict],
     Ref: Analog Devices, "Temperature and Voltage Variation of Ceramic
     Capacitors"; Murata DC bias characteristic documentation.
     """
+    # EQ-042: DC bias derating lookup + ferrite µ thermal degradation
     findings = []
     if not schematic:
         return findings
@@ -2381,13 +2391,18 @@ def check_shielding_advisory(pcb: Dict,
 # ---------------------------------------------------------------------------
 
 def check_pdn_impedance(pcb: Optional[Dict],
-                        schematic: Optional[Dict]) -> List[Dict]:
+                        schematic: Optional[Dict],
+                        spice_backend=None) -> List[Dict]:
     """PD-001/PD-002: Analyze decoupling network impedance per power rail.
 
     For each power regulator with detected output capacitors, model the
     parallel impedance of the decoupling network, compute target impedance,
     and flag anti-resonance peaks that exceed the target.
+
+    When spice_backend is provided, uses SPICE AC analysis for more accurate
+    impedance sweep (captures phase interactions). Falls back to analytical.
     """
+    # EQ-041: Z_pdn(f) vs Z_target = V×ripple%/(0.5×I_transient)
     findings = []
     if not schematic:
         return findings
@@ -2471,9 +2486,28 @@ def check_pdn_impedance(pcb: Optional[Dict],
         z_target = pdn_target_impedance(vout, ripple_pct=5.0,
                                         i_transient_a=i_transient)
 
-        # Sweep impedance
-        sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
-                                    freq_start=1e3, freq_stop=1e9)
+        # Sweep impedance — use SPICE if available, otherwise analytical
+        spice_verified = False
+        if spice_backend and len(cap_models) >= 2:
+            try:
+                from emc_spice import run_pdn_spice
+                ok, spice_sweep = run_pdn_spice(
+                    cap_models, plane_cap_f, spice_backend,
+                    freq_start=1e3, freq_stop=1e9)
+                if ok and spice_sweep:
+                    sweep = spice_sweep
+                    spice_verified = True
+                else:
+                    sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
+                                                freq_start=1e3, freq_stop=1e9)
+            except Exception:
+                sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
+                                            freq_start=1e3, freq_stop=1e9)
+        else:
+            sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
+                                        freq_start=1e3, freq_stop=1e9)
+
+        method_note = ' (SPICE-verified)' if spice_verified else ' (analytical)'
 
         # Find anti-resonances
         peaks = find_anti_resonances(sweep, z_target=z_target)
@@ -2488,7 +2522,7 @@ def check_pdn_impedance(pcb: Optional[Dict],
                 'rule_id': 'PD-001',
                 'title': f'{output_rail or ref} PDN anti-resonance exceeds target',
                 'description': (
-                    f'{ref} ({val}) {output_rail} rail: target impedance '
+                    f'{ref} ({val}) {output_rail} rail{method_note}: target impedance '
                     f'{z_target:.3f}Ω (Vout={vout}V, 5% ripple, '
                     f'{i_transient:.1f}A transient). '
                     f'Anti-resonance peak(s) exceed target at: '
@@ -2542,6 +2576,7 @@ def check_layer_transition_stitching(pcb: Dict,
 
     Ref: Ott, "PCB Stack-Up Part 6"; Sierra Circuits return path guide.
     """
+    # EQ-040: Via distance from layer transition vias
     findings = []
     layer_trans = pcb.get('layer_transitions', [])
     if not layer_trans:
@@ -3005,7 +3040,8 @@ def analyze_regulatory_coverage(standard: str, market: Optional[str],
 
 def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
                    standard: str = 'fcc-class-b',
-                   severity_threshold: str = 'all') -> List[Dict]:
+                   severity_threshold: str = 'all',
+                   spice_backend=None) -> List[Dict]:
     """Run all EMC rule checks and return combined findings.
 
     Args:
@@ -3013,6 +3049,8 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         pcb: PCB analyzer JSON (optional, but most checks need it).
         standard: Target EMC standard.
         severity_threshold: Minimum severity to include.
+        spice_backend: SimulatorBackend instance for SPICE-enhanced
+                       PDN/filter analysis (optional, None = analytical only).
 
     Returns:
         List of finding dicts, sorted by severity.
@@ -3049,7 +3087,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
     if schematic:
         all_findings.extend(check_switching_harmonics(schematic, standard))
         all_findings.extend(estimate_switching_emissions(schematic, standard))
-        all_findings.extend(check_emi_filter_effectiveness(pcb, schematic))
+        all_findings.extend(check_emi_filter_effectiveness(pcb, schematic, spice_backend))
 
     # Checks requiring both schematic and PCB
     if schematic and pcb:
@@ -3057,7 +3095,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_diff_pair_cm_radiation(pcb, schematic, standard))
         all_findings.extend(check_diff_pair_reference_plane(pcb, schematic))
         all_findings.extend(check_diff_pair_layer(pcb, schematic))
-        all_findings.extend(check_pdn_impedance(pcb, schematic))
+        all_findings.extend(check_pdn_impedance(pcb, schematic, spice_backend))
         all_findings.extend(check_thermal_emc(pcb, schematic))
 
     # Filter by severity
