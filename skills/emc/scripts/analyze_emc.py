@@ -233,6 +233,8 @@ def main():
     parser.add_argument('--market', default=None,
                         choices=list(MARKET_STANDARDS.keys()),
                         help='Target market — sets applicable standards (us, eu, automotive, medical, military)')
+    parser.add_argument('--spice-enhanced', action='store_true',
+                        help='Use SPICE simulation for improved PDN/filter analysis (requires ngspice/LTspice/Xyce)')
 
     args = parser.parse_args()
 
@@ -254,11 +256,27 @@ def main():
     # Effective severity threshold
     severity = 'low' if args.compact else args.severity
 
+    # SPICE-enhanced mode (optional)
+    spice_backend = None
+    if args.spice_enhanced:
+        try:
+            from emc_spice import detect_spice_simulator
+            spice_backend = detect_spice_simulator()
+            if spice_backend:
+                print(f'SPICE-enhanced mode: {spice_backend.name}', file=sys.stderr)
+            else:
+                print('Warning: --spice-enhanced requested but no simulator found',
+                      file=sys.stderr)
+        except ImportError:
+            print('Warning: SPICE skill not available for enhanced analysis',
+                  file=sys.stderr)
+
     # Run analysis
     t0 = time.time()
     findings = run_all_checks(schematic, pcb,
                               standard=args.standard,
-                              severity_threshold=severity)
+                              severity_threshold=severity,
+                              spice_backend=spice_backend)
     elapsed = time.time() - t0
 
     # Build summary
