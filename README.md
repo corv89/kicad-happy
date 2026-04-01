@@ -193,8 +193,8 @@ See [`action/examples/`](action/examples/) for fork-safe workflows, distributor 
 | Skill | What it does |
 |-------|-------------|
 | **kicad** | ⚡ Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DFM. |
-| **spice** | 🔬 Automatic SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. ngspice, LTspice, Xyce. |
-| **emc** | 📡 EMC pre-compliance risk analysis — ground plane integrity, decoupling, I/O filtering, switching harmonics, diff pair skew, board edge, PDN impedance. FCC/CISPR/automotive/military. |
+| **spice** | 🔬 SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. ngspice, LTspice, Xyce. |
+| **emc** | 📡 EMC pre-compliance — 40 rule checks for radiated emission risks, PDN impedance, diff pair skew, ESD paths. FCC/CISPR/automotive/military. |
 | **bom** | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files. |
 | **digikey** | 🔎 Search DigiKey for components and download datasheets via API. |
 | **mouser** | 🔎 Search Mouser for components and download datasheets. |
@@ -229,7 +229,7 @@ The agent runs the analysis scripts, then autonomously digs deeper — tracing n
 | **PCB** | Thermal via adequacy, zone stitching, trace width vs current, DFM scoring, impedance, proximity/crosstalk |
 | **Manufacturing** | MPN coverage audit, JLCPCB/PCBWay format export, assembly complexity scoring |
 | **Lifecycle** | Component EOL/NRND/obsolescence alerts, temperature grade audit, alternative part suggestions |
-| **EMC** | Ground plane voids, decoupling effectiveness, I/O filtering, switching regulator harmonics, clock routing, via stitching, diff pair skew/CM conversion, board edge radiation, PDN anti-resonance, ESD protection path, crosstalk. FCC/CISPR/automotive/military. |
+| **EMC** | Ground plane voids, decoupling, I/O filtering, switching harmonics, clock routing, diff pair skew, board edge radiation, PDN impedance, ESD paths, crosstalk, thermal derating. FCC/CISPR/automotive/military. |
 
 ## 🔬 SPICE simulation
 
@@ -279,7 +279,7 @@ Pre-compliance test plan:
   Probe points: L1 (45.2, 32.1)mm, Y1 (62.0, 18.5)mm
 ```
 
-18 check categories covering ground plane integrity, decoupling, I/O filtering, switching harmonics, clock routing, via stitching, stackup quality, differential pair skew, board edge radiation, PDN impedance, return path continuity, crosstalk, EMI filter verification, ESD protection paths, thermal-EMC interaction, and shielding advisories. Supports FCC Part 15, CISPR 32/EN 55032, CISPR 25 (automotive), and MIL-STD-461G. The `--market` flag (us/eu/automotive/medical/military) maps to all applicable standards and shows coverage gaps. For the full methodology, formulas, and standard limit tables — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
+40 rule checks across power integrity, signal integrity, and radiation. Supports FCC, CISPR, automotive (CISPR 25), and military (MIL-STD-461G) standards. Generates a pre-compliance test plan with frequency band priorities, interface risk rankings, and near-field probe points. For the full methodology — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
 
 ## 📄 Datasheet sync
 
