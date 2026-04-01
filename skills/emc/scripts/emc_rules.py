@@ -25,7 +25,7 @@ from emc_formulas import (
     cm_radiation_dbuv_m, get_emission_limit, board_cavity_resonances,
     harmonic_spectrum, cap_self_resonant_freq, estimate_esl, estimate_esr,
     interplane_capacitance_pf_per_cm2, propagation_delay_ps_per_mm,
-    pdn_target_impedance, pdn_impedance_sweep, find_anti_resonances,
+    pdn_target_impedance, pdn_impedance_sweep, find_anti_resonances, polygon_area,
     diff_pair_skew_ps, diff_pair_cm_voltage, point_to_segment_distance,
     DIFF_PAIR_PROTOCOLS, MARKET_STANDARDS,
 )
@@ -113,6 +113,36 @@ def _safe_float(val, default=0.0):
         return float(val)
     except (ValueError, TypeError):
         return default
+
+
+def _suggest_filtering(conn_ref: str, combined_lower: str) -> str:
+    """Generate protocol-specific filtering suggestion for IO-001."""
+    if 'usb' in combined_lower:
+        return (
+            f'Add ESD protection (e.g., USBLC6-2SC6 or TPD2E2U06) on {conn_ref} '
+            f'data lines. Add ferrite bead (600Ω@100MHz) on VBUS. '
+            f'For USB 3.x, add common-mode choke on SuperSpeed pairs.'
+        )
+    if 'ethernet' in combined_lower or 'rj45' in combined_lower:
+        return (
+            f'Add common-mode choke on TX/RX pairs near {conn_ref}. '
+            f'Ethernet magnetics (if not integrated) provide galvanic isolation '
+            f'and CM rejection.'
+        )
+    if 'hdmi' in combined_lower:
+        return (
+            f'Add ESD protection array on {conn_ref} TMDS pairs. '
+            f'Add common-mode choke for EMI reduction on TMDS clock.'
+        )
+    if 'sma' in combined_lower or 'bnc' in combined_lower:
+        return (
+            f'Ensure {conn_ref} has proper ground connection to chassis/enclosure. '
+            f'Add ESD protection if connected to external antenna.'
+        )
+    return (
+        f'Add a ferrite bead (e.g., BLM18AG601SN1D, 600Ω@100MHz) on signal '
+        f'lines near {conn_ref}. Add ESD/TVS protection for external interfaces.'
+    )
 
 
 def _connector_refs(footprints: list) -> list:
@@ -378,7 +408,11 @@ def check_missing_decoupling(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
                 ),
                 'components': [ref],
                 'nets': [],
-                'recommendation': f'Add a 100nF MLCC as close as possible to {ref} power pins.',
+                'recommendation': (
+                    f'Add 100nF X7R 0402 + 1µF X5R 0603 close to {ref} power pins. '
+                    f'For high-speed ICs, add 10nF C0G for high-frequency decoupling. '
+                    f'Place caps on the same side as {ref} with short, wide traces to vias.'
+                ),
             })
 
     return findings
@@ -556,10 +590,7 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
                 ),
                 'components': [conn_ref],
                 'nets': [],
-                'recommendation': (
-                    f'Add a ferrite bead or common-mode choke on signal lines near '
-                    f'{conn_ref}. Add ESD/TVS protection for external interfaces.'
-                ),
+                'recommendation': _suggest_filtering(conn_ref, combined),
             })
 
     return findings
@@ -1242,6 +1273,181 @@ def estimate_switching_emissions(schematic: Dict,
                 'Minimize the hot loop area (input cap → high-side switch → '
                 'inductor → low-side switch → input cap). Every halving of '
                 'loop area reduces emissions by 6 dB.'
+            ),
+        })
+
+    return findings
+
+
+def check_switching_node_area(pcb: Optional[Dict],
+                              schematic: Optional[Dict]) -> List[Dict]:
+    """SW-002: Flag large switching node copper area.
+
+    For switching regulators, the SW/PH/LX net should have minimal copper
+    area — just enough to connect the IC pin to the inductor pad. Large
+    copper pours on the switching node act as antennas for switching noise.
+    """
+    findings = []
+    if not schematic or not pcb:
+        return findings
+
+    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    zones = pcb.get('zones', [])
+    if not zones:
+        return findings
+
+    for reg in regulators:
+        sw_net = reg.get('sw_net')
+        if not sw_net:
+            continue
+        topology = reg.get('topology', '')
+        if topology in ('LDO', 'ldo', 'linear'):
+            continue
+
+        ref = reg.get('ref', reg.get('reference', ''))
+        val = reg.get('value', '')
+
+        # Find zones on the SW net
+        for zone in zones:
+            if zone.get('net_name') != sw_net:
+                continue
+
+            area = zone.get('outline_area_mm2') or zone.get('filled_area_mm2') or 0
+            if not isinstance(area, (int, float)):
+                continue
+
+            if area > 100:
+                severity = 'HIGH'
+            elif area > 25:
+                severity = 'MEDIUM'
+            else:
+                continue
+
+            findings.append({
+                'category': 'switching_emc',
+                'severity': severity,
+                'rule_id': 'SW-002',
+                'title': f'Large switching node area for {ref}',
+                'description': (
+                    f'{ref} ({val}) switching node net {sw_net} has '
+                    f'{area:.0f}mm² of copper zone. The SW node should be '
+                    f'minimal — large copper area acts as an antenna for '
+                    f'switching noise at the fundamental and harmonics.'
+                ),
+                'components': [ref],
+                'nets': [sw_net],
+                'recommendation': (
+                    f'Minimize copper on {sw_net}. Use only the trace/pad area '
+                    f'needed to connect {ref} SW pin to the inductor. '
+                    f'Remove any copper pour on the switching node net.'
+                ),
+            })
+
+    return findings
+
+
+def check_input_cap_loop_area(pcb: Optional[Dict],
+                              schematic: Optional[Dict],
+                              spice_backend=None) -> List[Dict]:
+    """SW-003: Estimate hot loop area for switching regulators.
+
+    The hot loop (input cap → IC → inductor → back) should be as small
+    as possible. Large loops radiate switching noise. Uses component
+    placement coordinates from PCB data to estimate the enclosed area.
+
+    For integrated converters (most common), approximates as a triangle:
+    input cap → IC → inductor.
+
+    When SPICE is available, estimates radiated E-field from loop area ×
+    switching current × frequency using dm_radiation_dbuv_m().
+    """
+    findings = []
+    if not schematic or not pcb:
+        return findings
+
+    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    footprints = pcb.get('footprints', [])
+
+    # Build position lookup
+    fp_pos = {}
+    for fp in footprints:
+        ref = fp.get('reference', '')
+        if ref:
+            fp_pos[ref] = (fp.get('x') or 0, fp.get('y') or 0)
+
+    for reg in regulators:
+        topology = reg.get('topology', '')
+        if topology in ('LDO', 'ldo', 'linear', 'unknown', 'ic_with_internal_regulator'):
+            continue
+
+        ref = reg.get('ref', reg.get('reference', ''))
+        val = reg.get('value', '')
+        inductor_ref = reg.get('inductor')
+        input_caps = reg.get('input_capacitors', [])
+
+        if not inductor_ref or not input_caps:
+            continue
+
+        # Get positions
+        ic_pos = fp_pos.get(ref)
+        ind_pos = fp_pos.get(inductor_ref)
+        cap_ref = input_caps[0].get('ref', '')
+        cap_pos = fp_pos.get(cap_ref)
+
+        if not ic_pos or not ind_pos or not cap_pos:
+            continue
+        if ic_pos == (0, 0) or ind_pos == (0, 0) or cap_pos == (0, 0):
+            continue
+
+        # Compute triangle area (input cap, IC, inductor)
+        from emc_formulas import polygon_area
+        area_mm2 = polygon_area([cap_pos, ic_pos, ind_pos])
+
+        if area_mm2 < 25:
+            continue  # Acceptable
+
+        if area_mm2 > 100:
+            severity = 'HIGH'
+        else:
+            severity = 'MEDIUM'
+
+        desc = (
+            f'{ref} ({val}) hot loop area ≈ {area_mm2:.0f}mm² '
+            f'(triangle: {cap_ref} → {ref} → {inductor_ref}). '
+            f'Recommended: <25mm² for low EMI.'
+        )
+
+        # SPICE enhancement: estimate radiated emission from loop
+        spice_note = ''
+        if spice_backend and area_mm2 > 25:
+            sw_freq = _estimate_switching_freq(val)
+            if sw_freq:
+                area_m2 = area_mm2 * 1e-6
+                # Estimate switching current from power dissipation or default 0.5A
+                pdiss = reg.get('power_dissipation', {})
+                i_sw = pdiss.get('estimated_iout_A', 0.5)
+                e_dbuv = dm_radiation_dbuv_m(sw_freq, area_m2, i_sw, 3.0, ground_plane=True)
+                limit = get_emission_limit(sw_freq, 'fcc-class-b')
+                if limit:
+                    margin = limit[0] - e_dbuv
+                    spice_note = (
+                        f' Estimated radiation at {sw_freq/1e6:.1f}MHz: '
+                        f'{e_dbuv:.0f} dBµV/m (limit: {limit[0]:.0f}, '
+                        f'margin: {margin:.0f}dB).'
+                    )
+
+        findings.append({
+            'category': 'switching_emc',
+            'severity': severity,
+            'rule_id': 'SW-003',
+            'title': f'Large hot loop for {ref}',
+            'description': desc + spice_note,
+            'components': [ref, inductor_ref, cap_ref],
+            'nets': [reg.get('sw_net', '')] if reg.get('sw_net') else [],
+            'recommendation': (
+                f'Place {cap_ref}, {ref}, and {inductor_ref} in a tight triangle. '
+                f'Minimize trace length between them. Input cap should be adjacent '
+                f'to the IC with the inductor on the opposite side.'
             ),
         })
 
@@ -3325,6 +3531,8 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_diff_pair_layer(pcb, schematic))
         all_findings.extend(check_pdn_impedance(pcb, schematic, spice_backend))
         all_findings.extend(check_thermal_emc(pcb, schematic))
+        all_findings.extend(check_switching_node_area(pcb, schematic))
+        all_findings.extend(check_input_cap_loop_area(pcb, schematic, spice_backend))
 
     # Filter by severity
     if severity_threshold.lower() != 'all':

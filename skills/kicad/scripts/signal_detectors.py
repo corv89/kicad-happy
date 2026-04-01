@@ -1370,6 +1370,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             if has_inductor:
                 reg_info["topology"] = "switching"
                 reg_info["inductor"] = inductor_ref
+                reg_info["sw_net"] = sw_net
                 if boot_pin:
                     reg_info["has_bootstrap"] = True
                 # KH-084/KH-087: Trace through inductor to find output rail
@@ -1573,6 +1574,31 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 # Sort by value descending (bulk caps first)
                 output_caps.sort(key=lambda c: -c["farads"])
                 reg["output_capacitors"] = output_caps
+
+        # Detect input capacitors on the input rail
+        input_rail = reg.get("input_rail")
+        if input_rail and input_rail in ctx.nets:
+            input_caps = []
+            seen_refs_in = set()
+            for p in ctx.nets[input_rail]["pins"]:
+                cref = p["component"]
+                if cref == reg_ref or cref in seen_refs_in:
+                    continue
+                comp = ctx.comp_lookup.get(cref)
+                if not comp or comp["type"] != "capacitor":
+                    continue
+                c_val = ctx.parsed_values.get(cref)
+                if not c_val or c_val <= 0:
+                    continue
+                seen_refs_in.add(cref)
+                input_caps.append({
+                    "ref": cref,
+                    "value": comp["value"],
+                    "farads": c_val,
+                })
+            if input_caps:
+                input_caps.sort(key=lambda c: -c["farads"])
+                reg["input_capacitors"] = input_caps
 
         # Detect compensation caps on the FB net
         fb_net = reg.get("fb_net")

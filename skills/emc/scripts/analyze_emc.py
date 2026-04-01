@@ -42,6 +42,33 @@ def compute_risk_score(findings: list) -> int:
     return max(0, min(100, score))
 
 
+def compute_per_net_scores(findings: list) -> list:
+    """Group findings by net name and compute per-net EMC risk scores.
+
+    Returns a list of {net, score, finding_count, rules} sorted worst-first.
+    """
+    net_findings = {}
+    for f in findings:
+        for net in f.get('nets', []):
+            if net:
+                net_findings.setdefault(net, []).append(f)
+
+    scores = []
+    severity_weights = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
+    for net, net_f in net_findings.items():
+        penalty = sum(severity_weights.get(f['severity'], 0) for f in net_f)
+        score = max(0, min(100, 100 - penalty))
+        rules = sorted(set(f['rule_id'] for f in net_f))
+        scores.append({
+            'net': net,
+            'score': score,
+            'finding_count': len(net_f),
+            'rules': rules,
+        })
+    scores.sort(key=lambda s: s['score'])
+    return scores
+
+
 def extract_board_info(schematic: dict = None, pcb: dict = None) -> dict:
     """Extract board-level info for the report."""
     info = {}
@@ -168,6 +195,19 @@ def format_text_report(result: dict) -> str:
                 lines.append(f'    → {f["recommendation"]}')
             lines.append('')
 
+    # Per-net scores (top 5 worst)
+    per_net = result.get('per_net_scores', [])
+    if per_net:
+        worst = [n for n in per_net if n['score'] < 100][:5]
+        if worst:
+            lines.append('-' * 60)
+            lines.append('Highest-Risk Nets')
+            lines.append('-' * 60)
+            for n in worst:
+                lines.append(f'  {n["net"]}: score {n["score"]}/100 '
+                             f'({n["finding_count"]} findings: {", ".join(n["rules"])})')
+            lines.append('')
+
     # Test plan section
     tp = result.get('test_plan', {})
     if tp.get('frequency_bands'):
@@ -287,9 +327,10 @@ def main():
 
     risk_score = compute_risk_score(findings)
 
-    # Generate test plan and regulatory coverage
+    # Generate test plan, per-net scores, and regulatory coverage
     test_plan = generate_test_plan(schematic, pcb, findings,
                                    standard=args.standard)
+    per_net = compute_per_net_scores(findings)
     regulatory = analyze_regulatory_coverage(args.standard, args.market,
                                             findings)
 
@@ -305,6 +346,7 @@ def main():
         },
         'target_standard': args.standard,
         'findings': findings,
+        'per_net_scores': per_net,
         'test_plan': test_plan,
         'regulatory_coverage': regulatory,
         'board_info': extract_board_info(schematic, pcb),
