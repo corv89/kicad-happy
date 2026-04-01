@@ -25,6 +25,7 @@ from emc_formulas import (
     cm_radiation_dbuv_m, get_emission_limit, board_cavity_resonances,
     harmonic_spectrum, cap_self_resonant_freq, estimate_esl, estimate_esr,
     interplane_capacitance_pf_per_cm2, propagation_delay_ps_per_mm,
+    pdn_target_impedance, pdn_impedance_sweep, find_anti_resonances,
     diff_pair_skew_ps, diff_pair_cm_voltage, point_to_segment_distance,
     DIFF_PAIR_PROTOCOLS, MARKET_STANDARDS,
 )
@@ -1663,6 +1664,329 @@ def check_connector_area_stitching(pcb: Dict,
 
 
 # ---------------------------------------------------------------------------
+# Category 11: PDN Impedance Analysis
+# ---------------------------------------------------------------------------
+
+def check_pdn_impedance(pcb: Optional[Dict],
+                        schematic: Optional[Dict]) -> List[Dict]:
+    """PD-001/PD-002: Analyze decoupling network impedance per power rail.
+
+    For each power regulator with detected output capacitors, model the
+    parallel impedance of the decoupling network, compute target impedance,
+    and flag anti-resonance peaks that exceed the target.
+    """
+    findings = []
+    if not schematic:
+        return findings
+
+    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    if not regulators:
+        return findings
+
+    # Get interplane capacitance from PCB stackup
+    plane_cap_f = 0
+    if pcb:
+        setup = pcb.get('setup', {})
+        stackup = setup.get('stackup', [])
+        # Find tightest power/ground plane pair
+        for i in range(len(stackup) - 1):
+            l1 = stackup[i]
+            l2 = stackup[i + 1] if i + 1 < len(stackup) else {}
+            # Look for adjacent copper layers (potential plane pair)
+            if l1.get('type') == 'copper' and l2.get('type') != 'copper':
+                # Check the next copper layer after this dielectric
+                for j in range(i + 2, len(stackup)):
+                    if stackup[j].get('type') == 'copper':
+                        d_mm = 0
+                        er = 4.4
+                        for k in range(i + 1, j):
+                            if stackup[k].get('type') != 'copper':
+                                try:
+                                    d_mm += float(stackup[k].get('thickness', 0))
+                                    er_val = stackup[k].get('epsilon_r')
+                                    if er_val:
+                                        er = float(er_val)
+                                except (ValueError, TypeError):
+                                    pass
+                        if d_mm > 0 and d_mm < 0.3:
+                            # Estimate board area from stats
+                            stats = pcb.get('statistics', {})
+                            w = (stats.get('board_width_mm') or 50)
+                            h = (stats.get('board_height_mm') or 50)
+                            area_cm2 = (w * h) / 100
+                            c_pf_per_cm2 = interplane_capacitance_pf_per_cm2(d_mm, er)
+                            plane_cap_f = c_pf_per_cm2 * area_cm2 * 1e-12  # Convert pF to F
+                        break
+
+    for reg in regulators:
+        ref = reg.get('ref', reg.get('reference', ''))
+        val = reg.get('value', '')
+        vout = reg.get('vout_estimated') or reg.get('estimated_vout')
+        output_rail = reg.get('output_rail', '')
+        output_caps = reg.get('output_capacitors', [])
+
+        if not output_caps or not vout:
+            continue
+
+        # Build cap models for PDN sweep
+        cap_models = []
+        for cap in output_caps:
+            farads = cap.get('farads', 0)
+            if not farads or farads <= 0:
+                continue
+            package = cap.get('package', '0603')
+            esr = cap.get('esr_ohm') or estimate_esr(package)
+            esl = cap.get('esl_h') or estimate_esl(package)
+            cap_models.append({
+                'ref': cap.get('ref', '?'),
+                'farads': farads,
+                'esr_ohm': esr,
+                'esl_h': esl,
+                'package': package,
+            })
+
+        if not cap_models:
+            continue
+
+        # Estimate transient current (heuristic from regulator type)
+        i_transient = 0.5  # default 500mA
+        pdiss = reg.get('power_dissipation', {})
+        i_out = pdiss.get('estimated_iout_A', 0.5)
+        if i_out and i_out > 0:
+            i_transient = min(i_out * 2, 5.0)  # Up to 2× steady-state
+
+        z_target = pdn_target_impedance(vout, ripple_pct=5.0,
+                                        i_transient_a=i_transient)
+
+        # Sweep impedance
+        sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
+                                    freq_start=1e3, freq_stop=1e9)
+
+        # Find anti-resonances
+        peaks = find_anti_resonances(sweep, z_target=z_target)
+        exceeding = [p for p in peaks if p.get('exceeds_target')]
+
+        if exceeding:
+            peak_strs = [f'{p["freq_mhz"]:.1f} MHz ({p["impedance_ohm"]:.2f}Ω)'
+                         for p in exceeding[:3]]
+            findings.append({
+                'category': 'pdn',
+                'severity': 'HIGH',
+                'rule_id': 'PD-001',
+                'title': f'{output_rail or ref} PDN anti-resonance exceeds target',
+                'description': (
+                    f'{ref} ({val}) {output_rail} rail: target impedance '
+                    f'{z_target:.3f}Ω (Vout={vout}V, 5% ripple, '
+                    f'{i_transient:.1f}A transient). '
+                    f'Anti-resonance peak(s) exceed target at: '
+                    f'{", ".join(peak_strs)}. '
+                    f'Decoupling: {len(cap_models)} caps '
+                    f'({", ".join(c["ref"] + " " + str(c["farads"]*1e6) + "µF" for c in cap_models[:4])}).'
+                ),
+                'components': [ref] + [c['ref'] for c in cap_models[:3]],
+                'nets': [output_rail] if output_rail else [],
+                'recommendation': (
+                    'Add a capacitor with SRF near the anti-resonance frequency '
+                    'to fill the impedance gap. Different cap values (decades apart) '
+                    'reduce anti-resonance amplitude.'
+                ),
+            })
+        elif peaks:
+            # Peaks exist but don't exceed target — INFO
+            peak_strs = [f'{p["freq_mhz"]:.1f} MHz ({p["impedance_ohm"]:.3f}Ω)'
+                         for p in peaks[:3]]
+            findings.append({
+                'category': 'pdn',
+                'severity': 'INFO',
+                'rule_id': 'PD-002',
+                'title': f'{output_rail or ref} PDN anti-resonances within target',
+                'description': (
+                    f'{ref} ({val}) {output_rail} rail: target impedance '
+                    f'{z_target:.3f}Ω. Anti-resonance peaks at: '
+                    f'{", ".join(peak_strs)} — all within target. '
+                    f'{len(cap_models)} decoupling caps.'
+                ),
+                'components': [ref],
+                'nets': [output_rail] if output_rail else [],
+                'recommendation': 'PDN impedance is within target. No action needed.',
+            })
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Category 12: Return Path Enhancement
+# ---------------------------------------------------------------------------
+
+def check_layer_transition_stitching(pcb: Dict,
+                                     schematic: Optional[Dict] = None) -> List[Dict]:
+    """RP-001: Check for ground stitching vias at signal layer transitions.
+
+    When a signal changes layers via a through-via, the return current must
+    also change planes. A nearby ground stitching via provides a low-impedance
+    path for this transition. Without one, the return current takes a long
+    detour, creating a loop antenna.
+
+    Ref: Ott, "PCB Stack-Up Part 6"; Sierra Circuits return path guide.
+    """
+    findings = []
+    layer_trans = pcb.get('layer_transitions', [])
+    if not layer_trans:
+        return findings
+
+    # Get all via positions for proximity search
+    vias_data = pcb.get('vias', {})
+    all_vias = vias_data.get('vias', [])
+    if not all_vias:
+        return findings  # Can't check without individual via positions
+
+    # Build set of ground nets
+    gnd_nets = set()
+    nets = pcb.get('nets', {})
+    if isinstance(nets, dict):
+        for name in nets:
+            if _is_ground_net(name):
+                gnd_nets.add(name)
+    elif isinstance(nets, list):
+        for n in nets:
+            name = n.get('name', '') if isinstance(n, dict) else ''
+            if _is_ground_net(name):
+                gnd_nets.add(name)
+
+    # Identify which vias are ground vias (connected to ground nets)
+    gnd_via_positions = []
+    for via in all_vias:
+        net = via.get('net_name', via.get('net', ''))
+        if isinstance(net, str) and _is_ground_net(net):
+            gnd_via_positions.append((via.get('x', 0), via.get('y', 0)))
+        elif isinstance(net, int):
+            # Net number — look up name
+            if isinstance(nets, dict):
+                net_name = nets.get(net, nets.get(str(net), ''))
+            else:
+                net_name = ''
+            if _is_ground_net(str(net_name)):
+                gnd_via_positions.append((via.get('x', 0), via.get('y', 0)))
+
+    if not gnd_via_positions:
+        return findings  # Can't determine which vias are ground
+
+    # Get default dielectric height for proximity threshold
+    default_h = 0.2  # mm
+    stackup = pcb.get('setup', {}).get('stackup', [])
+    for layer in stackup:
+        if layer.get('type') in ('core', 'prepreg'):
+            try:
+                h = float(layer.get('thickness', 0.2))
+                if h > 0:
+                    default_h = h
+                    break
+            except (ValueError, TypeError):
+                pass
+
+    search_radius = max(default_h * 2, 1.0)  # At least 1mm, or 2× dielectric height
+
+    # Classify nets as high-speed or diff-pair for severity
+    hs_nets = set()
+    dp_nets = set()
+    if schematic:
+        for pair in schematic.get('design_analysis', {}).get('differential_pairs', []):
+            dp_nets.add(pair.get('positive', ''))
+            dp_nets.add(pair.get('negative', ''))
+
+    flagged_nets = set()
+
+    for lt in layer_trans:
+        net_name = lt.get('net', '')
+        if not net_name or _is_power_or_ground(net_name):
+            continue
+        if net_name in flagged_nets:
+            continue
+
+        layers = lt.get('copper_layers', [])
+        if len(layers) <= 1:
+            continue
+
+        via_positions = lt.get('via_positions', [])
+        if not via_positions:
+            continue
+
+        # Check each signal via for a nearby ground via
+        unstitched_count = 0
+        total_transitions = len(via_positions)
+
+        for vp in via_positions:
+            vx = vp.get('x', 0)
+            vy = vp.get('y', 0)
+
+            # Find nearest ground via
+            min_dist = float('inf')
+            for gx, gy in gnd_via_positions:
+                d = math.sqrt((vx - gx)**2 + (vy - gy)**2)
+                if d < min_dist:
+                    min_dist = d
+
+            if min_dist > search_radius:
+                unstitched_count += 1
+
+        if unstitched_count == 0:
+            continue
+
+        flagged_nets.add(net_name)
+        is_dp = net_name in dp_nets
+        is_hs = _is_high_speed_net(net_name) or _is_clock_net(net_name)
+
+        if is_dp:
+            severity = 'HIGH'
+        elif is_hs:
+            severity = 'HIGH'
+        elif unstitched_count == total_transitions:
+            severity = 'MEDIUM'
+        else:
+            severity = 'LOW'
+
+        findings.append({
+            'category': 'return_path',
+            'severity': severity,
+            'rule_id': 'RP-001',
+            'title': f'Missing stitching via at layer transition: {net_name}',
+            'description': (
+                f'Net {net_name} has {total_transitions} layer transition(s) '
+                f'across {", ".join(layers)}. '
+                f'{unstitched_count} transition(s) have no ground stitching '
+                f'via within {search_radius:.1f}mm. The return current must '
+                f'find an alternate path, creating a loop antenna.'
+            ),
+            'components': [],
+            'nets': [net_name],
+            'recommendation': (
+                f'Add a ground stitching via within {search_radius:.1f}mm '
+                f'of each signal via. Place the ground via adjacent to '
+                f'the signal via on the same pad cluster.'
+            ),
+        })
+
+        # Limit to avoid flooding output on large boards
+        if len(findings) > 20:
+            findings.append({
+                'category': 'return_path',
+                'severity': 'MEDIUM',
+                'rule_id': 'RP-001',
+                'title': f'{len(flagged_nets)}+ nets missing stitching vias (truncated)',
+                'description': (
+                    'More than 20 nets have layer transitions without nearby '
+                    'ground stitching vias. Review via placement board-wide.'
+                ),
+                'components': [],
+                'nets': [],
+                'recommendation': 'Add ground stitching vias at all signal layer transitions.',
+            })
+            break
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Pre-compliance test plan generator
 # ---------------------------------------------------------------------------
 
@@ -2000,6 +2324,8 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_trace_near_board_edge(pcb, schematic))
         all_findings.extend(check_ground_pour_ring(pcb))
         all_findings.extend(check_connector_area_stitching(pcb, schematic))
+        # Return path enhancement
+        all_findings.extend(check_layer_transition_stitching(pcb, schematic))
 
     if schematic:
         all_findings.extend(check_switching_harmonics(schematic, standard))
@@ -2011,6 +2337,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_diff_pair_cm_radiation(pcb, schematic, standard))
         all_findings.extend(check_diff_pair_reference_plane(pcb, schematic))
         all_findings.extend(check_diff_pair_layer(pcb, schematic))
+        all_findings.extend(check_pdn_impedance(pcb, schematic))
 
     # Filter by severity
     if severity_threshold.lower() != 'all':
