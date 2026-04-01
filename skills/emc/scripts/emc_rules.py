@@ -384,6 +384,77 @@ def check_missing_decoupling(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
     return findings
 
 
+def check_decoupling_via_distance(pcb: Dict) -> List[Dict]:
+    """DC-003: Check distance from decoupling caps to nearest via.
+
+    The trace between a decoupling cap pad and its via to the power/ground
+    plane adds connection inductance that degrades high-frequency
+    decoupling. Each mm of trace adds ~0.5-0.8 nH.
+
+    Requires individual via positions (from --full mode or vias.vias list).
+
+    Ref: LearnEMC, "Estimating the Connection Inductance of Decoupling
+    Capacitors" — via placement matters more than cap-to-IC distance.
+    """
+    findings = []
+    decoupling = pcb.get('decoupling_placement', [])
+    if not decoupling:
+        return findings
+
+    vias_data = pcb.get('vias', {})
+    via_list = vias_data.get('vias', [])
+    if not via_list:
+        return findings
+
+    footprints = pcb.get('footprints', [])
+    fp_positions = {fp.get('reference', ''): (fp.get('x') or 0, fp.get('y') or 0)
+                    for fp in footprints}
+
+    for entry in decoupling:
+        for cap_info in entry.get('nearby_caps', []):
+            cap_ref = cap_info.get('cap', '')
+            if cap_ref not in fp_positions:
+                continue
+
+            cx, cy = fp_positions[cap_ref]
+
+            # Find nearest via to this cap
+            min_via_dist = float('inf')
+            for via in via_list:
+                vx = via.get('x', 0)
+                vy = via.get('y', 0)
+                d = math.sqrt((cx - vx)**2 + (cy - vy)**2)
+                if d < min_via_dist:
+                    min_via_dist = d
+
+            if min_via_dist == float('inf'):
+                continue
+
+            # Flag if cap is >3mm from nearest via (high connection inductance)
+            if min_via_dist > 3.0:
+                est_inductance = min_via_dist * 0.7  # ~0.7 nH/mm
+                findings.append({
+                    'category': 'decoupling',
+                    'severity': 'MEDIUM',
+                    'rule_id': 'DC-003',
+                    'title': f'Decoupling cap {cap_ref} far from via',
+                    'description': (
+                        f'{cap_ref} is {min_via_dist:.1f}mm from the nearest '
+                        f'via (~{est_inductance:.1f}nH connection inductance). '
+                        f'Long traces between cap and via degrade high-frequency '
+                        f'decoupling effectiveness.'
+                    ),
+                    'components': [cap_ref, entry.get('ic', '')],
+                    'nets': [],
+                    'recommendation': (
+                        f'Place a via directly adjacent to {cap_ref} pads. '
+                        f'Use fat, short traces from cap pads to via.'
+                    ),
+                })
+
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Category 3: I/O Interface Filtering
 # ---------------------------------------------------------------------------
@@ -488,6 +559,78 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
                 'recommendation': (
                     f'Add a ferrite bead or common-mode choke on signal lines near '
                     f'{conn_ref}. Add ESD/TVS protection for external interfaces.'
+                ),
+            })
+
+    return findings
+
+
+def check_connector_ground_pins(pcb: Dict,
+                                schematic: Optional[Dict] = None) -> List[Dict]:
+    """IO-002: Flag connectors with insufficient ground pins.
+
+    High-speed connectors need adequate ground pins for return current
+    and shielding. Rule of thumb: at least 1 ground pin per 4 signal pins,
+    or at least 2 ground pins for connectors with >4 signal pins.
+
+    Uses pad_nets from PCB footprint data to count GND vs signal pads.
+    """
+    findings = []
+    footprints = pcb.get('footprints', [])
+    connectors = _connector_refs(footprints)
+
+    for conn in connectors:
+        conn_ref = conn.get('reference', '')
+        conn_val = conn.get('value', '')
+        pad_nets = conn.get('pad_nets', {})
+
+        if not pad_nets:
+            continue
+
+        gnd_count = 0
+        sig_count = 0
+        for pad_num, pad_data in pad_nets.items():
+            net = pad_data.get('net', '') if isinstance(pad_data, dict) else ''
+            if not net or net in ('', 'unconnected'):
+                continue
+            if _is_ground_net(net):
+                gnd_count += 1
+            elif not _is_power_or_ground(net):
+                sig_count += 1
+
+        if sig_count <= 2:
+            continue  # Small connectors don't need multiple grounds
+
+        # Rule: at least 1 GND per 4 signal pins, minimum 2 GND for >4 signals
+        min_gnd = max(2, (sig_count + 3) // 4)
+
+        if gnd_count < min_gnd:
+            # Check if this is a high-speed connector
+            is_hs = False
+            combined = (conn_val + ' ' + conn.get('lib_id', '')).lower()
+            for kw in ('usb', 'hdmi', 'ethernet', 'rj45', 'pcie', 'sata', 'lvds'):
+                if kw in combined:
+                    is_hs = True
+                    break
+
+            severity = 'MEDIUM' if is_hs else 'LOW'
+            findings.append({
+                'category': 'io_filtering',
+                'severity': severity,
+                'rule_id': 'IO-002',
+                'title': f'Insufficient ground pins on {conn_ref}',
+                'description': (
+                    f'{conn_ref} ({conn_val}) has {gnd_count} ground pin(s) '
+                    f'for {sig_count} signal pins. Recommended: at least '
+                    f'{min_gnd} ground pins for adequate return current path '
+                    f'and cable shielding.'
+                ),
+                'components': [conn_ref],
+                'nets': [],
+                'recommendation': (
+                    f'Ensure {conn_ref} has sufficient ground pins. '
+                    f'For high-speed interfaces, ground pins should be '
+                    f'distributed among signal pins, not grouped at one end.'
                 ),
             })
 
@@ -707,6 +850,88 @@ def check_clock_routing(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
                 'nets': [net_name],
                 'recommendation': 'Minimize clock trace length. Place clock source close to destination.',
             })
+
+    return findings
+
+
+def check_clock_near_connector(pcb: Dict,
+                               schematic: Optional[Dict] = None) -> List[Dict]:
+    """CK-003: Flag clock traces routed near external connectors.
+
+    Clock harmonics can couple to cables via proximity, increasing
+    radiated emissions. Checks if any clock net's trace segments pass
+    within 10mm of an external connector.
+
+    Requires --full mode for track segment coordinates.
+    """
+    findings = []
+    tracks = pcb.get('tracks', {})
+    segments = tracks.get('segments', [])
+    if not segments:
+        return findings
+
+    footprints = pcb.get('footprints', [])
+    connectors = _connector_refs(footprints)
+    if not connectors:
+        return findings
+
+    # Build net name lookup
+    net_names = pcb.get('nets', {})
+    if isinstance(net_names, list):
+        nm = {}
+        for n in net_names:
+            if isinstance(n, dict):
+                nm[n.get('number', n.get('net', 0))] = n.get('name', '')
+        net_names = nm
+
+    # Connector positions
+    conn_positions = []
+    for conn in connectors:
+        cx = conn.get('x') or 0
+        cy = conn.get('y') or 0
+        conn_positions.append((conn.get('reference', ''), cx, cy))
+
+    flagged_pairs = set()
+    PROXIMITY_MM = 10.0
+
+    for seg in segments:
+        net_id = seg.get('net', 0)
+        net_name = net_names.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+
+        if not _is_clock_net(net_name):
+            continue
+
+        mid_x = (seg.get('x1', 0) + seg.get('x2', 0)) / 2
+        mid_y = (seg.get('y1', 0) + seg.get('y2', 0)) / 2
+
+        for conn_ref, cx, cy in conn_positions:
+            pair_key = (net_name, conn_ref)
+            if pair_key in flagged_pairs:
+                continue
+            dist = math.sqrt((mid_x - cx)**2 + (mid_y - cy)**2)
+            if dist < PROXIMITY_MM:
+                flagged_pairs.add(pair_key)
+                findings.append({
+                    'category': 'clock_routing',
+                    'severity': 'MEDIUM',
+                    'rule_id': 'CK-003',
+                    'title': f'Clock {net_name} routed near connector {conn_ref}',
+                    'description': (
+                        f'Clock net {net_name} passes within {dist:.1f}mm of '
+                        f'connector {conn_ref}. Clock harmonics can couple '
+                        f'to attached cables via proximity, increasing '
+                        f'radiated emissions.'
+                    ),
+                    'components': [conn_ref],
+                    'nets': [net_name],
+                    'recommendation': (
+                        f'Route {net_name} away from {conn_ref}, or add '
+                        f'ground guard traces between the clock and connector.'
+                    ),
+                })
+
+                if len(findings) > 10:
+                    return findings
 
     return findings
 
@@ -3066,8 +3291,11 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_ground_domains(pcb))
         all_findings.extend(check_decoupling_distance(pcb))
         all_findings.extend(check_missing_decoupling(pcb, schematic))
+        all_findings.extend(check_decoupling_via_distance(pcb))
         all_findings.extend(check_connector_filtering(pcb, schematic))
+        all_findings.extend(check_connector_ground_pins(pcb, schematic))
         all_findings.extend(check_clock_routing(pcb, schematic))
+        all_findings.extend(check_clock_near_connector(pcb, schematic))
         all_findings.extend(check_via_stitching(pcb, schematic))
         all_findings.extend(check_stackup(pcb))
         all_findings.extend(estimate_cavity_resonances(pcb))
