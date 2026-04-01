@@ -1458,6 +1458,16 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     return results
 
 
+def _safe_num(val, default=0):
+    """Safely convert a value to float (handles None, str, etc.)."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
     """Calculate single-ended microstrip characteristic impedance.
 
@@ -1473,6 +1483,10 @@ def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
     Returns:
         Characteristic impedance in ohms, or None if inputs invalid
     """
+    width_mm = _safe_num(width_mm)
+    height_mm = _safe_num(height_mm)
+    thickness_mm = _safe_num(thickness_mm)
+    epsilon_r = _safe_num(epsilon_r)
     if width_mm <= 0 or height_mm <= 0 or thickness_mm <= 0 or epsilon_r <= 0:
         return None
     w = width_mm
@@ -1512,22 +1526,22 @@ def _build_layer_heights(stackup):
         if layer.get("type") != "copper":
             continue
         name = layer.get("name", "")
-        cu_t = layer.get("thickness", 0.035)
+        cu_t = _safe_num(layer.get("thickness"), 0.035)
 
         # Look for the nearest dielectric layer (below for top copper, above for bottom)
         # Try below first
         for j in range(i + 1, len(layers)):
             if layers[j].get("type") in ("core", "prepreg"):
-                h = layers[j].get("thickness", 0.2)
-                er = layers[j].get("epsilon_r", 4.5)
+                h = _safe_num(layers[j].get("thickness"), 0.2)
+                er = _safe_num(layers[j].get("epsilon_r"), 4.5)
                 heights[name] = (h, er, cu_t)
                 break
         else:
             # No dielectric below — try above
             for j in range(i - 1, -1, -1):
                 if layers[j].get("type") in ("core", "prepreg"):
-                    h = layers[j].get("thickness", 0.2)
-                    er = layers[j].get("epsilon_r", 4.5)
+                    h = _safe_num(layers[j].get("thickness"), 0.2)
+                    er = _safe_num(layers[j].get("epsilon_r"), 4.5)
                     heights[name] = (h, er, cu_t)
                     break
 
