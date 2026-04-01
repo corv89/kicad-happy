@@ -41,6 +41,7 @@ def generate_opamp_model(mpn, specs):
     Returns:
         .subckt string
     """
+    # EQ-074: GBW = Aol × f_pole (opamp behavioral SPICE model)
     name = f"OPAMP_{sanitize_mpn(mpn)}"
     gbw = specs["gbw_hz"]
     slew = specs.get("slew_vus", 1.0)
@@ -160,6 +161,7 @@ def generate_comparator_model(mpn, specs):
     Returns:
         .subckt string
     """
+    # EQ-073: V_out = Aol × (V+ - V-) clamped (comparator model)
     name = f"CMP_{sanitize_mpn(mpn)}"
     delay = specs.get("prop_delay_ns", 100)
     output_type = specs.get("output_type", "push_pull")
