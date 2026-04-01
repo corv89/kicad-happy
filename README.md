@@ -128,9 +128,9 @@ Every push and PR that touches KiCad files gets a **commit status check** (green
 <details>
 <summary><strong>Add AI-powered review (optional — needs Anthropic API key)</strong></summary>
 
-Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) for Claude to read the analysis + datasheets and write a natural-language design review. Two options:
+Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) for Claude to read the analysis + datasheets and write a natural-language design review. The cost estimates below apply only when using the Anthropic API (`ANTHROPIC_API_KEY`) for CI — there's no additional cost when reviewing locally with a Claude Code or OpenAI Codex subscription. Two options:
 
-**Quick review** (~$1-3 per PR, 5-10 min):
+**Quick review** (~$1-3 per PR via API, 5-10 min):
 
 ```yaml
       - uses: anthropics/claude-code-action@v1
@@ -154,7 +154,7 @@ Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claud
           claude_args: '--model claude-sonnet-4-6 --max-turns 25'
 ```
 
-**Thorough review** (~$5-15 per PR, 10-20 min):
+**Thorough review** (~$5-15 per PR via API, 10-20 min):
 
 ```yaml
       - uses: anthropics/claude-code-action@v1
