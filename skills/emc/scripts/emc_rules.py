@@ -908,14 +908,8 @@ def check_clock_near_connector(pcb: Dict,
     if not connectors:
         return findings
 
-    # Build net name lookup
-    net_names = pcb.get('nets', {})
-    if isinstance(net_names, list):
-        nm = {}
-        for n in net_names:
-            if isinstance(n, dict):
-                nm[n.get('number', n.get('net', 0))] = n.get('name', '')
-        net_names = nm
+    # Build net ID → name map
+    net_id_to_name = _build_net_id_to_name(pcb)
 
     # Connector positions
     conn_positions = []
@@ -929,7 +923,7 @@ def check_clock_near_connector(pcb: Dict,
 
     for seg in segments:
         net_id = seg.get('net', 0)
-        net_name = net_names.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        net_name = net_id_to_name.get(net_id, '') if isinstance(net_id, int) else str(net_id)
 
         if not _is_clock_net(net_name):
             continue
@@ -1461,6 +1455,40 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
 # Shared helper: net length map
 # ---------------------------------------------------------------------------
 
+def _build_net_id_to_name(pcb: Dict) -> Dict[int, str]:
+    """Build a mapping from numeric net ID to net name.
+
+    The PCB JSON 'nets' field can be:
+    - dict {name: id} — invert to {id: name}
+    - list of {name, number} dicts
+    - dict {id: name} already (less common)
+    """
+    nets = pcb.get('nets', {})
+    result = {}
+    if isinstance(nets, dict):
+        for k, v in nets.items():
+            if isinstance(v, int):
+                # {name: id} format — invert
+                result[v] = k
+            elif isinstance(k, int):
+                # {id: name} format
+                result[k] = v
+            else:
+                # Try parsing key as int
+                try:
+                    result[int(k)] = str(v)
+                except (ValueError, TypeError):
+                    pass
+    elif isinstance(nets, list):
+        for n in nets:
+            if isinstance(n, dict):
+                num = n.get('number', n.get('net', 0))
+                name = n.get('name', n.get('net', ''))
+                if isinstance(num, int):
+                    result[num] = str(name)
+    return result
+
+
 def _build_net_length_map(pcb: Dict) -> Dict[str, Dict]:
     """Normalize net_lengths (list or dict) into a dict keyed by net name."""
     raw = pcb.get('net_lengths', [])
@@ -1839,17 +1867,8 @@ def check_trace_near_board_edge(pcb: Dict,
     if not edges:
         return findings
 
-    # Get net names for classification
-    net_names = pcb.get('nets', {})
-    if isinstance(net_names, list):
-        net_name_map = {}
-        for n in net_names:
-            if isinstance(n, dict):
-                net_name_map[n.get('number', n.get('net', 0))] = n.get('name', n.get('net', ''))
-    elif isinstance(net_names, dict):
-        net_name_map = net_names
-    else:
-        net_name_map = {}
+    # Build net ID → name map for classification
+    net_name_map = _build_net_id_to_name(pcb)
 
     # Track which nets we've already flagged to avoid duplicates
     flagged_nets = set()
