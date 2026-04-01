@@ -18,6 +18,7 @@ This skill inverts the typical simulation workflow: instead of requiring users t
 | `mouser` | Parametric specs (secondary source), datasheet downloads |
 | `lcsc` | Parametric specs (no auth needed), datasheet downloads |
 | `element14` | Parametric specs (international), datasheet downloads |
+| `emc` | EMC pre-compliance — sibling verification skill, also consumes analyzer output |
 
 **Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report.
 

@@ -186,6 +186,28 @@ if [ "${INPUT_SPICE:-true}" = "true" ] && [ -n "$SCH_JSON" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Run EMC analysis (optional, best-effort)
+# ---------------------------------------------------------------------------
+
+EMC_JSON=""
+if [ -n "$SCH_JSON" ] || [ -n "$PCB_JSON" ]; then
+    echo "::group::EMC Analysis"
+    EMC_JSON="$OUTDIR/emc.json"
+    EMC_ARGS=()
+    [ -n "$SCH_JSON" ] && [ -f "$SCH_JSON" ] && EMC_ARGS+=(--schematic "$SCH_JSON")
+    [ -n "$PCB_JSON" ] && [ -f "$PCB_JSON" ] && EMC_ARGS+=(--pcb "$PCB_JSON")
+    EMC_ARGS+=(--output "$EMC_JSON")
+    if python3 "$ACTION_PATH/skills/emc/scripts/analyze_emc.py" "${EMC_ARGS[@]}" 2>"$OUTDIR/emc.err"; then
+        SUMMARY=$(python3 -c "import json; d=json.load(open('$EMC_JSON')); s=d.get('summary',{}); print(f\"score {s.get('emc_risk_score',0)}/100, {s.get('critical',0)} crit, {s.get('high',0)} high, {s.get('medium',0)} med\")" 2>/dev/null || echo "?")
+        echo "EMC: $SUMMARY"
+    else
+        echo "::notice::EMC analysis failed (non-blocking)"
+        EMC_JSON=""
+    fi
+    echo "::endgroup::"
+fi
+
+# ---------------------------------------------------------------------------
 # Format markdown report
 # ---------------------------------------------------------------------------
 
@@ -198,6 +220,7 @@ ARGS=()
 [ -n "$SCH_JSON" ] && [ -f "$SCH_JSON" ] && ARGS+=(--schematic "$SCH_JSON")
 [ -n "$PCB_JSON" ] && [ -f "$PCB_JSON" ] && ARGS+=(--pcb "$PCB_JSON")
 [ -n "$SPICE_JSON" ] && [ -f "$SPICE_JSON" ] && ARGS+=(--spice "$SPICE_JSON")
+[ -n "$EMC_JSON" ] && [ -f "$EMC_JSON" ] && ARGS+=(--emc "$EMC_JSON")
 ARGS+=(--severity "${INPUT_SEVERITY:-all}")
 ARGS+=(--derating-profile "${INPUT_DERATING_PROFILE:-commercial}")
 ARGS+=(--output "$REPORT")

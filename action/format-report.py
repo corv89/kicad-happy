@@ -34,11 +34,12 @@ def _safe_float(val, fmt=".1f"):
 # Tier 1: PR Comment
 # ---------------------------------------------------------------------------
 
-def format_report(schematic_path, pcb_path, spice_path, severity, derating_profile,
-                  run_url=None):
+def format_report(schematic_path, pcb_path, spice_path, emc_path,
+                  severity, derating_profile, run_url=None):
     sch = _load_json(schematic_path)
     pcb = _load_json(pcb_path)
     spice = _load_json(spice_path)
+    emc = _load_json(emc_path)
 
     L = []
     findings = []     # (severity, detail, source)
@@ -140,6 +141,19 @@ def format_report(schematic_path, pcb_path, spice_path, severity, derating_profi
         spice_pass = spice.get("summary", {}).get("pass", 0)
         if spice_pass > 0:
             verified.append(f"{spice_pass} SPICE subcircuit(s) confirmed")
+
+    if emc:
+        emc_summary = emc.get("summary", {})
+        emc_score = emc_summary.get("emc_risk_score", 0)
+        emc_crit = emc_summary.get("critical", 0)
+        emc_high = emc_summary.get("high", 0)
+        emc_checks = emc_summary.get("total_checks", 0)
+        if emc_crit > 0:
+            findings.append(("CRITICAL", f"EMC: {emc_crit} critical finding(s) — score {emc_score}/100", "emc"))
+        if emc_high > 0:
+            findings.append(("WARNING", f"EMC: {emc_high} high-risk finding(s)", "emc"))
+        if emc_checks > 0 and emc_crit == 0 and emc_high == 0:
+            verified.append(f"EMC risk score {emc_score}/100 — no critical/high findings")
 
     # === Summary bar ===
     parts = []
@@ -361,6 +375,28 @@ def format_report(schematic_path, pcb_path, spice_path, severity, derating_profi
                 L.append(f"- ⚠️ {r.get('subcircuit_type','')} ({comps}): {note}")
         L.append("")
 
+    # === EMC (one-liner summary + critical/high findings) ===
+    if emc:
+        emc_s = emc.get("summary", {})
+        emc_total = emc_s.get("total_checks", 0)
+        emc_score = emc_s.get("emc_risk_score", 0)
+        emc_crit = emc_s.get("critical", 0)
+        emc_high = emc_s.get("high", 0)
+
+        L.append("### EMC")
+        L.append("")
+        L.append(f"Risk score **{emc_score}/100** — {emc_total} checks: "
+                 f"{emc_crit} critical, {emc_high} high")
+
+        for f in emc.get("findings", []):
+            sev = f.get("severity", "")
+            if sev in ("CRITICAL", "HIGH"):
+                rule = f.get("rule_id", "")
+                title = f.get("title", "")
+                icon = "\U0001f534" if sev == "CRITICAL" else "\u26a0\ufe0f"
+                L.append(f"- {icon} {rule}: {title}")
+        L.append("")
+
     # === Verified (collapsible, at bottom) ===
     if verified:
         L.append(f"<details><summary>Verified ({len(verified)} checks passed)</summary>")
@@ -389,6 +425,7 @@ def format_report(schematic_path, pcb_path, spice_path, severity, derating_profi
         "has_schematic": sch is not None,
         "has_pcb": pcb is not None,
         "has_spice": spice is not None,
+        "has_emc": emc is not None,
     }
 
     return report, summary_data
@@ -398,11 +435,12 @@ def format_report(schematic_path, pcb_path, spice_path, severity, derating_profi
 # Full Report (Step Summary)
 # ---------------------------------------------------------------------------
 
-def format_full_report(schematic_path, pcb_path, spice_path, derating_profile):
+def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_profile):
     """Generate the full step summary — no JSON dumps, all human-readable."""
     sch = _load_json(schematic_path)
     pcb = _load_json(pcb_path)
     spice = _load_json(spice_path)
+    emc = _load_json(emc_path)
 
     L = []
     a = L.append
@@ -617,6 +655,36 @@ def format_full_report(schematic_path, pcb_path, spice_path, derating_profile):
                     a(f"| {r.get('subcircuit_type','')} | {comps} | {r.get('status','')} |")
                 a("")
 
+        # EMC
+        if emc:
+            emc_s = emc.get("summary", {})
+            a("### EMC Pre-Compliance")
+            a("")
+            a(f"Risk score **{emc_s.get('emc_risk_score', 0)}/100** — "
+              f"{emc_s.get('total_checks', 0)} checks: "
+              f"{emc_s.get('critical', 0)} critical, "
+              f"{emc_s.get('high', 0)} high, "
+              f"{emc_s.get('medium', 0)} medium")
+            a("")
+            emc_findings = emc.get("findings", [])
+            actionable = [f for f in emc_findings if f.get("severity") in ("CRITICAL", "HIGH", "MEDIUM")]
+            if actionable:
+                a("| Severity | Rule | Finding |")
+                a("|----------|------|---------|")
+                for f in actionable[:15]:
+                    a(f"| {f.get('severity','')} | {f.get('rule_id','')} | {f.get('title','')} |")
+                a("")
+
+            # Test plan highlights
+            tp = emc.get("test_plan", {})
+            bands = tp.get("frequency_bands", [])
+            high_risk = [b for b in bands if b.get("risk_level") in ("high", "medium") and b.get("source_count", 0) > 0]
+            if high_risk:
+                a("**Pre-compliance focus bands:**")
+                for b in high_risk[:3]:
+                    a(f"- {b['band']}: {b['source_count']} emission source(s) ({b['risk_level']} risk)")
+                a("")
+
     # === Power Analysis ===
     has_power = False
 
@@ -822,6 +890,7 @@ def main():
     parser.add_argument("--schematic", help="Path to schematic analysis JSON")
     parser.add_argument("--pcb", help="Path to PCB analysis JSON")
     parser.add_argument("--spice", help="Path to SPICE simulation JSON")
+    parser.add_argument("--emc", help="Path to EMC analysis JSON")
     parser.add_argument("--severity", default="all", help="Filter: all, warning, critical")
     parser.add_argument("--derating-profile", default="commercial")
     parser.add_argument("--run-url", help="GitHub Actions run URL for 'Full report' link")
@@ -831,7 +900,7 @@ def main():
     args = parser.parse_args()
 
     report, summary = format_report(
-        args.schematic, args.pcb, args.spice,
+        args.schematic, args.pcb, args.spice, args.emc,
         args.severity, args.derating_profile,
         run_url=args.run_url,
     )
@@ -840,7 +909,7 @@ def main():
         f.write(report)
 
     if args.output_full:
-        full = format_full_report(args.schematic, args.pcb, args.spice, args.derating_profile)
+        full = format_full_report(args.schematic, args.pcb, args.spice, args.emc, args.derating_profile)
         with open(args.output_full, "w") as f:
             f.write(full)
         print(f"Full report: {args.output_full} ({len(full)} chars)", file=sys.stderr)
