@@ -1,0 +1,859 @@
+#!/usr/bin/env python3
+"""Format kicad-happy analyzer JSON outputs into markdown reports.
+
+Produces two outputs:
+1. A PR comment (concise, human-readable, no JSON dumps)
+2. A full step summary (detailed, follows report-generation.md structure)
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def _load_json(path):
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _safe_float(val, fmt=".1f"):
+    """Format a value as float, handling strings gracefully."""
+    if isinstance(val, (int, float)):
+        return f"{val:{fmt}}"
+    return str(val) if val else "—"
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: PR Comment
+# ---------------------------------------------------------------------------
+
+def format_report(schematic_path, pcb_path, spice_path, severity, derating_profile,
+                  run_url=None):
+    sch = _load_json(schematic_path)
+    pcb = _load_json(pcb_path)
+    spice = _load_json(spice_path)
+
+    L = []
+    findings = []     # (severity, detail, source)
+    verified = []     # things confirmed working
+
+    # === Header ===
+    L.append("## KiCad Design Review")
+    L.append("")
+
+    if sch:
+        stats = sch.get("statistics", {})
+        filename = Path(sch.get("file", "unknown")).name
+        rails = stats.get("power_rails", [])
+        rail_str = f", {len(rails)} power rails" if rails else ""
+        L.append(f"**{filename}** — {stats.get('total_components', 0)} components, "
+                 f"{stats.get('unique_parts', 0)} unique, "
+                 f"{stats.get('total_nets', 0)} nets{rail_str}")
+        L.append("")
+
+    # === Collect all findings ===
+    sig = sch.get("signal_analysis", {}) if sch else {}
+    vd = sch.get("voltage_derating", {}) if sch else {}
+    pc = sch.get("protocol_compliance", {}) if sch else {}
+
+    # Voltage derating issues
+    for issue in vd.get("issues", []):
+        ref = issue.get("ref", "?")
+        ctype = issue.get("component_type", "")
+        rule = issue.get("derating_rule", "")
+        rail = issue.get("rail", "")
+        if ctype == "capacitor":
+            detail = (f"{ref} ({issue.get('value','')}) on {rail}: "
+                      f"{_safe_float(issue.get('rated_voltage'), '.0f')}V rated, "
+                      f"{_safe_float(issue.get('rail_voltage'), '.1f')}V applied — {rule}")
+        elif ctype == "ic":
+            detail = (f"{ref} ({issue.get('value','')}) on {rail}: "
+                      f"abs max {_safe_float(issue.get('abs_max_vin'), '.1f')}V, "
+                      f"applied {_safe_float(issue.get('rail_voltage'), '.1f')}V")
+        elif ctype == "resistor":
+            est = issue.get('estimated_power_w', 0)
+            rat = issue.get('rated_power_w', 0)
+            detail = (f"{ref} ({issue.get('value','')}) {issue.get('package','')}: "
+                      f"{_safe_float(est*1000 if isinstance(est,(int,float)) else est, '.0f')}mW / "
+                      f"{_safe_float(rat*1000 if isinstance(rat,(int,float)) else rat, '.0f')}mW rated")
+        else:
+            detail = f"{ref}: {rule}"
+        findings.append((issue.get("severity", "warning"), detail, "Derating"))
+
+    # Protocol compliance issues (deduplicated)
+    seen_pc = set()
+    for finding in pc.get("findings", []):
+        for issue_text in finding.get("issues", []) or []:
+            key = f"{finding['protocol']}:{issue_text}"
+            if key not in seen_pc:
+                seen_pc.add(key)
+                findings.append(("warning", issue_text, finding["protocol"].upper()))
+
+    # Connectivity issues
+    conn = sch.get("connectivity_issues", {}) if sch else {}
+    for net in conn.get("single_pin_nets", [])[:3]:
+        findings.append(("warning", f"Single-pin net: {net}", "Connectivity"))
+
+    # Filter by severity
+    if severity == "critical":
+        findings = [f for f in findings if f[0] == "critical"]
+    elif severity == "warning":
+        findings = [f for f in findings if f[0] in ("critical", "warning")]
+
+    critical_count = sum(1 for s, _, _ in findings if s == "critical")
+    warning_count = sum(1 for s, _, _ in findings if s == "warning")
+
+    # === Collect verified items ===
+    for reg in sig.get("power_regulators", []):
+        vout = reg.get("estimated_vout")
+        if vout and isinstance(vout, (int, float)):
+            verified.append(f"{reg['ref']} → {reg.get('output_rail','')} at {vout:.2f}V")
+
+    for finding in pc.get("findings", []):
+        checks = finding.get("checks", {})
+        if finding.get("protocol") == "i2c":
+            pu = checks.get("pull_ups_present", {})
+            if pu.get("status") == "pass":
+                verified.append("I2C pull-ups present")
+            rt = checks.get("rise_time", {})
+            for ln in ("sda", "scl"):
+                if ln in rt and rt[ln].get("valid_400khz"):
+                    verified.append(f"I2C {ln.upper()} rise time {rt[ln]['rise_time_ns']}ns (fast mode OK)")
+
+    caps_ok = vd.get("caps_checked", 0) - len([i for i in vd.get("issues", []) if i.get("component_type") == "capacitor"])
+    if caps_ok > 0:
+        verified.append(f"{caps_ok} cap(s) pass voltage derating")
+
+    if pcb:
+        pcb_conn = pcb.get("connectivity", {})
+        if pcb_conn.get("routing_complete"):
+            verified.append("PCB routing 100% complete")
+
+    if spice:
+        spice_pass = spice.get("summary", {}).get("pass", 0)
+        if spice_pass > 0:
+            verified.append(f"{spice_pass} SPICE subcircuit(s) confirmed")
+
+    # === Summary bar ===
+    parts = []
+    if critical_count:
+        parts.append(f"{critical_count} critical")
+    if warning_count:
+        parts.append(f"{warning_count} warning{'s' if warning_count != 1 else ''}")
+    parts.append(f"{len(verified)} verified")
+    if run_url:
+        parts.append(f"[**Full report →**]({run_url})")
+    L.append(f"> {' · '.join(parts)}")
+    L.append("")
+
+    # === Findings ===
+    if findings:
+        L.append("### Findings")
+        L.append("")
+        L.append("| | Issue | Source |")
+        L.append("|---|---|---|")
+        for sev, detail, source in sorted(findings, key=lambda x: (0 if x[0] == "critical" else 1)):
+            icon = "🔴" if sev == "critical" else "⚠️"
+            L.append(f"| {icon} | {detail} | {source} |")
+        L.append("")
+
+    # === Power ===
+    regs = sig.get("power_regulators", [])
+    sleep = sch.get("sleep_current_audit") if sch else None
+    if regs:
+        L.append("### Power")
+        L.append("")
+        for reg in regs:
+            vout = reg.get("estimated_vout")
+            vout_str = f"→ {vout:.2f}V" if isinstance(vout, (int, float)) else ""
+            topo = reg.get("topology", "")
+            L.append(f"- **{reg['ref']}** ({reg.get('value','')}) {topo} "
+                     f"{reg.get('input_rail','')} {vout_str} on {reg.get('output_rail','')}")
+            # Output caps
+            out_caps = reg.get("output_capacitors", [])
+            if out_caps:
+                total_uf = sum(c.get("farads", 0) for c in out_caps) * 1e6
+                L.append(f"  - Output caps: {total_uf:.1f}µF ({len(out_caps)} caps)")
+        if sleep:
+            total_ua = sleep.get("total_estimated_sleep_uA")
+            if isinstance(total_ua, (int, float)):
+                L.append(f"- Sleep current: {total_ua:.0f}µA estimated")
+        L.append("")
+
+    # === Buses & Protocols ===
+    buses = sch.get("design_analysis", {}).get("bus_analysis", {}) if sch else {}
+    has_bus_content = any(buses.get(k) for k in ("i2c", "spi", "uart", "can")) or pc.get("findings")
+    if has_bus_content:
+        L.append("### Buses & Protocols")
+        L.append("")
+        seen_proto = set()
+        for finding in pc.get("findings", []):
+            proto = finding["protocol"].upper()
+            issues = finding.get("issues", []) or []
+            checks = finding.get("checks", {})
+            devices = finding.get("devices", [])
+            dev_str = f" ({', '.join(devices[:4])})" if devices else ""
+
+            if proto == "I2C" and checks:
+                detail_key = f"I2C:{finding.get('sda_net','')}"
+                if detail_key in seen_proto:
+                    continue
+                seen_proto.add(detail_key)
+                pu = checks.get("pull_ups_present", {})
+                rt = checks.get("rise_time", {})
+                parts = []
+                if pu.get("status") == "fail":
+                    parts.append("pull-ups missing")
+                elif pu.get("status") == "pass":
+                    # Show pull-up value if available
+                    pv = checks.get("pull_up_value", {})
+                    for ln in ("sda", "scl"):
+                        if ln in pv:
+                            parts.append(f"{pv[ln].get('ref','')}={pv[ln].get('ohms','')}Ω")
+                for ln in ("sda", "scl"):
+                    if ln in rt:
+                        tr = rt[ln]
+                        parts.append(f"{ln.upper()} t_r={tr['rise_time_ns']}ns")
+                L.append(f"- **I2C**{dev_str}: {', '.join(parts)}")
+            else:
+                issue_key = f"{proto}:{';'.join(sorted(issues))}"
+                if issue_key in seen_proto:
+                    continue
+                seen_proto.add(issue_key)
+                if issues:
+                    L.append(f"- **{proto}**{dev_str}: {issues[0]}")
+                else:
+                    L.append(f"- **{proto}**{dev_str}: OK")
+
+        # Add buses that had no protocol compliance findings
+        for bus_type in ("spi", "can"):
+            if buses.get(bus_type) and bus_type.upper() not in [f["protocol"].upper() for f in pc.get("findings", [])]:
+                count = len(buses[bus_type])
+                L.append(f"- **{bus_type.upper()}**: {count} signal(s) detected")
+        L.append("")
+
+    # === Component Health ===
+    if vd or (sch and sch.get("statistics", {}).get("missing_mpn")):
+        L.append("### Component Health")
+        L.append("")
+        if vd:
+            profile = vd.get("derating_profile", derating_profile)
+            caps = vd.get("caps_checked", 0)
+            ics = vd.get("ics_checked", 0)
+            res = vd.get("resistors_checked", 0)
+            issue_count = len(vd.get("issues", []))
+            parts = []
+            if caps: parts.append(f"{caps} caps")
+            if ics: parts.append(f"{ics} ICs")
+            if res: parts.append(f"{res} resistors")
+            status = f"{issue_count} issue(s)" if issue_count else "all pass"
+            L.append(f"- Derating: {', '.join(parts)} checked ({profile}) — {status}")
+
+            od = vd.get("over_designed", [])
+            if od:
+                for item in od[:2]:
+                    L.append(f"- Over-designed: {item.get('ref','')} ({item.get('value','')}) — "
+                             f"{item.get('suggestion','')}" if item.get('suggestion') else
+                             f"- Over-designed: {item.get('ref','')} ({item.get('value','')}) — "
+                             f"margin {_safe_float(item.get('margin_pct'), '.0f')}%")
+
+        if sch:
+            stats = sch.get("statistics", {})
+            missing = stats.get("missing_mpn", [])
+            total = stats.get("total_components", 0)
+            if total > 0:
+                with_mpn = total - len(missing)
+                pct = with_mpn / total * 100
+                L.append(f"- MPN coverage: {with_mpn}/{total} ({pct:.0f}%)")
+        L.append("")
+
+    # === Signal Analysis (compact) ===
+    sig_items = []
+    for key, label in [("voltage_dividers", "divider"), ("rc_filters", "RC filter"),
+                       ("lc_filters", "LC filter"), ("opamp_circuits", "opamp"),
+                       ("transistor_circuits", "transistor"), ("protection_devices", "protection"),
+                       ("crystal_circuits", "crystal"), ("current_sense", "current sense")]:
+        items = sig.get(key, [])
+        if items:
+            sig_items.append(f"{len(items)} {label}{'s' if len(items) > 1 else ''}")
+    if sig_items and not regs:  # Don't repeat if power section already shown
+        L.append("### Signal Analysis")
+        L.append("")
+        L.append(f"{', '.join(sig_items)}")
+        L.append("")
+    elif sig_items:
+        # Add non-power detections as a compact line
+        non_power = [s for s in sig_items]
+        if non_power:
+            L.append(f"**Detected:** {', '.join(non_power)}")
+            L.append("")
+
+    # === Opamp warnings (if any) ===
+    opamps = sig.get("opamp_circuits", [])
+    opamp_warnings = [(oa["reference"], w) for oa in opamps for w in oa.get("warnings", [])]
+    unused_channels = [(oa["reference"], oa["unused_channels"]) for oa in opamps if oa.get("unused_channels")]
+    if opamp_warnings or unused_channels:
+        L.append("### Op-Amp Checks")
+        L.append("")
+        for ref, warning in opamp_warnings:
+            L.append(f"- {ref}: {warning}")
+        for ref, channels in unused_channels:
+            L.append(f"- {ref}: unused channel(s) {channels}")
+        L.append("")
+
+    # === PCB (dense one-liner) ===
+    if pcb:
+        dfm = pcb.get("dfm", {})
+        metrics = dfm.get("metrics", {})
+        w = metrics.get("board_width_mm", "?")
+        h = metrics.get("board_height_mm", "?")
+        all_layers = pcb.get("layers", [])
+        signal_layers = sum(1 for l in all_layers if l.get("type") == "signal")
+        fp_count = len(pcb.get("footprints", []))
+        track_count = pcb.get("tracks", {}).get("segment_count", 0)
+        via_count = pcb.get("vias", {}).get("count", 0)
+        tier = dfm.get("dfm_tier", "?")
+        pcb_conn = pcb.get("connectivity", {})
+        routing = "100%" if pcb_conn.get("routing_complete") else f"{pcb_conn.get('unrouted_count', '?')} unrouted"
+
+        L.append("### PCB")
+        L.append("")
+        L.append(f"{w} × {h}mm · {signal_layers} layers · {fp_count} footprints · "
+                 f"{track_count} tracks · {via_count} vias · DFM: {tier} · Routing: {routing}")
+        L.append("")
+
+        # Thermal pad warnings
+        tpv = pcb.get("thermal_pad_vias", [])
+        insufficient = [t for t in tpv if t.get("adequacy") == "insufficient"]
+        if insufficient:
+            for t in insufficient[:3]:
+                L.append(f"- ⚠️ {t.get('reference','')} ({t.get('value','')}) thermal vias: "
+                         f"{t.get('via_count',0)} — insufficient")
+            L.append("")
+
+    # === SPICE (one-liner unless failures) ===
+    if spice:
+        summary = spice.get("summary", {})
+        total = summary.get("total", 0)
+        passed = summary.get("pass", 0)
+        warn = summary.get("warn", 0)
+        fail = summary.get("fail", 0)
+
+        L.append("### SPICE")
+        L.append("")
+        L.append(f"{total} subcircuits — **{passed} pass**, {warn} warn, {fail} fail")
+
+        # Show failures and warnings
+        for r in spice.get("simulation_results", []):
+            if r.get("status") == "fail":
+                comps = ", ".join(r.get("components", []))
+                L.append(f"- 🔴 FAIL: {r.get('subcircuit_type','')} ({comps})")
+            elif r.get("status") == "warn":
+                comps = ", ".join(r.get("components", []))
+                note = r.get("note", "")
+                L.append(f"- ⚠️ {r.get('subcircuit_type','')} ({comps}): {note}")
+        L.append("")
+
+    # === Verified (collapsible, at bottom) ===
+    if verified:
+        L.append(f"<details><summary>Verified ({len(verified)} checks passed)</summary>")
+        L.append("")
+        for v in verified:
+            L.append(f"- {v}")
+        L.append("")
+        L.append("</details>")
+        L.append("")
+
+    # === Footer ===
+    L.append("---")
+    if run_url:
+        L.append(f"*[kicad-happy](https://github.com/aklofas/kicad-happy)* · **[Full report →]({run_url})**")
+    else:
+        L.append("*Generated by [kicad-happy](https://github.com/aklofas/kicad-happy)*")
+    L.append("<!-- kicad-happy-review -->")
+
+    report = "\n".join(L)
+    summary_data = {
+        "findings_count": critical_count + warning_count,
+        "critical_count": critical_count,
+        "warning_count": warning_count,
+        "verified_count": len(verified),
+        "has_critical": critical_count > 0,
+        "has_schematic": sch is not None,
+        "has_pcb": pcb is not None,
+        "has_spice": spice is not None,
+    }
+
+    return report, summary_data
+
+
+# ---------------------------------------------------------------------------
+# Full Report (Step Summary)
+# ---------------------------------------------------------------------------
+
+def format_full_report(schematic_path, pcb_path, spice_path, derating_profile):
+    """Generate the full step summary — no JSON dumps, all human-readable."""
+    sch = _load_json(schematic_path)
+    pcb = _load_json(pcb_path)
+    spice = _load_json(spice_path)
+
+    L = []
+    a = L.append
+
+    stats = sch.get("statistics", {}) if sch else {}
+    sig = sch.get("signal_analysis", {}) if sch else {}
+
+    # === Header ===
+    a("# Design Review — Full Report")
+    a("")
+    if sch:
+        filename = Path(sch.get("file", "unknown")).name
+        rails = stats.get("power_rails", [])
+        a(f"**{filename}** — {stats.get('total_components', 0)} components "
+          f"({stats.get('unique_parts', 0)} unique), {stats.get('total_nets', 0)} nets, "
+          f"{stats.get('total_no_connects', 0)} no-connects")
+        if rails:
+            a(f"")
+            a(f"Power rails: {', '.join(rails)}")
+        a("")
+
+    # === Critical Findings ===
+    all_issues = []
+    vd = sch.get("voltage_derating", {}) if sch else {}
+    pc = sch.get("protocol_compliance", {}) if sch else {}
+
+    for issue in vd.get("issues", []):
+        ref = issue.get("ref", "?")
+        ctype = issue.get("component_type", "")
+        rule = issue.get("derating_rule", "")
+        detail = f"{ref} ({issue.get('value','')}) — {rule}" if ctype != "ic" else \
+                 f"{ref} ({issue.get('value','')}) — abs max {_safe_float(issue.get('abs_max_vin'),'.1f')}V"
+        all_issues.append((issue.get("severity", "warning"), detail, "Voltage Derating"))
+
+    seen_pc = set()
+    for finding in pc.get("findings", []):
+        for issue_text in finding.get("issues", []) or []:
+            key = f"{finding['protocol']}:{issue_text}"
+            if key not in seen_pc:
+                seen_pc.add(key)
+                all_issues.append(("warning", issue_text, "Protocol Compliance"))
+
+    a("## Critical Findings")
+    a("")
+    if all_issues:
+        a("| Severity | Issue | Section |")
+        a("|----------|-------|---------|")
+        for sev, detail, section in sorted(all_issues, key=lambda x: (0 if x[0] == "critical" else 1)):
+            a(f"| {sev.upper()} | {detail} | {section} |")
+    else:
+        a("No critical or warning-level issues found.")
+    a("")
+
+    # === Component Summary ===
+    a("## Component Summary")
+    a("")
+    type_counts = stats.get("component_types", {})
+    if type_counts:
+        a("| Type | Count |")
+        a("|------|-------|")
+        for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
+            a(f"| {t} | {c} |")
+        a("")
+    missing = stats.get("missing_mpn", [])
+    total = stats.get("total_components", 0)
+    if total > 0:
+        with_mpn = total - len(missing)
+        a(f"**Sourcing:** {with_mpn}/{total} components have MPNs ({with_mpn/total*100:.0f}%)")
+        if missing:
+            a("")
+            a(f"<details><summary>Missing MPNs ({len(missing)})</summary>")
+            a("")
+            a(", ".join(missing))
+            a("")
+            a("</details>")
+    a("")
+
+    # === Signal Analysis Review ===
+    if sig:
+        a("## Signal Analysis Review")
+        a("")
+
+        # Power Regulators
+        regs = sig.get("power_regulators", [])
+        if regs:
+            a("### Power Regulators")
+            a("")
+            a("| Ref | Value | Topology | Input | Output | Vout | Vref Source |")
+            a("|-----|-------|----------|-------|--------|------|-------------|")
+            for r in regs:
+                vout = r.get("estimated_vout")
+                vout_str = f"{float(vout):.2f}V" if isinstance(vout, (int, float)) else "—"
+                a(f"| {r.get('ref','')} | {r.get('value','')} | {r.get('topology','')} "
+                  f"| {r.get('input_rail','')} | {r.get('output_rail','')} "
+                  f"| {vout_str} | {r.get('vref_source','')} |")
+            a("")
+
+        # Voltage Dividers
+        dividers = sig.get("voltage_dividers", [])
+        if dividers:
+            a("### Voltage Dividers")
+            a("")
+            for d in dividers:
+                ratio = d.get('ratio')
+                vout = d.get('vout_estimated')
+                ratio_str = f"{float(ratio):.3f}" if isinstance(ratio, (int, float)) else str(ratio)
+                vout_str = f"{float(vout):.2f}V" if isinstance(vout, (int, float)) else str(vout)
+                a(f"- {d.get('top_ref','')} / {d.get('bottom_ref','')}: "
+                  f"ratio={ratio_str}, Vout={vout_str}")
+            a("")
+
+        # Filters
+        for ftype, fname in [("rc_filters", "RC Filters"), ("lc_filters", "LC Filters")]:
+            filters = sig.get(ftype, [])
+            if filters:
+                a(f"### {fname}")
+                a("")
+                for f in filters:
+                    if ftype == "rc_filters":
+                        comps = f"{f.get('resistor','')} + {f.get('capacitor','')}"
+                    else:
+                        comps = f"{f.get('inductor','')} + {', '.join(str(c) for c in f.get('capacitors', []))}"
+                    fc = f.get("cutoff_frequency_hz") or f.get("resonant_frequency_hz")
+                    if isinstance(fc, (int, float)) and fc:
+                        fc_str = f"{fc:.0f} Hz" if fc < 1000 else f"{fc/1000:.1f} kHz"
+                    else:
+                        fc_str = "—"
+                    a(f"- {comps}: fc = {fc_str} ({f.get('type', '')})")
+                a("")
+
+        # Opamps
+        opamps = sig.get("opamp_circuits", [])
+        if opamps:
+            a("### Op-Amp Circuits")
+            a("")
+            for oa in opamps:
+                gain = oa.get("gain")
+                gain_db = oa.get("gain_dB")
+                if isinstance(gain, (int, float)) and isinstance(gain_db, (int, float)):
+                    gain_str = f"gain={float(gain):.1f} ({float(gain_db):.1f}dB)"
+                elif gain:
+                    gain_str = f"gain={gain}"
+                else:
+                    gain_str = ""
+                a(f"- **{oa['reference']}** ({oa.get('value','')}) — {oa['configuration']} {gain_str}")
+                for w in oa.get("warnings", []):
+                    a(f"  - {w}")
+                if oa.get("unused_channels"):
+                    a(f"  - Unused channels: {oa['unused_channels']} ({oa.get('unused_channel_status','')})")
+            a("")
+
+        # Protection
+        protection = sig.get("protection_devices", [])
+        if protection:
+            a("### Protection Devices")
+            a("")
+            a("| Ref | Value | Type | Protected Net |")
+            a("|-----|-------|------|---------------|")
+            for p in protection:
+                a(f"| {p.get('ref','')} | {p.get('value','')} | {p.get('type','')} | {p.get('protected_net','')} |")
+            a("")
+
+        # Transistors
+        transistors = sig.get("transistor_circuits", [])
+        if transistors:
+            a("### Transistor Circuits")
+            a("")
+            for t in transistors:
+                a(f"- **{t.get('reference','')}** ({t.get('value','')}) — {t.get('type','')}, "
+                  f"load: {t.get('load_classification', t.get('load_type', ''))}")
+            a("")
+
+        # Crystals
+        crystals = sig.get("crystal_circuits", [])
+        if crystals:
+            a("### Crystal Circuits")
+            a("")
+            for c in crystals:
+                caps = c.get("load_caps", [])
+                cap_str = ", ".join(f"{lc.get('ref','')}={lc.get('value','')}" for lc in caps) if caps else "none detected"
+                a(f"- {c.get('reference','')} ({c.get('value','')}) — load caps: {cap_str}")
+            a("")
+
+        # Decoupling
+        decoupling = sig.get("decoupling_analysis", [])
+        if decoupling:
+            a("### Decoupling Analysis")
+            a("")
+            a("| Rail | Caps | Total µF |")
+            a("|------|------|----------|")
+            for d in decoupling:
+                total_uf = d.get('total_capacitance_uF', 0)
+                uf_str = f"{float(total_uf):.1f}" if isinstance(total_uf, (int, float)) else str(total_uf)
+                a(f"| {d.get('rail','')} | {d.get('cap_count',0)} | {uf_str} |")
+            a("")
+
+        # SPICE
+        if spice:
+            a("### Simulation Verification")
+            a("")
+            summary = spice.get("summary", {})
+            a(f"{summary.get('total',0)} subcircuits verified: "
+              f"{summary.get('pass',0)} pass, {summary.get('warn',0)} warn, "
+              f"{summary.get('fail',0)} fail, {summary.get('skip',0)} skip")
+            a("")
+            results = spice.get("simulation_results", [])
+            if results:
+                a("| Type | Components | Status |")
+                a("|------|-----------|--------|")
+                for r in results:
+                    comps = ", ".join(r.get("components", []))
+                    a(f"| {r.get('subcircuit_type','')} | {comps} | {r.get('status','')} |")
+                a("")
+
+    # === Power Analysis ===
+    has_power = False
+
+    if vd:
+        a("## Power Analysis")
+        a("")
+        has_power = True
+        a("### Voltage Derating")
+        a("")
+        profile = vd.get("derating_profile", derating_profile)
+        a(f"Profile: **{profile}**. Checked: {vd.get('caps_checked',0)} caps, "
+          f"{vd.get('ics_checked',0)} ICs, {vd.get('resistors_checked',0)} resistors.")
+        a("")
+        if vd.get("issues"):
+            a("| Ref | Value | Type | Rail | Applied | Rated | Margin | Severity |")
+            a("|-----|-------|------|------|---------|-------|--------|----------|")
+            for i in vd["issues"]:
+                rated = i.get("rated_voltage", i.get("rated_power_w", ""))
+                applied = i.get("rail_voltage", i.get("voltage_across", ""))
+                a(f"| {i.get('ref','')} | {i.get('value','')} | {i.get('component_type','')} "
+                  f"| {i.get('rail','')} | {_safe_float(applied)} | {_safe_float(rated)} "
+                  f"| {_safe_float(i.get('margin_pct'),'.0f')}% | {i.get('severity','')} |")
+            a("")
+        if vd.get("over_designed"):
+            a("**Over-designed:**")
+            a("")
+            for od in vd["over_designed"]:
+                a(f"- {od.get('ref','')} ({od.get('value','')}) — margin {_safe_float(od.get('margin_pct'),'.0f')}%. "
+                  f"{od.get('suggestion','')}")
+            a("")
+        if not vd.get("issues") and not vd.get("over_designed"):
+            a("All components within derating limits.")
+            a("")
+
+    # Sleep current
+    sleep = sch.get("sleep_current_audit") if sch else None
+    if sleep and sleep.get("rails"):
+        if not has_power:
+            a("## Power Analysis")
+            a("")
+            has_power = True
+        a("### Sleep Current")
+        a("")
+        a("| Rail | Component | Type | Current (µA) | Notes |")
+        a("|------|-----------|------|-------------|-------|")
+        for rail_name, rail_data in sleep.get("rails", {}).items():
+            for path in rail_data.get("current_paths", []):
+                a(f"| {rail_name} | {path.get('ref','')} ({path.get('value','')}) "
+                  f"| {path.get('type','')} | {path.get('current_uA','')} | {path.get('note','')} |")
+        total = sleep.get("total_estimated_sleep_uA")
+        if isinstance(total, (int, float)):
+            a(f"")
+            a(f"**Total estimated sleep current: {total:.0f}µA**")
+        a("")
+
+    # Inrush
+    inrush = sch.get("inrush_analysis") if sch else None
+    if inrush and inrush.get("rails"):
+        if not has_power:
+            a("## Power Analysis")
+            a("")
+            has_power = True
+        a("### Inrush Analysis")
+        a("")
+        a("| Regulator | Output Rail | Output Caps (µF) | Est. Inrush (A) | Soft-start (ms) |")
+        a("|-----------|------------|-------------------|-----------------|-----------------|")
+        for rail in inrush["rails"]:
+            total_uf = rail.get("total_output_capacitance_uF", 0)
+            inrush_a = rail.get("estimated_inrush_A", 0)
+            ss = rail.get("assumed_soft_start_ms", "")
+            a(f"| {rail.get('regulator','')} | {rail.get('output_rail','')} "
+              f"| {_safe_float(total_uf)} | {_safe_float(inrush_a, '.3f')} | {ss} |")
+        a("")
+
+    # === Design Analysis ===
+    if sch:
+        da = sch.get("design_analysis", {})
+        has_da = False
+
+        # Bus Topology
+        buses = da.get("bus_analysis", {})
+        if any(buses.get(k) for k in ("i2c", "spi", "uart", "can")):
+            a("## Design Analysis")
+            a("")
+            has_da = True
+            a("### Bus Topology")
+            a("")
+            for bus_type in ("i2c", "spi", "uart", "can"):
+                entries = buses.get(bus_type, [])
+                if entries:
+                    a(f"- **{bus_type.upper()}**: {len(entries)} signal(s)")
+            a("")
+
+        # Protocol Compliance
+        if pc.get("findings"):
+            if not has_da:
+                a("## Design Analysis")
+                a("")
+                has_da = True
+            a("### Protocol Compliance")
+            a("")
+            for finding in pc["findings"]:
+                proto = finding["protocol"].upper()
+                issues = finding.get("issues", []) or []
+                checks = finding.get("checks", {})
+                devices = finding.get("devices", [])
+                dev_str = f" ({', '.join(devices)})" if devices else ""
+                a(f"**{proto}**{dev_str}")
+                for check_name, check_data in checks.items():
+                    if isinstance(check_data, dict) and "status" in check_data:
+                        a(f"- {check_name}: **{check_data['status']}**")
+                for issue in issues:
+                    a(f"- {issue}")
+                a("")
+
+        # Cross-domain
+        xd = da.get("cross_domain_signals", [])
+        if xd:
+            if not has_da:
+                a("## Design Analysis")
+                a("")
+                has_da = True
+            a("### Cross-Domain Signals")
+            a("")
+            for s in xd[:10]:
+                a(f"- {s.get('net','')} crosses {', '.join(s.get('power_domains', []))}")
+            if len(xd) > 10:
+                a(f"- ... and {len(xd) - 10} more")
+            a("")
+
+    # === IC Pin Analysis ===
+    if sch:
+        ic_pins = sch.get("ic_pin_analysis", [])
+        if ic_pins:
+            a("## Analyzer Verification")
+            a("")
+            a("### IC Pin Analysis")
+            a("")
+            a("| Ref | Value | Pins | Unconnected | Decoupling |")
+            a("|-----|-------|------|-------------|------------|")
+            for ic in ic_pins:
+                decaps = ic.get("decoupling_caps_by_rail", {})
+                decap_str = ", ".join(f"{rail}: {len(caps)}" for rail, caps in decaps.items()) if decaps else "—"
+                a(f"| {ic.get('reference','')} | {ic.get('value','')} "
+                  f"| {ic.get('total_pins',0)} | {ic.get('unconnected_pins',0)} | {decap_str} |")
+            a("")
+
+    # === PCB Layout ===
+    if pcb:
+        a("## PCB Layout Analysis")
+        a("")
+        dfm = pcb.get("dfm", {})
+        metrics = dfm.get("metrics", {})
+        all_layers = pcb.get("layers", [])
+        signal_layers = sum(1 for l in all_layers if l.get("type") == "signal")
+        pcb_conn = pcb.get("connectivity", {})
+
+        a("### Board Overview")
+        a("")
+        a(f"| Metric | Value |")
+        a(f"|--------|-------|")
+        a(f"| Dimensions | {metrics.get('board_width_mm','?')} × {metrics.get('board_height_mm','?')} mm |")
+        a(f"| Layers | {signal_layers} |")
+        a(f"| Footprints | {len(pcb.get('footprints', []))} |")
+        a(f"| Tracks | {pcb.get('tracks',{}).get('segment_count',0)} |")
+        a(f"| Vias | {pcb.get('vias',{}).get('count',0)} |")
+        a(f"| DFM tier | {dfm.get('dfm_tier','?')} |")
+        if pcb_conn.get("routing_complete"):
+            a(f"| Routing | 100% complete |")
+        elif pcb_conn.get("unrouted_count", 0) > 0:
+            a(f"| Routing | **{pcb_conn['unrouted_count']} unrouted** |")
+        a(f"| Min track | {metrics.get('min_track_width_mm','?')} mm |")
+        a(f"| Min spacing | {metrics.get('approx_min_spacing_mm','?')} mm |")
+        a(f"| Min drill | {metrics.get('min_drill_mm','?')} mm |")
+        a(f"| Min annular ring | {metrics.get('min_annular_ring_mm','?')} mm |")
+        a(f"| DFM violations | {dfm.get('violation_count',0)} |")
+        a("")
+
+        # Thermal pad vias
+        tpv = pcb.get("thermal_pad_vias", [])
+        if tpv:
+            a("### Thermal Pad Vias")
+            a("")
+            a("| Component | Value | Via Count | Adequacy |")
+            a("|-----------|-------|-----------|----------|")
+            for t in tpv:
+                a(f"| {t.get('reference','')} | {t.get('value','')} "
+                  f"| {t.get('via_count',0)} | {t.get('adequacy','')} |")
+            a("")
+
+    a("---")
+    a("*Generated by [kicad-happy](https://github.com/aklofas/kicad-happy)*")
+
+    return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="Format kicad-happy analysis as markdown")
+    parser.add_argument("--schematic", help="Path to schematic analysis JSON")
+    parser.add_argument("--pcb", help="Path to PCB analysis JSON")
+    parser.add_argument("--spice", help="Path to SPICE simulation JSON")
+    parser.add_argument("--severity", default="all", help="Filter: all, warning, critical")
+    parser.add_argument("--derating-profile", default="commercial")
+    parser.add_argument("--run-url", help="GitHub Actions run URL for 'Full report' link")
+    parser.add_argument("--output", required=True, help="Output markdown file path (PR comment)")
+    parser.add_argument("--output-full", help="Output full report markdown (step summary)")
+    parser.add_argument("--output-summary", help="Output summary JSON file path")
+    args = parser.parse_args()
+
+    report, summary = format_report(
+        args.schematic, args.pcb, args.spice,
+        args.severity, args.derating_profile,
+        run_url=args.run_url,
+    )
+
+    with open(args.output, "w") as f:
+        f.write(report)
+
+    if args.output_full:
+        full = format_full_report(args.schematic, args.pcb, args.spice, args.derating_profile)
+        with open(args.output_full, "w") as f:
+            f.write(full)
+        print(f"Full report: {args.output_full} ({len(full)} chars)", file=sys.stderr)
+
+    if args.output_summary:
+        with open(args.output_summary, "w") as f:
+            json.dump(summary, f, indent=2)
+
+    print(f"Report: {args.output} ({len(report)} chars)", file=sys.stderr)
+    print(f"Findings: {summary['critical_count']} critical, "
+          f"{summary['warning_count']} warning, "
+          f"{summary['verified_count']} verified", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
