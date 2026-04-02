@@ -799,6 +799,11 @@ def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') ->
                 amp = trapezoidal_harmonic_amplitude(
                     n_min, 12.0, duty_cycle, rise_time, sw_freq)
 
+                # Spread-spectrum modulation reduces peak harmonic energy
+                ss_detected = _has_spread_spectrum(val)
+                if ss_detected:
+                    amp *= 0.18  # ~-15 dB attenuation from frequency spreading
+
                 severity = 'INFO'
                 if len(harmonics) > 10 and n_min < 100:
                     severity = 'MEDIUM'
@@ -815,13 +820,16 @@ def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') ->
                         f'{len(harmonics)} harmonics in the {band_name} band '
                         f'(harmonics {harmonics[0]}-{harmonics[-1]}). '
                         f'Envelope rolloff at {f2/1e6:.0f} MHz (-40 dB/decade above).'
+                        + (' Spread-spectrum modulation detected (~-15 dB).'
+                           if ss_detected else '')
                     ),
                     'components': [ref],
                     'nets': [],
                     'recommendation': (
                         f'Minimize switching loop area for {ref}. Place input '
-                        f'cap as close as possible. Consider spread-spectrum '
-                        f'modulation if available.'
+                        f'cap as close as possible.'
+                        + ('' if ss_detected else
+                           ' Consider spread-spectrum modulation if available.')
                     ),
                 })
 
@@ -884,6 +892,16 @@ def _default_switching_freq(topology: str) -> float | None:
         'sepic': 300e3,
     }
     return defaults.get(topology.lower()) if topology else None
+
+
+def _has_spread_spectrum(value: str) -> bool:
+    """Detect if a switching regulator has spread-spectrum modulation."""
+    if not value:
+        return False
+    val = value.upper()
+    ss_keywords = ('SSCG', 'SPREAD', 'DITHER', 'FHSS', 'JITTER',
+                   '-SS', '_SS', '/SS')
+    return any(kw in val for kw in ss_keywords)
 
 
 # ---------------------------------------------------------------------------
@@ -1055,6 +1073,72 @@ def check_clock_near_connector(pcb: Dict,
 
                 if len(findings) > 10:
                     return findings
+
+    return findings
+
+
+def check_crystal_guard_ring(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dict]:
+    """Check for ground pour coverage near crystal/oscillator components."""
+    findings = []
+    if not schematic:
+        return findings
+
+    crystals = schematic.get('signal_analysis', {}).get('crystal_circuits', [])
+    if not crystals:
+        return findings
+
+    footprints = pcb.get('footprints', [])
+    zones = pcb.get('zones', [])
+
+    # Build ref->position lookup from footprints
+    fp_pos = {}
+    for fp in footprints:
+        ref = fp.get('reference', '')
+        if ref:
+            fp_pos[ref] = (fp.get('x', 0), fp.get('y', 0))
+
+    # Find ground zones with bounding boxes
+    gnd_zones = [z for z in zones if _is_ground_net(z.get('net_name', ''))]
+
+    for xtal in crystals:
+        ref = xtal.get('reference', '')
+        if not ref or ref not in fp_pos:
+            continue
+
+        cx, cy = fp_pos[ref]
+
+        # Check if any ground zone covers the crystal area (within 5mm)
+        has_ground_pour = False
+        for gz in gnd_zones:
+            bbox = gz.get('outline_bbox', gz.get('filled_bbox', {}))
+            if not bbox:
+                continue
+            # Expand bbox by 5mm search radius
+            if (bbox.get('min_x', 0) - 5 <= cx <= bbox.get('max_x', 0) + 5 and
+                bbox.get('min_y', 0) - 5 <= cy <= bbox.get('max_y', 0) + 5):
+                has_ground_pour = True
+                break
+
+        if not has_ground_pour:
+            freq = xtal.get('frequency', 0)
+            freq_str = f"{freq/1e6:.1f} MHz" if freq > 1e6 else f"{freq/1e3:.1f} kHz"
+            findings.append({
+                'category': 'clock_routing',
+                'severity': 'MEDIUM',
+                'rule_id': 'CK-004',
+                'title': f'No ground pour near crystal {ref}',
+                'description': (
+                    f'Crystal {ref} ({freq_str}) has no ground zone within 5mm. '
+                    f'A local ground pour under and around the crystal reduces '
+                    f'parasitic coupling and improves frequency stability.'
+                ),
+                'components': [ref],
+                'nets': [],
+                'recommendation': (
+                    f'Add a ground pour on the layer below {ref}, extending '
+                    f'at least 3mm beyond the crystal footprint on all sides.'
+                ),
+            })
 
     return findings
 
@@ -1390,6 +1474,8 @@ def estimate_switching_emissions(schematic: Dict,
             except Exception:
                 pass
 
+        ss_note = (' Spread-spectrum modulation detected (~-15 dB peak reduction).'
+                   if _has_spread_spectrum(val) else '')
         findings.append({
             'category': 'emission_estimate',
             'severity': 'INFO',
@@ -1402,7 +1488,7 @@ def estimate_switching_emissions(schematic: Dict,
                 f'-40 dB/dec above. '
                 f'Harmonics extend into FCC test range starting at '
                 f'{max(1, int(30e6/sw_freq))}th harmonic.'
-                + fft_note
+                + fft_note + ss_note
             ),
             'components': [ref],
             'nets': [],
@@ -1628,36 +1714,20 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
 # ---------------------------------------------------------------------------
 
 def _build_net_id_to_name(pcb: Dict) -> Dict[int, str]:
-    """Build a mapping from numeric net ID to net name.
-
-    The PCB JSON 'nets' field can be:
-    - dict {name: id} — invert to {id: name}
-    - list of {name, number} dicts
-    - dict {id: name} already (less common)
-    """
+    """Build mapping from numeric net ID to net name."""
     nets = pcb.get('nets', {})
+    if not isinstance(nets, dict):
+        return {}
     result = {}
-    if isinstance(nets, dict):
-        for k, v in nets.items():
-            if isinstance(v, int):
-                # {name: id} format — invert
-                result[v] = k
-            elif isinstance(k, int):
-                # {id: name} format
-                result[k] = v
-            else:
-                # Try parsing key as int
-                try:
-                    result[int(k)] = str(v)
-                except (ValueError, TypeError):
-                    pass
-    elif isinstance(nets, list):
-        for n in nets:
-            if isinstance(n, dict):
-                num = n.get('number', n.get('net', 0))
-                name = n.get('name', n.get('net', ''))
-                if isinstance(num, int):
-                    result[num] = str(name)
+    for k, v in nets.items():
+        # Canonical format: {int_id: name_str}
+        if isinstance(k, int):
+            result[k] = str(v)
+        elif isinstance(k, str) and k.isdigit():
+            result[int(k)] = str(v)
+        elif isinstance(v, int):
+            # Legacy format: {name: id} — invert
+            result[v] = str(k)
     return result
 
 
@@ -3918,6 +3988,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_connector_ground_pins(pcb, schematic))
         all_findings.extend(check_clock_routing(pcb, schematic))
         all_findings.extend(check_clock_near_connector(pcb, schematic, net_id_map))
+        all_findings.extend(check_crystal_guard_ring(pcb, schematic))
         all_findings.extend(check_via_stitching(pcb, schematic))
         all_findings.extend(check_stackup(pcb))
         all_findings.extend(estimate_cavity_resonances(pcb))

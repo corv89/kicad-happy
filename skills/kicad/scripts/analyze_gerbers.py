@@ -1308,6 +1308,7 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
                 break
 
     result = {
+        "analyzer_type": "gerber",
         "directory": str(directory),
         "generator": generator,
         "layer_count": layer_count,

@@ -1145,15 +1145,19 @@ def compute_statistics(components: list[dict], nets: dict, bom: list[dict],
         t = comp["type"]
         type_counts[t] = type_counts.get(t, 0) + 1
 
-    # Power rails
-    power_rails = sorted(set(
+    # Build power rails with estimated voltages
+    power_rail_names = sorted(set(
         comp["value"] for comp in components if comp["type"] == "power_symbol"
     ))
-    # Also detect power rails by net name patterns (covers local/hierarchical labels)
     for net_name in nets:
-        if _is_power_net_name(net_name) and net_name not in power_rails:
-            power_rails.append(net_name)
-    power_rails = sorted(set(power_rails))
+        if _is_power_net_name(net_name) and net_name not in power_rail_names:
+            power_rail_names.append(net_name)
+    power_rail_names = sorted(set(power_rail_names))
+
+    power_rails = []
+    for name in power_rail_names:
+        v = _parse_voltage_from_net_name(name)
+        power_rails.append({"name": name, "voltage": v})
 
     # Missing properties
     missing_mpn = [c["reference"] for c in non_power
@@ -4549,7 +4553,7 @@ def validate_hierarchical_labels(labels: list[dict], nets: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def analyze_pdn_impedance(ctx: AnalysisContext) -> dict:
+def analyze_pdn_impedance(ctx: AnalysisContext, signal_analysis: dict | None = None) -> dict:
     """PDN impedance profiling per power rail.
 
     Groups all capacitors by power rail, estimates ESR/ESL from package size,
@@ -4678,6 +4682,22 @@ def analyze_pdn_impedance(ctx: AnalysisContext) -> dict:
     observations = []
 
     for rail_name, caps in rail_caps.items():
+        # Find VRM driving this rail (from signal_analysis)
+        vrm_r_out = None
+        vrm_bw = None
+        if signal_analysis:
+            for reg in signal_analysis.get("power_regulators", []):
+                out_rail = reg.get("output_rail", "")
+                if out_rail == rail_name:
+                    topo = (reg.get("topology") or "").lower()
+                    if topo in ("ldo", "linear"):
+                        vrm_r_out = 0.05   # 50mΩ typical LDO output impedance
+                        vrm_bw = 100e3     # 100kHz LDO bandwidth
+                    else:
+                        vrm_r_out = 0.1    # 100mΩ typical switching reg output impedance
+                        vrm_bw = 50e3      # 50kHz switching reg bandwidth
+                    break
+
         # Compute combined impedance at each frequency point
         impedance_profile = []
         for f in freq_points:
@@ -4687,6 +4707,10 @@ def analyze_pdn_impedance(ctx: AnalysisContext) -> dict:
                 if z_i > 0:
                     z_parallel_inv += 1.0 / z_i
             z_total = 1.0 / z_parallel_inv if z_parallel_inv > 0 else 1e12
+            if vrm_r_out is not None:
+                # VRM output impedance: flat R_out below BW, rising at +20dB/decade above
+                z_vrm = vrm_r_out * max(1.0, f / vrm_bw)
+                z_total = 1.0 / (1.0 / z_total + 1.0 / z_vrm) if z_total < 1e12 else z_vrm
             impedance_profile.append({
                 "freq_hz": round(f),
                 "freq_formatted": _format_frequency(f),
@@ -6596,7 +6620,7 @@ def analyze_schematic(path: str) -> dict:
     generic_sym_warnings = check_generic_transistor_symbols(all_components, str(path))
 
     # ---- Tier 3: High-level design analyses ----
-    pdn_analysis = analyze_pdn_impedance(ctx)
+    pdn_analysis = analyze_pdn_impedance(ctx, signal_analysis)
     sleep_current = analyze_sleep_current(ctx, signal_analysis)
     voltage_derating = analyze_voltage_derating(all_components, nets, signal_analysis, pin_net,
                                                  project_dir=str(Path(path).parent))
@@ -6621,6 +6645,7 @@ def analyze_schematic(path: str) -> dict:
     stats = compute_statistics(all_components, nets, bom, all_wires, all_no_connects)
 
     result = {
+        "analyzer_type": "schematic",
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": file_version,
