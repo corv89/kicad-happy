@@ -913,3 +913,413 @@ MARKET_STANDARDS = {
         {'name': 'MIL-STD-461G CS114/CS116', 'type': 'conducted_susceptibility', 'standard_key': None},
     ],
 }
+
+
+# ---------------------------------------------------------------------------
+# Full-Board PDN: Power Tree, Trace Parasitics, Distributed Impedance
+# ---------------------------------------------------------------------------
+
+# EQ-042: R_trace = rho * L / (W * T) — DC trace resistance
+COPPER_RESISTIVITY_OHM_MM = 1.724e-5  # ohm·mm at 20°C
+
+
+def trace_resistance_ohm(length_mm: float, width_mm: float,
+                         thickness_mm: float = 0.035) -> float:
+    """DC resistance of a copper trace.
+
+    R = ρ × L / (W × T)
+
+    Args:
+        length_mm: Trace length in mm.
+        width_mm: Trace width in mm.
+        thickness_mm: Copper thickness in mm (default: 1 oz = 0.035mm).
+
+    Returns:
+        Resistance in Ohms.
+    """
+    if width_mm <= 0 or thickness_mm <= 0 or length_mm <= 0:
+        return 0.0
+    return COPPER_RESISTIVITY_OHM_MM * length_mm / (width_mm * thickness_mm)
+
+
+def trace_inductance_h(length_mm: float, width_mm: float,
+                       height_mm: float = 0.2) -> float:
+    """Approximate inductance of a microstrip trace over a reference plane.
+
+    L ≈ (μ₀ / (2π)) × h × ln(2h/w) per unit length, simplified to:
+    L_nH ≈ 5 × length_mm × ln(2 × height / width) for typical PCBs.
+
+    Args:
+        length_mm: Trace length in mm.
+        width_mm: Trace width in mm.
+        height_mm: Height above reference plane in mm (default: 0.2mm).
+
+    Returns:
+        Inductance in Henries.
+    """
+    if width_mm <= 0 or height_mm <= 0 or length_mm <= 0:
+        return 0.0
+    ratio = 2.0 * height_mm / width_mm
+    if ratio <= 0:
+        return 0.0
+    # nH per mm ≈ 5 × ln(2h/w) for microstrip
+    l_nh_per_mm = 5.0 * math.log(max(ratio, 1.01))
+    return l_nh_per_mm * length_mm * 1e-9
+
+
+def build_power_tree(regulators: list, power_budget: dict,
+                     decoupling_analysis: list) -> dict:
+    """Build a power tree graph from schematic data.
+
+    Each node represents a power rail produced by a regulator. Nodes link
+    via input_rail/output_rail relationships.
+
+    Args:
+        regulators: signal_analysis.power_regulators list.
+        power_budget: power_budget dict with 'rails' sub-dict.
+        decoupling_analysis: signal_analysis.decoupling_analysis list.
+
+    Returns:
+        Dict of {rail_name: node_dict}.
+    """
+    tree = {}
+    rails = power_budget.get('rails', {}) if power_budget else {}
+
+    # Build decoupling cap lookup: rail_net -> [cap dicts]
+    decoup_by_rail = {}
+    if isinstance(decoupling_analysis, list):
+        for entry in decoupling_analysis:
+            if not isinstance(entry, dict):
+                continue
+            rail_net = entry.get('rail_net', '')
+            caps = entry.get('capacitors', [])
+            if rail_net and isinstance(caps, list):
+                decoup_by_rail.setdefault(rail_net, []).extend(caps)
+
+    for reg in regulators:
+        if not isinstance(reg, dict):
+            continue
+        output_rail = reg.get('output_rail', '')
+        if not output_rail:
+            continue
+
+        # Get voltage
+        vout = reg.get('estimated_vout')
+        if not vout or not isinstance(vout, (int, float)):
+            continue
+
+        # Load ICs from power budget
+        rail_data = rails.get(output_rail, {})
+        load_ics = []
+        if isinstance(rail_data, dict):
+            for ic in rail_data.get('ics', []):
+                if isinstance(ic, dict):
+                    load_ics.append({
+                        'ref': ic.get('ref', ''),
+                        'estimated_mA': ic.get('estimated_mA', 100),
+                        'decoupling_caps': [],
+                        'trace_r_ohm': 0.0,
+                        'trace_l_h': 0.0,
+                    })
+
+        # Output caps with ESR/ESL
+        output_caps = []
+        for cap in reg.get('output_capacitors', []):
+            if not isinstance(cap, dict):
+                continue
+            c = cap.get('farads', 0)
+            if c <= 0:
+                continue
+            pkg = cap.get('package', cap.get('footprint', ''))
+            output_caps.append({
+                'ref': cap.get('ref', ''),
+                'farads': c,
+                'esr_ohm': cap.get('esr_ohm', estimate_esr(pkg)),
+                'esl_h': cap.get('esl_h', estimate_esl(pkg)),
+                'package': pkg,
+                'location': 'regulator_output',
+            })
+
+        # Decoupling caps on this rail (from decoupling_analysis)
+        for dc in decoup_by_rail.get(output_rail, []):
+            if not isinstance(dc, dict):
+                continue
+            c = dc.get('farads', 0)
+            if c <= 0:
+                continue
+            # Skip if already in output_caps (same ref)
+            dc_ref = dc.get('ref', '')
+            if dc_ref and any(oc.get('ref') == dc_ref for oc in output_caps):
+                continue
+            pkg = dc.get('package', dc.get('footprint', ''))
+            output_caps.append({
+                'ref': dc_ref,
+                'farads': c,
+                'esr_ohm': dc.get('esr_ohm', estimate_esr(pkg)),
+                'esl_h': dc.get('esl_h', estimate_esl(pkg)),
+                'package': pkg,
+                'location': 'ic_decoupling',
+            })
+
+        # Estimate total load current
+        total_load_mA = 0
+        if isinstance(rail_data, dict):
+            total_load_mA = rail_data.get('estimated_load_mA', 0)
+        if total_load_mA <= 0:
+            total_load_mA = sum(ic.get('estimated_mA', 100) for ic in load_ics)
+        if total_load_mA <= 0:
+            total_load_mA = 100  # Conservative default
+
+        # Switching frequency for cross-rail analysis
+        sw_freq = None
+        topology = reg.get('topology', '').lower()
+        if topology not in ('ldo', 'linear', ''):
+            # Try to get from value/part number
+            from emc_rules import _estimate_switching_freq
+            sw_freq = _estimate_switching_freq(reg.get('value', ''))
+
+        tree[output_rail] = {
+            'rail': output_rail,
+            'voltage': vout,
+            'regulator': {
+                'ref': reg.get('ref', ''),
+                'topology': topology,
+                'input_rail': reg.get('input_rail', ''),
+                'switching_freq_hz': sw_freq,
+                'efficiency': 0.87 if topology in ('buck', 'switching') else
+                              0.85 if topology == 'boost' else
+                              0.83 if topology == 'buck-boost' else 1.0,
+            },
+            'output_caps': output_caps,
+            'load_ics': load_ics,
+            'total_load_mA': total_load_mA,
+            'trace_r_total_ohm': 0.0,
+            'trace_l_total_h': 0.0,
+        }
+
+    # Link downstream regulators
+    for rail_name, node in tree.items():
+        downstream = []
+        for other_name, other_node in tree.items():
+            if other_node['regulator']['input_rail'] == rail_name:
+                downstream.append(other_node['regulator']['ref'])
+        node['downstream_regulators'] = downstream
+
+    return tree
+
+
+def enrich_power_tree_with_pcb(tree: dict, pcb: dict) -> None:
+    """Add PCB trace parasitics to power tree nodes (mutates tree in place).
+
+    Uses net_lengths[].trace_segments if available (--full PCB mode),
+    otherwise falls back to total_length_mm with default width.
+    """
+    if not pcb:
+        return
+
+    # Build net_name -> net_lengths entry lookup
+    nl_map = {}
+    for nl in pcb.get('net_lengths', []):
+        if isinstance(nl, dict) and 'net_name' in nl:
+            nl_map[nl['net_name']] = nl
+
+    # Get default copper thickness from stackup
+    cu_thickness = 0.035  # 1 oz default
+    stackup = pcb.get('setup', {}).get('stackup', [])
+    for layer in stackup:
+        if isinstance(layer, dict) and layer.get('type') == 'copper':
+            t = layer.get('thickness')
+            if t:
+                try:
+                    cu_thickness = float(t)
+                except (ValueError, TypeError):
+                    pass
+            break
+
+    for rail_name, node in tree.items():
+        nl = nl_map.get(rail_name)
+        if not nl:
+            continue
+
+        segments = nl.get('trace_segments', [])
+        if segments:
+            # Full mode: per-segment R and L
+            total_r = 0.0
+            total_l = 0.0
+            for seg in segments:
+                if not isinstance(seg, dict):
+                    continue
+                length = seg.get('length_mm', 0)
+                width = seg.get('width_mm', 0.3)
+                total_r += trace_resistance_ohm(length, width, cu_thickness)
+                total_l += trace_inductance_h(length, width)
+            node['trace_r_total_ohm'] = total_r
+            node['trace_l_total_h'] = total_l
+        else:
+            # Fallback: total length with default width
+            total_length = nl.get('total_length', nl.get('total_length_mm', 0))
+            if total_length > 0:
+                node['trace_r_total_ohm'] = trace_resistance_ohm(
+                    total_length, 0.3, cu_thickness)
+                node['trace_l_total_h'] = trace_inductance_h(
+                    total_length, 0.3)
+
+        # Via inductance contribution
+        via_count = nl.get('via_count', 0)
+        if via_count > 0:
+            # Typical via inductance: ~0.5-1.0 nH per via
+            node['trace_l_total_h'] += via_count * 0.7e-9
+
+
+def distributed_pdn_impedance_sweep(
+        node: dict, plane_cap_f: float = 0,
+        freq_start: float = 1e3, freq_stop: float = 1e9,
+        points_per_decade: int = 50) -> dict:
+    """Compute PDN impedance at regulator output AND at worst-case IC.
+
+    The impedance at the IC includes trace R+L in series with the
+    regulator-side decoupling, in parallel with local IC decoupling.
+
+    Returns:
+        {
+            'sweep_at_regulator': [{freq_hz, impedance_ohm}],
+            'sweep_at_worst_ic': [{freq_hz, impedance_ohm}],
+            'worst_ic_ref': str,
+            'trace_r_ohm': float,
+            'trace_l_h': float,
+        }
+    """
+    # Regulator-side caps (all output caps)
+    reg_caps = node.get('output_caps', [])
+
+    # Regulator-side sweep (existing logic)
+    reg_sweep = pdn_impedance_sweep(
+        reg_caps, plane_cap_f=plane_cap_f,
+        freq_start=freq_start, freq_stop=freq_stop,
+        points_per_decade=points_per_decade)
+
+    # Trace parasitics
+    r_trace = node.get('trace_r_total_ohm', 0)
+    l_trace = node.get('trace_l_total_h', 0)
+
+    if r_trace <= 0 and l_trace <= 0:
+        # No trace data — IC sweep is same as regulator sweep
+        return {
+            'sweep_at_regulator': reg_sweep,
+            'sweep_at_worst_ic': reg_sweep,
+            'worst_ic_ref': '',
+            'trace_r_ohm': 0,
+            'trace_l_h': 0,
+        }
+
+    # Find IC decoupling caps (caps with location 'ic_decoupling')
+    ic_caps = [c for c in reg_caps if c.get('location') == 'ic_decoupling']
+    reg_only_caps = [c for c in reg_caps if c.get('location') != 'ic_decoupling']
+
+    # Compute impedance at worst-case IC
+    # Z_at_IC = Z_local || (Z_reg + Z_trace)
+    # where Z_reg = impedance of regulator-side caps
+    # Z_trace = R_trace + j*omega*L_trace
+    # Z_local = impedance of local IC decoupling caps
+    ic_sweep = []
+    decades = math.log10(freq_stop / freq_start)
+    n_points = int(decades * points_per_decade)
+
+    for i in range(n_points + 1):
+        f = freq_start * (10 ** (i * decades / n_points))
+        omega = 2 * math.pi * f
+
+        # Regulator-side impedance (all reg_only_caps + plane cap)
+        all_reg = list(reg_only_caps)
+        if plane_cap_f > 0:
+            all_reg.append({'farads': plane_cap_f, 'esr_ohm': 0.001, 'esl_h': 0.05e-9})
+        z_reg = parallel_cap_impedance(f, all_reg) if all_reg else float('inf')
+
+        # Trace impedance (series R + jωL)
+        z_trace_r = r_trace
+        z_trace_x = omega * l_trace
+        z_trace_mag = math.sqrt(z_trace_r ** 2 + z_trace_x ** 2)
+
+        # Remote impedance seen from IC = Z_reg + Z_trace
+        # Approximation: add magnitudes (conservative — actual is complex addition)
+        z_remote = z_reg + z_trace_mag
+
+        # Local IC decoupling impedance
+        if ic_caps:
+            z_local = parallel_cap_impedance(f, ic_caps)
+        else:
+            z_local = float('inf')
+
+        # Parallel combination: Z_at_IC = Z_local || Z_remote
+        if z_local == float('inf') and z_remote == float('inf'):
+            z_ic = float('inf')
+        elif z_local == float('inf'):
+            z_ic = z_remote
+        elif z_remote == float('inf'):
+            z_ic = z_local
+        else:
+            z_ic = (z_local * z_remote) / (z_local + z_remote)
+
+        ic_sweep.append({'freq_hz': f, 'impedance_ohm': z_ic})
+
+    # Identify worst IC (highest current draw)
+    worst_ic = ''
+    load_ics = node.get('load_ics', [])
+    if load_ics:
+        worst = max(load_ics, key=lambda ic: ic.get('estimated_mA', 0))
+        worst_ic = worst.get('ref', '')
+
+    return {
+        'sweep_at_regulator': reg_sweep,
+        'sweep_at_worst_ic': ic_sweep,
+        'worst_ic_ref': worst_ic,
+        'trace_r_ohm': r_trace,
+        'trace_l_h': l_trace,
+    }
+
+
+def cross_rail_transient_current(downstream_node: dict,
+                                 upstream_voltage: float) -> tuple:
+    """Compute reflected transient current on upstream rail from downstream switcher.
+
+    A switching regulator draws pulsed current from its input rail at its
+    switching frequency. The peak input current depends on topology.
+
+    Returns:
+        (i_transient_a, switching_freq_hz) or (0, 0) if not applicable.
+    """
+    reg = downstream_node.get('regulator', {})
+    topology = reg.get('topology', '')
+    sw_freq = reg.get('switching_freq_hz')
+    eta = reg.get('efficiency', 0.85)
+
+    if topology in ('ldo', 'linear', '') or not sw_freq:
+        return (0.0, 0)
+
+    vout = downstream_node.get('voltage', 0)
+    i_out_a = downstream_node.get('total_load_mA', 100) / 1000.0
+
+    if upstream_voltage <= 0 or vout <= 0:
+        return (0.0, 0)
+
+    # Input power = output power / efficiency
+    p_out = vout * i_out_a
+    i_in_avg = p_out / (upstream_voltage * eta) if eta > 0 else 0
+
+    # Peak transient depends on topology
+    if topology == 'buck':
+        # Buck duty cycle D = Vout/Vin
+        # Input current is pulsed: I_in_peak = I_out / D = I_out * Vin / Vout
+        # But the transient seen by the input PDN is the AC component
+        d = vout / upstream_voltage
+        i_peak = i_out_a / d if d > 0 else i_out_a
+        # AC component ≈ I_peak × (1 - D)
+        i_transient = i_peak * (1 - d)
+    elif topology == 'boost':
+        # Boost input current is continuous, lower transient
+        i_transient = i_in_avg * 0.3
+    else:
+        # Generic switching: assume 50% AC ripple
+        i_transient = i_in_avg * 0.5
+
+    return (max(i_transient, 0.01), sw_freq)

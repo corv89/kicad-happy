@@ -221,6 +221,33 @@ Source: Goldfarb, E. & Pucha, R. "Modeling Via Grounds in Microstrip." IEEE Micr
 - **Threshold:** Via spacing in 10mm radius exceeds 2× λ/20 for the connector's highest-frequency signal
 - **Source:** [Altium — "Everything You Need to Know About Stitching Vias"](https://resources.altium.com/p/everything-you-need-know-about-stitching-vias); Ott, *EMC Engineering*, Ch. 16.
 
+## PDN Impedance
+
+### PD-001: PDN anti-resonance exceeds target
+- **Severity:** HIGH
+- **Threshold:** Parallel capacitor network impedance exceeds Z_target = V × 5% / (0.5 × I_transient) at any anti-resonance peak
+- **Rationale:** Anti-resonance peaks between capacitors of different values create impedance spikes that can cause voltage ripple exceeding spec.
+- **Source:** Bogatin, *Signal and Power Integrity — Simplified*, Ch. 10.
+
+### PD-002: PDN anti-resonances within target
+- **Severity:** INFO
+- **Threshold:** Anti-resonance peaks exist but all within target impedance
+- **Source:** Same as PD-001.
+
+### PD-003: Distributed rail impedance at IC load point
+- **Severity:** HIGH
+- **Threshold:** Z(f) at worst-case IC exceeds Z_target, accounting for trace R+L between regulator and IC
+- **Rationale:** Target impedance at the regulator output does not guarantee impedance at the IC power pins. Trace resistance and inductance create a series impedance that elevates the PDN impedance seen by ICs far from the regulator. Local decoupling caps partially mitigate but may introduce new anti-resonances.
+- **Formula:** Z_at_IC(f) = Z_local(f) || (Z_reg(f) + R_trace + j×2πf×L_trace)
+- **Source:** Bogatin, *Signal and Power Integrity — Simplified*, Ch. 10-12; Smith, "Decoupling Capacitor Calculations for ASICs."
+
+### PD-004: Cross-rail PDN coupling
+- **Severity:** MEDIUM
+- **Threshold:** Upstream rail impedance exceeds adjusted target at downstream switching frequency
+- **Rationale:** A downstream switching regulator draws pulsed current from its input rail at its switching frequency. If the upstream PDN impedance is high at that frequency, it creates voltage ripple on the upstream rail that affects all other loads sharing that rail.
+- **Formula:** I_in_transient = V_out × I_out / (V_in × η × D) at f_sw
+- **Source:** Basso, *Switch-Mode Power Supplies* (McGraw-Hill); Ridley, *Power Supply Design Vol. 2*.
+
 ## References
 
 - Ott, H.W. *Electromagnetic Compatibility Engineering.* Wiley, 2009.
