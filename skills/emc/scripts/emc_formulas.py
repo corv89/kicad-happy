@@ -531,6 +531,42 @@ def cap_self_resonant_freq(capacitance_f: float, esl_h: float) -> float:
     return 1.0 / (2 * math.pi * math.sqrt(esl_h * capacitance_f))
 
 
+def cap_value_for_srf(target_srf_hz: float, esl_h: float) -> float:
+    """Compute capacitance needed for a target self-resonant frequency.
+
+    Inverse of cap_self_resonant_freq: C = 1 / (4π² × f_SRF² × ESL)
+
+    Args:
+        target_srf_hz: Desired SRF in Hz.
+        esl_h: ESL in Henries (use estimate_esl() for package-based estimate).
+
+    Returns:
+        Capacitance in Farads.
+    """
+    if target_srf_hz <= 0 or esl_h <= 0:
+        return 0.0
+    return 1.0 / (4 * math.pi**2 * target_srf_hz**2 * esl_h)
+
+
+# E12 standard capacitor values (one decade)
+_E12_DECADE = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2]
+
+
+def round_to_e12(value: float) -> float:
+    """Round a value to the nearest E12 standard value.
+
+    Works across any decade (pF, nF, µF, etc.).
+    """
+    if value <= 0:
+        return 0.0
+    # Normalize to 1-10 range
+    decade = 10 ** math.floor(math.log10(value))
+    normalized = value / decade
+    # Find nearest E12 value
+    best = min(_E12_DECADE, key=lambda e: abs(e - normalized))
+    return best * decade
+
+
 def cap_impedance_at_freq(freq_hz: float, capacitance_f: float,
                           esr_ohm: float, esl_h: float) -> float:
     """Impedance magnitude of a capacitor (series RLC model) at frequency.

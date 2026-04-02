@@ -56,7 +56,13 @@ def compute_per_net_scores(findings: list) -> list:
     scores = []
     severity_weights = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
     for net, net_f in net_findings.items():
-        penalty = sum(severity_weights.get(f['severity'], 0) for f in net_f)
+        penalty = 0
+        for f in net_f:
+            w = severity_weights.get(f['severity'], 0)
+            # SPICE-verified findings are more trustworthy — weight 1.5×
+            if 'SPICE-verified' in f.get('description', ''):
+                w = int(w * 1.5)
+            penalty += w
         score = max(0, min(100, 100 - penalty))
         rules = sorted(set(f['rule_id'] for f in net_f))
         scores.append({

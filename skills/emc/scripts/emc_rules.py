@@ -26,6 +26,7 @@ from emc_formulas import (
     harmonic_spectrum, cap_self_resonant_freq, estimate_esl, estimate_esr,
     interplane_capacitance_pf_per_cm2, propagation_delay_ps_per_mm,
     pdn_target_impedance, pdn_impedance_sweep, find_anti_resonances, polygon_area,
+    cap_value_for_srf, round_to_e12,
     diff_pair_skew_ps, diff_pair_cm_voltage, point_to_segment_distance,
     DIFF_PAIR_PROTOCOLS, MARKET_STANDARDS,
 )
@@ -143,6 +144,67 @@ def _suggest_filtering(conn_ref: str, combined_lower: str) -> str:
         f'Add a ferrite bead (e.g., BLM18AG601SN1D, 600Ω@100MHz) on signal '
         f'lines near {conn_ref}. Add ESD/TVS protection for external interfaces.'
     )
+
+
+def _suggest_pdn_cap(peak, cap_models, plane_cap_f, z_target, spice_backend):
+    """Generate a specific cap suggestion for a PDN anti-resonance peak.
+
+    Picks a cap whose SRF falls at the peak frequency, optionally verifies
+    with SPICE that the peak is resolved.
+    """
+    peak_freq = peak.get('freq_hz', 0)
+    if peak_freq <= 0:
+        return 'Add a capacitor with SRF near the anti-resonance frequency.'
+
+    # Pick 0603 package and compute required capacitance
+    package = '0603'
+    esl = estimate_esl(package)
+    c_farads = cap_value_for_srf(peak_freq, esl)
+    c_rounded = round_to_e12(c_farads)
+
+    # Format value nicely
+    if c_rounded >= 1e-6:
+        c_str = f'{c_rounded*1e6:.1f}µF'
+    elif c_rounded >= 1e-9:
+        c_str = f'{c_rounded*1e9:.0f}nF'
+    else:
+        c_str = f'{c_rounded*1e12:.0f}pF'
+
+    suggestion = (
+        f'Add {c_str} {package} MLCC near the IC power pins '
+        f'(SRF ≈ {peak_freq/1e6:.1f}MHz fills the anti-resonance gap).'
+    )
+
+    # SPICE verification if available
+    if spice_backend and cap_models:
+        try:
+            from emc_spice import verify_pdn_with_suggested_cap
+            suggested = {
+                'farads': c_rounded,
+                'esr_ohm': estimate_esr(package),
+                'esl_h': esl,
+            }
+            ok, before, after = verify_pdn_with_suggested_cap(
+                cap_models, suggested, plane_cap_f, z_target, spice_backend)
+            if ok and before is not None and after is not None:
+                if after < before * 0.5:
+                    suggestion += (
+                        f' (SPICE-verified: peak reduced from '
+                        f'{before:.2f}Ω to {after:.2f}Ω)'
+                    )
+                elif after < z_target:
+                    suggestion += f' (SPICE-verified: peak resolved to {after:.2f}Ω)'
+                else:
+                    suggestion += (
+                        f' (SPICE: peak reduced to {after:.2f}Ω but still '
+                        f'above target {z_target:.3f}Ω — may need additional caps)'
+                    )
+        except Exception:
+            suggestion += ' (analytical — verify with SPICE)'
+    else:
+        suggestion += ' (analytical — verify with SPICE if available)'
+
+    return suggestion
 
 
 def _connector_refs(footprints: list) -> list:
@@ -1225,8 +1287,13 @@ def estimate_cavity_resonances(pcb: Dict) -> List[Dict]:
 
 
 def estimate_switching_emissions(schematic: Dict,
-                                 standard: str = 'fcc-class-b') -> List[Dict]:
-    """Estimate switching regulator emissions relative to limits."""
+                                 standard: str = 'fcc-class-b',
+                                 spice_backend=None) -> List[Dict]:
+    """Estimate switching regulator emissions relative to limits.
+
+    When spice_backend is available, runs transient FFT to get actual
+    harmonic amplitudes and compares against the analytical envelope.
+    """
     findings = []
     regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
 
@@ -1250,6 +1317,28 @@ def estimate_switching_emissions(schematic: Dict,
 
         f1, f2 = trapezoidal_corner_frequencies(duty_cycle, 10e-9, sw_freq)
 
+        # SPICE FFT enhancement: get actual harmonic amplitudes
+        fft_note = ''
+        if spice_backend:
+            try:
+                from emc_spice import run_switching_fft
+                ok, harmonics = run_switching_fft(
+                    v_peak, duty_cycle, 10e-9, sw_freq,
+                    spice_backend, n_harmonics=10, timeout=15)
+                if ok and harmonics:
+                    # Compare SPICE harmonics with envelope at a few points
+                    fft_samples = []
+                    for h in harmonics[:5]:
+                        env_amp = trapezoidal_harmonic_amplitude(
+                            h['harmonic'], v_peak, duty_cycle, 10e-9, sw_freq)
+                        env_dbuv = 20 * math.log10(env_amp * 1e6) if env_amp > 0 else -999
+                        fft_samples.append(
+                            f'h{h["harmonic"]}={h["amplitude_dbuv"]:.0f}dBµV '
+                            f'(envelope: {env_dbuv:.0f})')
+                    fft_note = ' SPICE FFT: ' + ', '.join(fft_samples[:3]) + '.'
+            except Exception:
+                pass
+
         findings.append({
             'category': 'emission_estimate',
             'severity': 'INFO',
@@ -1262,6 +1351,7 @@ def estimate_switching_emissions(schematic: Dict,
                 f'-40 dB/dec above. '
                 f'Harmonics extend into FCC test range starting at '
                 f'{max(1, int(30e6/sw_freq))}th harmonic.'
+                + fft_note
             ),
             'components': [ref],
             'nets': [],
@@ -1281,7 +1371,10 @@ def check_switching_node_area(pcb: Optional[Dict],
 
     For switching regulators, the SW/PH/LX net should have minimal copper
     area — just enough to connect the IC pin to the inductor pad. Large
-    copper pours on the switching node act as antennas for switching noise.
+    copper on the switching node acts as an antenna for switching noise.
+
+    Checks both zone copper area AND track copper area (width × length).
+    Track area requires --full mode for segment coordinates.
     """
     findings = []
     if not schematic or not pcb:
@@ -1289,8 +1382,12 @@ def check_switching_node_area(pcb: Optional[Dict],
 
     regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
     zones = pcb.get('zones', [])
-    if not zones:
-        return findings
+    segments = pcb.get('tracks', {}).get('segments', [])
+
+    # Build name→id map for segment net matching
+    net_id_map = {}  # name → id
+    for net_id, net_name in _build_net_id_to_name(pcb).items():
+        net_id_map[net_name] = net_id
 
     for reg in regulators:
         sw_net = reg.get('sw_net')
@@ -1303,41 +1400,62 @@ def check_switching_node_area(pcb: Optional[Dict],
         ref = reg.get('ref', reg.get('reference', ''))
         val = reg.get('value', '')
 
-        # Find zones on the SW net
+        # Zone copper area on SW net
+        zone_area = 0
         for zone in zones:
             if zone.get('net_name') != sw_net:
                 continue
+            a = zone.get('outline_area_mm2') or zone.get('filled_area_mm2') or 0
+            if isinstance(a, (int, float)):
+                zone_area += a
 
-            area = zone.get('outline_area_mm2') or zone.get('filled_area_mm2') or 0
-            if not isinstance(area, (int, float)):
-                continue
+        # Track copper area on SW net (width × length per segment)
+        track_area = 0
+        sw_net_id = net_id_map.get(sw_net)
+        if segments and sw_net_id is not None:
+            for seg in segments:
+                if seg.get('net') != sw_net_id:
+                    continue
+                w = seg.get('width', 0) or 0
+                x1, y1 = seg.get('x1', 0), seg.get('y1', 0)
+                x2, y2 = seg.get('x2', 0), seg.get('y2', 0)
+                length = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+                track_area += w * length
 
-            if area > 100:
-                severity = 'HIGH'
-            elif area > 25:
-                severity = 'MEDIUM'
-            else:
-                continue
+        total_area = zone_area + track_area
 
-            findings.append({
-                'category': 'switching_emc',
-                'severity': severity,
-                'rule_id': 'SW-002',
-                'title': f'Large switching node area for {ref}',
-                'description': (
-                    f'{ref} ({val}) switching node net {sw_net} has '
-                    f'{area:.0f}mm² of copper zone. The SW node should be '
-                    f'minimal — large copper area acts as an antenna for '
-                    f'switching noise at the fundamental and harmonics.'
-                ),
-                'components': [ref],
-                'nets': [sw_net],
-                'recommendation': (
-                    f'Minimize copper on {sw_net}. Use only the trace/pad area '
-                    f'needed to connect {ref} SW pin to the inductor. '
-                    f'Remove any copper pour on the switching node net.'
-                ),
-            })
+        if total_area < 25:
+            continue
+
+        severity = 'HIGH' if total_area > 100 else 'MEDIUM'
+
+        # Build description with breakdown
+        parts = []
+        if zone_area > 0:
+            parts.append(f'{zone_area:.0f}mm² zone')
+        if track_area > 0:
+            parts.append(f'{track_area:.0f}mm² traces')
+        area_desc = ' + '.join(parts) if len(parts) > 1 else parts[0] if parts else f'{total_area:.0f}mm²'
+
+        findings.append({
+            'category': 'switching_emc',
+            'severity': severity,
+            'rule_id': 'SW-002',
+            'title': f'Large switching node area for {ref}',
+            'description': (
+                f'{ref} ({val}) switching node net {sw_net} has '
+                f'{area_desc} ({total_area:.0f}mm² total). The SW node '
+                f'should be minimal — large copper area acts as an antenna '
+                f'for switching noise.'
+            ),
+            'components': [ref],
+            'nets': [sw_net],
+            'recommendation': (
+                f'Minimize copper on {sw_net}. Use only the trace/pad area '
+                f'needed to connect {ref} SW pin to the inductor. '
+                f'Remove any copper pour on the switching node net.'
+            ),
+        })
 
     return findings
 
@@ -2985,11 +3103,8 @@ def check_pdn_impedance(pcb: Optional[Dict],
                 ),
                 'components': [ref] + [c['ref'] for c in cap_models[:3]],
                 'nets': [output_rail] if output_rail else [],
-                'recommendation': (
-                    'Add a capacitor with SRF near the anti-resonance frequency '
-                    'to fill the impedance gap. Different cap values (decades apart) '
-                    'reduce anti-resonance amplitude.'
-                ),
+                'recommendation': _suggest_pdn_cap(
+                    exceeding[0], cap_models, plane_cap_f, z_target, spice_backend),
             })
         elif peaks:
             # Peaks exist but don't exceed target — INFO
@@ -3542,7 +3657,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
 
     if schematic:
         all_findings.extend(check_switching_harmonics(schematic, standard))
-        all_findings.extend(estimate_switching_emissions(schematic, standard))
+        all_findings.extend(estimate_switching_emissions(schematic, standard, spice_backend))
         all_findings.extend(check_emi_filter_effectiveness(pcb, schematic, spice_backend))
 
     # Checks requiring both schematic and PCB
