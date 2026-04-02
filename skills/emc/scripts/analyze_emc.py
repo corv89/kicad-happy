@@ -393,9 +393,6 @@ def main():
         json.dump(result, sys.stdout, indent=2)
         print(file=sys.stdout)
 
-    # Exit code: non-zero if critical findings
-    if counts['CRITICAL'] > 0:
-        sys.exit(1)
     return 0
 
 
