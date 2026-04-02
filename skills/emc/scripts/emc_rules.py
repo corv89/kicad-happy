@@ -146,11 +146,13 @@ def _suggest_filtering(conn_ref: str, combined_lower: str) -> str:
     )
 
 
-def _suggest_pdn_cap(peak, cap_models, plane_cap_f, z_target, spice_backend):
+def _suggest_pdn_cap(peak, cap_models, plane_cap_f, z_target, spice_backend,
+                     sweep_before=None):
     """Generate a specific cap suggestion for a PDN anti-resonance peak.
 
     Picks a cap whose SRF falls at the peak frequency, optionally verifies
-    with SPICE that the peak is resolved.
+    with SPICE that the peak is resolved.  When sweep_before is provided,
+    reuses the existing sweep data instead of re-simulating.
     """
     peak_freq = peak.get('freq_hz', 0)
     if peak_freq <= 0:
@@ -185,7 +187,8 @@ def _suggest_pdn_cap(peak, cap_models, plane_cap_f, z_target, spice_backend):
                 'esl_h': esl,
             }
             ok, before, after = verify_pdn_with_suggested_cap(
-                cap_models, suggested, plane_cap_f, z_target, spice_backend)
+                cap_models, suggested, plane_cap_f, z_target, spice_backend,
+                sweep_before=sweep_before)
             if ok and before is not None and after is not None:
                 if after < before * 0.5:
                     suggestion += (
@@ -949,7 +952,8 @@ def check_clock_routing(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
 
 
 def check_clock_near_connector(pcb: Dict,
-                               schematic: Optional[Dict] = None) -> List[Dict]:
+                               schematic: Optional[Dict] = None,
+                               net_id_map: Optional[Dict] = None) -> List[Dict]:
     """CK-003: Flag clock traces routed near external connectors.
 
     Clock harmonics can couple to cables via proximity, increasing
@@ -970,8 +974,8 @@ def check_clock_near_connector(pcb: Dict,
     if not connectors:
         return findings
 
-    # Build net ID → name map
-    net_id_to_name = _build_net_id_to_name(pcb)
+    # Build net ID → name map (reuse if provided)
+    net_id_to_name = net_id_map if net_id_map is not None else _build_net_id_to_name(pcb)
 
     # Connector positions
     conn_positions = []
@@ -1366,7 +1370,8 @@ def estimate_switching_emissions(schematic: Dict,
 
 
 def check_switching_node_area(pcb: Optional[Dict],
-                              schematic: Optional[Dict]) -> List[Dict]:
+                              schematic: Optional[Dict],
+                              net_id_map: Optional[Dict] = None) -> List[Dict]:
     """SW-002: Flag large switching node copper area.
 
     For switching regulators, the SW/PH/LX net should have minimal copper
@@ -1384,10 +1389,9 @@ def check_switching_node_area(pcb: Optional[Dict],
     zones = pcb.get('zones', [])
     segments = pcb.get('tracks', {}).get('segments', [])
 
-    # Build name→id map for segment net matching
-    net_id_map = {}  # name → id
-    for net_id, net_name in _build_net_id_to_name(pcb).items():
-        net_id_map[net_name] = net_id
+    # Build id→name and name→id maps for segment net matching
+    id_to_name = net_id_map if net_id_map is not None else _build_net_id_to_name(pcb)
+    name_to_id = {v: k for k, v in id_to_name.items()}
 
     for reg in regulators:
         sw_net = reg.get('sw_net')
@@ -1411,7 +1415,7 @@ def check_switching_node_area(pcb: Optional[Dict],
 
         # Track copper area on SW net (width × length per segment)
         track_area = 0
-        sw_net_id = net_id_map.get(sw_net)
+        sw_net_id = name_to_id.get(sw_net)
         if segments and sw_net_id is not None:
             for seg in segments:
                 if seg.get('net') != sw_net_id:
@@ -1973,7 +1977,8 @@ def _point_to_edges_min_distance(px: float, py: float,
 
 
 def check_trace_near_board_edge(pcb: Dict,
-                                schematic: Optional[Dict] = None) -> List[Dict]:
+                                schematic: Optional[Dict] = None,
+                                net_id_map: Optional[Dict] = None) -> List[Dict]:
     """BE-001: Flag signal traces routed near board edges."""
     findings = []
     tracks = pcb.get('tracks', {})
@@ -1985,8 +1990,8 @@ def check_trace_near_board_edge(pcb: Dict,
     if not edges:
         return findings
 
-    # Build net ID → name map for classification
-    net_name_map = _build_net_id_to_name(pcb)
+    # Build net ID → name map for classification (reuse if provided)
+    net_name_map = net_id_map if net_id_map is not None else _build_net_id_to_name(pcb)
 
     # Track which nets we've already flagged to avoid duplicates
     flagged_nets = set()
@@ -3058,6 +3063,7 @@ def check_pdn_impedance(pcb: Optional[Dict],
                                         i_transient_a=i_transient)
 
         # Sweep impedance — use SPICE if available, otherwise analytical
+        sweep = None
         spice_verified = False
         if spice_backend and len(cap_models) >= 2:
             try:
@@ -3068,13 +3074,9 @@ def check_pdn_impedance(pcb: Optional[Dict],
                 if ok and spice_sweep:
                     sweep = spice_sweep
                     spice_verified = True
-                else:
-                    sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
-                                                freq_start=1e3, freq_stop=1e9)
             except Exception:
-                sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
-                                            freq_start=1e3, freq_stop=1e9)
-        else:
+                pass
+        if sweep is None:
             sweep = pdn_impedance_sweep(cap_models, plane_cap_f=plane_cap_f,
                                         freq_start=1e3, freq_stop=1e9)
 
@@ -3101,10 +3103,12 @@ def check_pdn_impedance(pcb: Optional[Dict],
                     f'Decoupling: {len(cap_models)} caps '
                     f'({", ".join(c["ref"] + " " + str(c["farads"]*1e6) + "µF" for c in cap_models[:4])}).'
                 ),
+                'spice_verified': spice_verified,
                 'components': [ref] + [c['ref'] for c in cap_models[:3]],
                 'nets': [output_rail] if output_rail else [],
                 'recommendation': _suggest_pdn_cap(
-                    exceeding[0], cap_models, plane_cap_f, z_target, spice_backend),
+                    exceeding[0], cap_models, plane_cap_f, z_target,
+                    spice_backend, sweep_before=sweep),
             })
         elif peaks:
             # Peaks exist but don't exceed target — INFO
@@ -3628,6 +3632,9 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
 
     all_findings = []
 
+    # Pre-compute shared lookups for PCB checks
+    net_id_map = _build_net_id_to_name(pcb) if pcb else {}
+
     if pcb:
         all_findings.extend(check_return_path_coverage(pcb))
         all_findings.extend(check_ground_zone_coverage(pcb))
@@ -3638,12 +3645,12 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_connector_filtering(pcb, schematic))
         all_findings.extend(check_connector_ground_pins(pcb, schematic))
         all_findings.extend(check_clock_routing(pcb, schematic))
-        all_findings.extend(check_clock_near_connector(pcb, schematic))
+        all_findings.extend(check_clock_near_connector(pcb, schematic, net_id_map))
         all_findings.extend(check_via_stitching(pcb, schematic))
         all_findings.extend(check_stackup(pcb))
         all_findings.extend(estimate_cavity_resonances(pcb))
         # Board edge checks
-        all_findings.extend(check_trace_near_board_edge(pcb, schematic))
+        all_findings.extend(check_trace_near_board_edge(pcb, schematic, net_id_map))
         all_findings.extend(check_ground_pour_ring(pcb))
         all_findings.extend(check_connector_area_stitching(pcb, schematic))
         # Return path enhancement
@@ -3668,7 +3675,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_diff_pair_layer(pcb, schematic))
         all_findings.extend(check_pdn_impedance(pcb, schematic, spice_backend))
         all_findings.extend(check_thermal_emc(pcb, schematic))
-        all_findings.extend(check_switching_node_area(pcb, schematic))
+        all_findings.extend(check_switching_node_area(pcb, schematic, net_id_map))
         all_findings.extend(check_input_cap_loop_area(pcb, schematic, spice_backend))
 
     # Filter by severity

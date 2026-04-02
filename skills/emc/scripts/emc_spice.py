@@ -372,6 +372,11 @@ def run_switching_fft(v_peak, duty_cycle, rise_time_s, switching_freq_hz,
     if backend is None:
         return False, None
 
+    # Uses ngspice .control block with wrdata — not portable to LTspice/Xyce
+    backend_name = getattr(backend, 'name', '')
+    if backend_name and backend_name not in ('ngspice', ''):
+        return False, None
+
     t_period = 1.0 / switching_freq_hz
     t_on = duty_cycle * t_period
     t_sim = 20 * t_period  # 20 cycles for steady state
@@ -488,7 +493,8 @@ def run_switching_fft(v_peak, duty_cycle, rise_time_s, switching_freq_hz,
 
 
 def verify_pdn_with_suggested_cap(caps, suggested_cap, plane_cap_f,
-                                  z_target, backend, timeout=10):
+                                  z_target, backend, timeout=10,
+                                  sweep_before=None):
     """Re-run PDN SPICE sweep with a suggested cap added and check if the
     anti-resonance peak is resolved.
 
@@ -498,6 +504,7 @@ def verify_pdn_with_suggested_cap(caps, suggested_cap, plane_cap_f,
         plane_cap_f: Interplane capacitance.
         z_target: Target impedance.
         backend: SimulatorBackend.
+        sweep_before: Optional pre-existing sweep data (avoids re-simulating).
 
     Returns:
         (success, peak_before_ohm, peak_after_ohm) or (False, None, None).
@@ -507,10 +514,13 @@ def verify_pdn_with_suggested_cap(caps, suggested_cap, plane_cap_f,
 
     from emc_formulas import find_anti_resonances
 
-    # Run with original caps
-    ok1, sweep1 = run_pdn_spice(caps, plane_cap_f, backend, timeout=timeout)
-    if not ok1 or not sweep1:
-        return False, None, None
+    # Reuse existing sweep if provided, otherwise simulate
+    if sweep_before:
+        sweep1 = sweep_before
+    else:
+        ok1, sweep1 = run_pdn_spice(caps, plane_cap_f, backend, timeout=timeout)
+        if not ok1 or not sweep1:
+            return False, None, None
 
     peaks_before = find_anti_resonances(sweep1, z_target=z_target)
     exceeding_before = [p for p in peaks_before if p.get('exceeds_target')]
