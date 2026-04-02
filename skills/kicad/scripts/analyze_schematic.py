@@ -2770,30 +2770,12 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
     }
 
 
-def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -> dict:
-    """Deep EE analysis: power domains, bus protocols, differential pairs, ERC checks.
-
-    Returns:
-    - power_domains: which ICs are on which voltage rails
-    - cross_domain_signals: signals crossing between different power domains
-    - bus_analysis: I2C pull-ups, SPI CS assignments, UART TX/RX pairs
-    - differential_pairs: USB, CAN, LVDS with termination checks
-    - erc_warnings: input-to-input, output-to-output, undriven inputs
-    - net_classification: every net tagged by type (power/gnd/clock/data/analog/etc.)
-    """
-    if results_in is None:
-        results_in = {}
-    components = ctx.components
+def _classify_nets(ctx: AnalysisContext) -> dict:
+    """Classify all nets by type (ground, power, clock, data, etc.)."""
     nets = ctx.nets
-    pin_net = ctx.pin_net
-    no_connects = ctx.no_connects
-    comp_lookup = ctx.comp_lookup
-    parsed_values = ctx.parsed_values
-    known_power_rails = ctx.known_power_rails
     is_ground = ctx.is_ground
     is_power_net = ctx.is_power_net
 
-    # ---- Net Classification ----
     net_classes = {}
     for net_name, net_info in nets.items():
         if net_name.startswith("__unnamed_"):
@@ -2838,10 +2820,22 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
         else:
             net_classes[net_name] = "signal"
 
-    # ---- Power Domain Mapping ----
-    # For each IC, determine which power rails it connects to
-    # Track IO-level reference pins (VDDIO, VIO) separately from internal supplies
-    # (VCC, VDD) — for cross-domain analysis, the IO rail determines signal levels
+    return net_classes
+
+
+def _map_power_domains(ctx: AnalysisContext) -> dict:
+    """Map each IC to its power domains.
+
+    For each IC, determine which power rails it connects to.
+    Track IO-level reference pins (VDDIO, VIO) separately from internal supplies
+    (VCC, VDD) -- for cross-domain analysis, the IO rail determines signal levels.
+    """
+    components = ctx.components
+    pin_net = ctx.pin_net
+    known_power_rails = ctx.known_power_rails
+    is_ground = ctx.is_ground
+    is_power_net = ctx.is_power_net
+
     _io_pin_names = {"VDDIO", "VIO", "VCCA", "VCCB", "VREF", "VLOGIC",
                      "DVDD", "DVCC", "IOVDD", "IOVCC"}
     _sense_pin_names = {"IN+", "IN-", "INP", "INN", "SENSE", "VSENSE", "SNS",
@@ -2907,8 +2901,66 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
         for rail in info["power_rails"]:
             domain_groups.setdefault(rail, []).append(ref)
 
-    # ---- Cross-Domain Signal Detection ----
-    # Find signal nets that connect ICs from different power domains
+    return {"ic_power_rails": power_domains, "domain_groups": domain_groups}
+
+
+def _get_power_domains_for_refs(refs: set, power_domains: dict,
+                                is_ground) -> set:
+    """Get all power rail domains for a set of IC references."""
+    domains = set()
+    for r in refs:
+        for rail in power_domains.get(r, {}).get("power_rails", []):
+            if not is_ground(rail):
+                domains.add(rail)
+    return domains
+
+
+def _get_io_domains_for_refs(refs: set, power_domains: dict,
+                             is_ground) -> set:
+    """Get I/O-level domains for cross-domain comparison.
+
+    When an IC has a dedicated IO-level pin (VDDIO, VIO, etc.),
+    use that rail for signal-level comparison instead of all power
+    rails.  This avoids false positives where internal supplies
+    (VCC charge pump, analog VDD) differ but the actual I/O
+    voltage matches the other IC.
+    """
+    domains = set()
+    for r in refs:
+        info = power_domains.get(r, {})
+        io = info.get("io_rails")
+        if io:
+            for rail in io:
+                domains.add(rail)
+        else:
+            # No dedicated IO pin -- use all power rails
+            for rail in info.get("power_rails", []):
+                if not is_ground(rail):
+                    domains.add(rail)
+    return domains
+
+
+def _rails_voltage_compatible(rails_a: set, rails_b: set) -> bool:
+    """Check if two sets of rails share a rail or voltage."""
+    if rails_a & rails_b:
+        return True
+    # Parse voltages from net names and check overlap
+    va = {_parse_voltage_from_net_name(r) for r in rails_a} - {None}
+    vb = {_parse_voltage_from_net_name(r) for r in rails_b} - {None}
+    return bool(va & vb)
+
+
+def _detect_cross_domain_signals(ctx: AnalysisContext, power_domains: dict,
+                                 results_in: dict | None = None) -> list:
+    """Find signals crossing between different power domains."""
+    components = ctx.components
+    nets = ctx.nets
+    is_ground = ctx.is_ground
+    is_power_net = ctx.is_power_net
+
+    if results_in is None:
+        results_in = {}
+
     cross_domain = []
     # Build set of ESD protection IC references for cross-domain filtering
     esd_ic_refs = set()
@@ -2916,7 +2968,7 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
         if pd.get("type") == "esd_ic":
             esd_ic_refs.add(pd["ref"])
 
-    # Detect level translator ICs — these bridge domains intentionally so
+    # Detect level translator ICs -- these bridge domains intentionally so
     # signals through them don't need additional level shifting.
     level_translator_keywords = (
         "leveltranslator", "level_translator", "levelshift", "level_shift",
@@ -2951,53 +3003,22 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
             continue
 
         # Check if they're on different power domains
-        def _get_power_domains(refs: set) -> set:
-            domains = set()
-            for r in refs:
-                for rail in power_domains.get(r, {}).get("power_rails", []):
-                    if not is_ground(rail):
-                        domains.add(rail)
-            return domains
-
-        def _get_io_domains(refs: set) -> set:
-            """Get I/O-level domains for cross-domain comparison.
-
-            When an IC has a dedicated IO-level pin (VDDIO, VIO, etc.),
-            use that rail for signal-level comparison instead of all power
-            rails.  This avoids false positives where internal supplies
-            (VCC charge pump, analog VDD) differ but the actual I/O
-            voltage matches the other IC.
-            """
-            domains = set()
-            for r in refs:
-                info = power_domains.get(r, {})
-                io = info.get("io_rails")
-                if io:
-                    for rail in io:
-                        domains.add(rail)
-                else:
-                    # No dedicated IO pin — use all power rails
-                    for rail in info.get("power_rails", []):
-                        if not is_ground(rail):
-                            domains.add(rail)
-            return domains
-
-        domains_on_net = _get_power_domains(ic_refs)
+        domains_on_net = _get_power_domains_for_refs(ic_refs, power_domains, is_ground)
         if len(domains_on_net) > 1:
             # Don't flag as needing level shifter when the only cross-domain
-            # connection is through an ESD/protection IC — those clamp voltage
+            # connection is through an ESD/protection IC -- those clamp voltage
             # but don't change signal levels (e.g., USBLC6 on USB D+/D-)
             non_esd_refs = ic_refs - esd_ic_refs
-            non_esd_domains = _get_power_domains(non_esd_refs)
+            non_esd_domains = _get_power_domains_for_refs(non_esd_refs, power_domains, is_ground)
 
-            # Check if a level translator is on this net — if so, it already
+            # Check if a level translator is on this net -- if so, it already
             # handles the voltage translation
             translators_on_net = ic_refs & level_translator_refs
             has_translator = len(translators_on_net) > 0
 
             if len(non_esd_domains) > 1:
                 if has_translator:
-                    # Level translator present — shifting is handled
+                    # Level translator present -- shifting is handled
                     needs_shifter = False
                 else:
                     # Use IO-level domains for the level shifter decision.
@@ -3007,22 +3028,13 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
                     # level shifter is needed despite different rail counts.
                     # Also treat rails at the same voltage as equivalent (e.g.,
                     # +3V3 and VCC_3V3 are both 3.3V).
-                    def _rails_voltage_compatible(rails_a: set, rails_b: set) -> bool:
-                        """Check if two sets of rails share a rail or voltage."""
-                        if rails_a & rails_b:
-                            return True
-                        # Parse voltages from net names and check overlap
-                        va = {_parse_voltage_from_net_name(r) for r in rails_a} - {None}
-                        vb = {_parse_voltage_from_net_name(r) for r in rails_b} - {None}
-                        return bool(va & vb)
-
                     functional_refs = non_esd_refs - level_translator_refs
                     ic_list = sorted(functional_refs) if functional_refs else sorted(non_esd_refs)
                     needs_shifter = False
                     for i_idx in range(len(ic_list)):
                         for j_idx in range(i_idx + 1, len(ic_list)):
-                            a_io = _get_io_domains({ic_list[i_idx]})
-                            b_io = _get_io_domains({ic_list[j_idx]})
+                            a_io = _get_io_domains_for_refs({ic_list[i_idx]}, power_domains, is_ground)
+                            b_io = _get_io_domains_for_refs({ic_list[j_idx]}, power_domains, is_ground)
                             if not _rails_voltage_compatible(a_io, b_io):
                                 needs_shifter = True
                                 break
@@ -3040,7 +3052,19 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
                 entry["level_translators"] = sorted(translators_on_net)
             cross_domain.append(entry)
 
-    # ---- Bus Protocol Analysis ----
+    return cross_domain
+
+
+def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
+    """Detect I2C, SPI, UART, CAN, SDIO buses and check configuration."""
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    parsed_values = ctx.parsed_values
+    is_ground = ctx.is_ground
+    is_power_net = ctx.is_power_net
+
     buses = {"i2c": [], "spi": [], "uart": [], "can": []}
 
     # I2C: look for SDA/SCL net pairs by net name
@@ -3103,7 +3127,7 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
     for net_name, net_info in nets.items():
         if net_name in i2c_seen_nets:
             continue  # Already found by net name
-        # KH-086: Exclude SPI nets — sensors with dual-function SDA/SCL pin names
+        # KH-086: Exclude SPI nets -- sensors with dual-function SDA/SCL pin names
         nn_upper = net_name.upper()
         if "SPI" in nn_upper or "MOSI" in nn_upper or "MISO" in nn_upper:
             continue
@@ -3305,7 +3329,7 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
 
     # CAN: look for CAN_TX/CAN_RX nets, CANH/CANL, or CAN transceiver ICs
     can_keywords = ("can_tx", "can_rx", "cantx", "canrx", "canh", "canl", "can_h", "can_l")
-    # SN65HVD2xx/10xx are CAN; SN65HVD7x are RS-485 — use specific prefixes
+    # SN65HVD2xx/10xx are CAN; SN65HVD7x are RS-485 -- use specific prefixes
     can_transceiver_kw = ("sn65hvd2", "sn65hvd10", "mcp2551", "mcp2562", "mcp251",
                           "tja10", "tja11", "iso1050", "max3051", "ata6561",
                           "mcp2561", "iso1042")
@@ -3316,7 +3340,7 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
             devices = [p["component"] for p in net_info["pins"]
                        if comp_lookup.get(p["component"], {}).get("type") == "ic"]
             can_nets_found[net_name] = {"net": net_name, "devices": devices}
-    # Also detect by CAN transceiver IC presence — add transceiver info to bus
+    # Also detect by CAN transceiver IC presence -- add transceiver info to bus
     for comp in components:
         if comp["type"] != "ic":
             continue
@@ -3324,7 +3348,7 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
         lib = comp.get("lib_id", "").lower()
         if any(k in val or k in lib for k in can_transceiver_kw):
             if not can_nets_found:
-                # No CAN nets found by name — add a placeholder entry
+                # No CAN nets found by name -- add a placeholder entry
                 can_nets_found["__can_transceiver__"] = {
                     "net": "CAN",
                     "transceiver": comp["reference"],
@@ -3405,10 +3429,44 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
         elif has_mosi or has_miso:
             spi_entry["bus_mode"] = "half_duplex"
 
-    # ---- Differential Pair Detection ----
+    return buses
+
+
+def _guess_diff_protocol(net_name: str) -> str:
+    """Guess the protocol from a differential pair net name."""
+    nu = net_name.upper()
+    if "USB" in nu:
+        return "USB"
+    if "LVDS" in nu:
+        return "LVDS"
+    if "ETH" in nu or "MDIO" in nu or "RGMII" in nu or "SGMII" in nu:
+        return "Ethernet"
+    if "HDMI" in nu or "TMDS" in nu:
+        return "HDMI"
+    if "MIPI" in nu or "DSI" in nu or "CSI" in nu:
+        return "MIPI"
+    if "PCIE" in nu or "PCI" in nu:
+        return "PCIe"
+    if "SATA" in nu:
+        return "SATA"
+    if "CAN" in nu:
+        return "CAN"
+    if "RS485" in nu or "RS-485" in nu:
+        return "RS-485"
+    return "differential"
+
+
+def _detect_differential_pairs(ctx: AnalysisContext) -> list:
+    """Detect differential pairs by suffix matching."""
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    parsed_values = ctx.parsed_values
+
     diff_pairs = []
 
-    # Suffix pair table: (positive_suffix, negative_suffix) → protocol guess
+    # Suffix pair table: (positive_suffix, negative_suffix) -> protocol guess
     _diff_suffix_pairs = [
         # USB
         ("_DP", "_DM"), ("_D+", "_D-"), ("_D_P", "_D_N"), ("DP", "DM"),
@@ -3420,29 +3478,6 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
         ("_TD+", "_TD-"), ("_RD+", "_RD-"),
         ("_TDP", "_TDN"), ("_RDP", "_RDN"),
     ]
-
-    def _guess_diff_protocol(net_name: str) -> str:
-        """Guess the protocol from a differential pair net name."""
-        nu = net_name.upper()
-        if "USB" in nu:
-            return "USB"
-        if "LVDS" in nu:
-            return "LVDS"
-        if "ETH" in nu or "MDIO" in nu or "RGMII" in nu or "SGMII" in nu:
-            return "Ethernet"
-        if "HDMI" in nu or "TMDS" in nu:
-            return "HDMI"
-        if "MIPI" in nu or "DSI" in nu or "CSI" in nu:
-            return "MIPI"
-        if "PCIE" in nu or "PCI" in nu:
-            return "PCIe"
-        if "SATA" in nu:
-            return "SATA"
-        if "CAN" in nu:
-            return "CAN"
-        if "RS485" in nu or "RS-485" in nu:
-            return "RS-485"
-        return "differential"
 
     # Net-name-based detection: find matching suffix pairs
     net_names_upper = {n.upper(): n for n in nets}
@@ -3518,7 +3553,15 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
 
                     diff_pairs.append(entry)
 
-    # ---- ERC-Style Warnings ----
+    return diff_pairs
+
+
+def _check_erc_warnings(ctx: AnalysisContext) -> list:
+    """Check for ERC-style warnings (no driver, output conflicts)."""
+    nets = ctx.nets
+    is_ground = ctx.is_ground
+    is_power_net = ctx.is_power_net
+
     erc_warnings = []
 
     for net_name, net_info in nets.items():
@@ -3558,8 +3601,14 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
                     "drivers": hard_outputs,
                 })
 
-    # ---- Passive Ratings Check ----
-    # Flag components that might be under-rated based on rail voltage
+    return erc_warnings
+
+
+def _check_passive_ratings(ctx: AnalysisContext) -> list:
+    """Check passive component voltage ratings against rail voltages."""
+    components = ctx.components
+    pin_net = ctx.pin_net
+
     passive_warnings = []
     for c in components:
         if c["type"] == "capacitor" and c.get("value"):
@@ -3586,17 +3635,26 @@ def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -
                                 "warning": f"Voltage derating margin < 50% ({rated_v}V rated on ~{v_est}V rail)",
                             })
 
+    return passive_warnings
+
+
+def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -> dict:
+    """Deep EE analysis: power domains, bus protocols, differential pairs, ERC checks."""
+    net_classes = _classify_nets(ctx)
+    pd = _map_power_domains(ctx)
+    cross_domain = _detect_cross_domain_signals(ctx, pd["ic_power_rails"], results_in)
+    buses = _analyze_bus_protocols(ctx)
+    diff_pairs = _detect_differential_pairs(ctx)
+    erc = _check_erc_warnings(ctx)
+    passive = _check_passive_ratings(ctx)
     return {
         "net_classification": net_classes,
-        "power_domains": {
-            "ic_power_rails": power_domains,
-            "domain_groups": domain_groups,
-        },
+        "power_domains": pd,
         "cross_domain_signals": cross_domain,
         "bus_analysis": buses,
         "differential_pairs": diff_pairs,
-        "erc_warnings": erc_warnings,
-        "passive_warnings": passive_warnings,
+        "erc_warnings": erc,
+        "passive_warnings": passive,
     }
 
 
