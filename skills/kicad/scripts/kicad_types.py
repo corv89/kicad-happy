@@ -31,6 +31,7 @@ class AnalysisContext:
     parsed_values: dict[str, float] = field(default_factory=dict)
     known_power_rails: set[str] = field(default_factory=set)
     ref_pins: dict[str, dict[str, tuple[str | None, str | None]]] = field(default_factory=dict)
+    no_connects: list[dict] = field(default_factory=list)
     generator_version: str = "unknown"
 
     def __post_init__(self) -> None:

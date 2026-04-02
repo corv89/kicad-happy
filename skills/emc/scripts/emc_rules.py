@@ -299,7 +299,10 @@ def check_ground_zone_coverage(pcb: Dict) -> List[Dict]:
     # Find ground zones
     gnd_zones = [z for z in zones if _is_ground_net(z.get('net_name', ''))]
 
-    if not gnd_zones and len(copper_layers) >= 4:
+    if not gnd_zones and len(copper_layers) >= 2:
+        rec = ('Add a solid ground pour on at least one inner layer.'
+               if len(copper_layers) >= 4
+               else 'Add a ground pour on B.Cu covering as much area as possible.')
         findings.append({
             'category': 'ground_plane',
             'severity': 'CRITICAL',
@@ -312,7 +315,7 @@ def check_ground_zone_coverage(pcb: Dict) -> List[Dict]:
             ),
             'components': [],
             'nets': [],
-            'recommendation': 'Add a solid ground pour on at least one inner layer.',
+            'recommendation': rec,
         })
         return findings
 
@@ -757,8 +760,9 @@ def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') ->
         val = reg.get('value', '')
 
         # Try to get switching frequency from the part
-        # Many common regulators have known switching frequencies
         sw_freq = _estimate_switching_freq(val)
+        if sw_freq is None:
+            sw_freq = _default_switching_freq(topology)
         if sw_freq is None:
             continue
 
@@ -858,6 +862,22 @@ def _estimate_switching_freq(part_value: str) -> Optional[float]:
             return freq
 
     return None
+
+
+def _default_switching_freq(topology: str) -> float | None:
+    """Fallback switching frequency estimate when part is unrecognized.
+
+    Based on typical ranges for each topology. Conservative (low end)
+    to avoid underestimating harmonic reach.
+    """
+    defaults = {
+        'buck': 500e3,
+        'boost': 500e3,
+        'buck-boost': 300e3,
+        'inverting': 300e3,
+        'sepic': 300e3,
+    }
+    return defaults.get(topology.lower()) if topology else None
 
 
 # ---------------------------------------------------------------------------
@@ -1059,8 +1079,21 @@ def check_via_stitching(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
     # Via stitching spacing requirement
     required_spacing_mm = lambda_over_20(highest_freq) * 1000  # convert m to mm
 
-    # Get total via count and board area
-    via_count = vias.get('count', stats.get('via_count', 0))
+    # Count ground stitching vias (prefer detailed list over total count)
+    via_list = vias.get('vias', [])
+    if via_list:
+        # When detailed via data is available, count only ground-connected vias
+        gnd_via_count = 0
+        for v in via_list:
+            v_net = v.get('net_name', '') or v.get('net', '')
+            if isinstance(v_net, str) and _is_ground_net(v_net):
+                gnd_via_count += 1
+            elif isinstance(v_net, int):
+                # Numeric net ID — can't determine if ground without mapping
+                pass
+        via_count = gnd_via_count if gnd_via_count > 0 else len(via_list)
+    else:
+        via_count = vias.get('count', stats.get('via_count', 0))
     bbox = board_outline.get('bounding_box', None) or {}
     board_w = bbox.get('width', stats.get('board_width_mm', 50)) or 50
     board_h = bbox.get('height', stats.get('board_height_mm', 50)) or 50
@@ -1316,6 +1349,8 @@ def estimate_switching_emissions(schematic: Dict,
         val = reg.get('value', '')
         sw_freq = _estimate_switching_freq(val)
         if sw_freq is None:
+            sw_freq = _default_switching_freq(topology)
+        if sw_freq is None:
             continue
 
         # Generate harmonic spectrum
@@ -1548,7 +1583,7 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
         # SPICE enhancement: estimate radiated emission from loop
         spice_note = ''
         if spice_backend and area_mm2 > 25:
-            sw_freq = _estimate_switching_freq(val)
+            sw_freq = _estimate_switching_freq(val) or _default_switching_freq(topology)
             if sw_freq:
                 area_m2 = area_mm2 * 1e-6
                 # Estimate switching current from power dissipation or default 0.5A
@@ -2408,7 +2443,7 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
 
         ref = reg.get('ref', reg.get('reference', ''))
         val = reg.get('value', '')
-        sw_freq = _estimate_switching_freq(val)
+        sw_freq = _estimate_switching_freq(val) or _default_switching_freq(topology)
         if not sw_freq:
             continue
 
@@ -2885,7 +2920,7 @@ def check_shielding_advisory(pcb: Dict,
         for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
             if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
-            sw = _estimate_switching_freq(reg.get('value', ''))
+            sw = _estimate_switching_freq(reg.get('value', '')) or _default_switching_freq(reg.get('topology', ''))
             if sw:
                 # Add harmonics that fall in EMC test range
                 for n in range(1, 20):
@@ -3585,7 +3620,8 @@ def generate_test_plan(schematic: Optional[Dict], pcb: Optional[Dict],
                 continue
             ref = reg.get('ref', reg.get('reference', ''))
             val = reg.get('value', '')
-            sw_freq = _estimate_switching_freq(val)
+            topology_local = reg.get('topology', '')
+            sw_freq = _estimate_switching_freq(val) or _default_switching_freq(topology_local)
             if not sw_freq:
                 continue
             for band in bands:

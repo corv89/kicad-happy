@@ -340,7 +340,7 @@ def _goertzel_magnitude(samples, sample_rate, target_freq):
         s2 = s1
         s1 = s0
     magnitude = math.sqrt(s1**2 + s2**2 - coeff * s1 * s2)
-    return magnitude / n  # Normalize
+    return magnitude * 2 / n  # Single-sided spectrum: 2/N normalization
 
 
 # ---------------------------------------------------------------------------

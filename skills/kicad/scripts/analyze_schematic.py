@@ -1414,7 +1414,7 @@ def _classify_ic_function(lib_id: str, value: str, description: str) -> str:
     return ""
 
 
-def analyze_ic_pinouts(components: list[dict], nets: dict, no_connects: list[dict], pin_net: dict | None = None) -> list[dict]:
+def analyze_ic_pinouts(ctx: AnalysisContext) -> list[dict]:
     """Analyze each IC's pinout for datasheet cross-referencing.
 
     For every IC, produces a detailed per-pin analysis showing:
@@ -1425,13 +1425,11 @@ def analyze_ic_pinouts(components: list[dict], nets: dict, no_connects: list[dic
     - Pins that are unconnected (and whether they should be)
     """
     EPSILON = COORD_EPSILON
-    if pin_net is None:
-        pin_net = build_pin_to_net_map(nets)
-
-    # Build component lookup for values/types
-    comp_lookup = {}
-    for c in components:
-        comp_lookup[c["reference"]] = c
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    no_connects = ctx.no_connects
+    comp_lookup = ctx.comp_lookup
 
     # Build no-connect position set
     nc_positions = set()
@@ -1626,11 +1624,12 @@ def _pin_sort_key(pin_num: str):
         return (1, pin_num)
 
 
-def identify_subcircuits(components: list[dict], nets: dict, pin_net: dict | None = None) -> list[dict]:
+def identify_subcircuits(ctx: AnalysisContext) -> list[dict]:
     """Identify potential subcircuit groupings around ICs."""
-    if pin_net is None:
-        pin_net = build_pin_to_net_map(nets)
-    comp_lookup = {c["reference"]: c for c in components}
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
     subcircuits = []
 
     ics = [c for c in components if c["type"] == "ic"]
@@ -2561,13 +2560,23 @@ def parse_legacy_schematic(path: str) -> dict:
 
     # Subcircuit detection (IC + 1-hop neighbors)
     pin_net = build_pin_to_net_map(nets)
-    subcircuits = identify_subcircuits(all_components, nets, pin_net=pin_net)
+
+    # Build shared analysis context for legacy path
+    ctx = AnalysisContext(
+        components=all_components,
+        nets=nets,
+        lib_symbols=lib_symbols,
+        pin_net=pin_net,
+        no_connects=all_no_connects,
+    )
+
+    subcircuits = identify_subcircuits(ctx)
 
     # Signal path and filter analysis
     signal_analysis = analyze_signal_paths(all_components, nets, lib_symbols, pin_net=pin_net)
 
     # Design rule analysis
-    design_analysis = analyze_design_rules(all_components, nets, all_no_connects, signal_analysis, pin_net=pin_net)
+    design_analysis = analyze_design_rules(ctx, results_in=signal_analysis)
 
     # Filter to real components (non-power) for annotation check
     real_components = [
@@ -2753,8 +2762,7 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
     }
 
 
-def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[dict],
-                         results_in: dict | None = None, pin_net: dict | None = None) -> dict:
+def analyze_design_rules(ctx: AnalysisContext, results_in: dict | None = None) -> dict:
     """Deep EE analysis: power domains, bus protocols, differential pairs, ERC checks.
 
     Returns:
@@ -2767,28 +2775,15 @@ def analyze_design_rules(components: list[dict], nets: dict, no_connects: list[d
     """
     if results_in is None:
         results_in = {}
-    if pin_net is None:
-        pin_net = build_pin_to_net_map(nets)
-    comp_lookup = {c["reference"]: c for c in components}
-    parsed_values = {}
-    for c in components:
-        pv = parse_value(c.get("value", ""), component_type=c.get("type"))
-        if pv is not None:
-            parsed_values[c["reference"]] = pv
-
-    # Build set of known power rail names from nets that came from power symbols
-    known_power_rails = set()
-    for net_name, net_info in nets.items():
-        for p in net_info.get("pins", []):
-            if p["component"].startswith("#"):
-                known_power_rails.add(net_name)
-                break
-
-    def is_ground(net_name: str | None) -> bool:
-        return _is_ground_name(net_name)
-
-    def is_power_net(net_name: str | None) -> bool:
-        return _is_power_net_name(net_name, known_power_rails)
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    no_connects = ctx.no_connects
+    comp_lookup = ctx.comp_lookup
+    parsed_values = ctx.parsed_values
+    known_power_rails = ctx.known_power_rails
+    is_ground = ctx.is_ground
+    is_power_net = ctx.is_power_net
 
     # ---- Net Classification ----
     net_classes = {}
@@ -6569,14 +6564,15 @@ def analyze_schematic(path: str) -> dict:
         nets=nets,
         lib_symbols=all_lib_symbols,
         pin_net=pin_net,
+        no_connects=all_no_connects,
         generator_version=generator_version,
     )
 
     # Identify subcircuits
-    subcircuits = identify_subcircuits(all_components, nets, pin_net=pin_net)
+    subcircuits = identify_subcircuits(ctx)
 
     # Detailed IC pinout analysis for datasheet cross-referencing
-    ic_analysis = analyze_ic_pinouts(all_components, nets, all_no_connects, pin_net=pin_net)
+    ic_analysis = analyze_ic_pinouts(ctx)
 
     # Analyze connectivity for issues
     connectivity_issues = analyze_connectivity(all_components, nets, all_no_connects)
@@ -6585,7 +6581,7 @@ def analyze_schematic(path: str) -> dict:
     signal_analysis = analyze_signal_paths(all_components, nets, all_lib_symbols, pin_net=pin_net)
 
     # Deep EE analysis: power domains, buses, differential pairs, ERC
-    design_analysis = analyze_design_rules(all_components, nets, all_no_connects, signal_analysis, pin_net=pin_net)
+    design_analysis = analyze_design_rules(ctx, results_in=signal_analysis)
 
     # ---- New Tier 1 + Tier 2 analyses ----
 

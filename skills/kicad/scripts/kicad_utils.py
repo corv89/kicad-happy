@@ -143,9 +143,13 @@ def lookup_regulator_vref(value: str, lib_id: str) -> tuple[float | None, str]:
                 return fixed_v, "fixed_suffix"
         m = re.search(r'[-_](\d{2})(?=[^0-9.]|$)', candidate)
         if m:
-            # Two-digit suffix: interpret as voltage with implicit decimal
-            # 33 → 3.3V, 18 → 1.8V, 25 → 2.5V, 50 → 5.0V, 12 → 1.2V
+            # Two-digit suffix: could be implicit decimal (33→3.3V) or
+            # integer voltage (12→12V, 15→15V). Check integer first for
+            # common high-voltage rails.
             digits = m.group(1)
+            int_v = int(digits)
+            if int_v in (10, 12, 15, 24, 48):
+                return float(int_v), "fixed_suffix"
             fixed_v = float(digits[0] + "." + digits[1])
             if 0.5 <= fixed_v <= 9.9:
                 return fixed_v, "fixed_suffix"
