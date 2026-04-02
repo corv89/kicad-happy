@@ -3703,9 +3703,9 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
         cell_pins = []
         bms_nets = set()
         for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
-            bms_nets.add(net)
             if not net:
                 continue
+            bms_nets.add(net)
             # Match on PIN NAME (not net name) — cell voltage pins are
             # named VC0..VC16, CELL0..CELL16, C0..C16 on BMS ICs
             pin_name = None
