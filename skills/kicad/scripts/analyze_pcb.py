@@ -561,12 +561,26 @@ def extract_footprints(root: list) -> list[dict]:
 
         # Extract courtyard bounding box (absolute coordinates)
         crtyd_pts: list[tuple[float, float]] = []
-        for gtype in ("fp_line", "fp_rect", "fp_circle"):
+        for gtype in ("fp_line", "fp_rect", "fp_circle", "fp_poly", "fp_arc"):
             for item in find_all(fp, gtype):
                 item_layer = get_value(item, "layer")
                 if not item_layer or "CrtYd" not in item_layer:
                     continue
-                for key in ("start", "end", "center"):
+                # fp_poly: extract all vertex coordinates
+                if gtype == "fp_poly":
+                    pts = find_first(item, "pts")
+                    if pts:
+                        for xy in find_all(pts, "xy"):
+                            if len(xy) >= 3:
+                                lx, ly = float(xy[1]), float(xy[2])
+                                if angle != 0:
+                                    rad = math.radians(angle)
+                                    rx = lx * math.cos(rad) - ly * math.sin(rad)
+                                    ry = lx * math.sin(rad) + ly * math.cos(rad)
+                                    lx, ly = rx, ry
+                                crtyd_pts.append((x + lx, y + ly))
+                    continue
+                for key in ("start", "end", "center", "mid"):
                     node = find_first(item, key)
                     if node and len(node) >= 3:
                         lx, ly = float(node[1]), float(node[2])
@@ -1497,7 +1511,7 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
                 # Check if cap shares a net with IC (likely decoupling)
                 ic_nets = {p.get("net_name") for p in ic.get("pads", []) if p.get("net_name")}
                 cap_nets = {p.get("net_name") for p in cap.get("pads", []) if p.get("net_name")}
-                shared = ic_nets & cap_nets - {""}
+                shared = (ic_nets & cap_nets) - {""}
                 nearby.append({
                     "cap": cap["reference"],
                     "value": cap.get("value", ""),

@@ -620,12 +620,10 @@ def pdn_target_impedance(v_rail: float, ripple_pct: float = 5.0,
                          i_transient_a: float = 0.5) -> float:
     """Target impedance for a power distribution network.
 
-    Z_target = V_rail × ripple% / (0.5 × I_transient)
-
-    The factor 0.5 accounts for the worst-case scenario where the
-    transient current is split equally between supply and return.
+    Z_target = V_rail × ripple% / I_transient
 
     Ref: Bogatin, "Signal and Power Integrity — Simplified", Ch. 10.
+    Ref: Smith, "Decoupling Capacitor Calculations for ASICs."
 
     Args:
         v_rail: Rail voltage in Volts.
@@ -637,7 +635,7 @@ def pdn_target_impedance(v_rail: float, ripple_pct: float = 5.0,
     """
     if i_transient_a <= 0:
         return float('inf')
-    return v_rail * (ripple_pct / 100) / (0.5 * i_transient_a)
+    return v_rail * (ripple_pct / 100) / i_transient_a
 
 
 def parallel_cap_impedance(freq_hz: float,
