@@ -123,7 +123,9 @@ jobs:
           mode: upsert
 ```
 
-Every push and PR that touches KiCad files gets a **commit status check** (green/red with findings summary). On PRs, a structured review comment is also posted — power tree, protocol compliance, voltage derating, SPICE results, EMC risk analysis, component health, and PCB stats. The comment updates on re-pushes. A [full report](skills/kicad/references/report-generation.md) is available on the Actions run page.
+Every push and PR that touches KiCad files gets a **commit status check** (green/red with findings summary). On PRs, a structured review comment is also posted — power tree, protocol compliance, voltage derating, SPICE results, EMC risk analysis, thermal analysis, component health, and PCB stats. The comment updates on re-pushes. A [full report](skills/kicad/references/report-generation.md) is available on the Actions run page.
+
+Enable `diff-base: true` to show only what changed between the PR and the base branch — component additions/removals, signal parameter shifts, new/resolved EMC findings, and SPICE status transitions.
 
 <details>
 <summary><strong>Add AI-powered review (optional — needs Anthropic API key)</strong></summary>
@@ -193,8 +195,8 @@ See [`action/examples/`](action/examples/) for fork-safe workflows, distributor 
 | Skill | What it does |
 |-------|-------------|
 | **kicad** | ⚡ Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DFM. |
-| **spice** | 🔬 SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. ngspice, LTspice, Xyce. |
-| **emc** | 📡 EMC pre-compliance — 40 rule checks for radiated emission risks, PDN impedance, diff pair skew, ESD paths. FCC/CISPR/automotive/military. |
+| **spice** | 🔬 SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. Monte Carlo tolerance analysis. ngspice, LTspice, Xyce. |
+| **emc** | 📡 EMC pre-compliance — 42 rule checks for radiated emission risks, PDN impedance, diff pair skew, ESD paths. FCC/CISPR/automotive/military. |
 | **bom** | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files. |
 | **digikey** | 🔎 Search DigiKey for components and download datasheets via API. |
 | **mouser** | 🔎 Search Mouser for components and download datasheets. |
@@ -229,6 +231,7 @@ The agent runs the analysis scripts, then autonomously digs deeper — tracing n
 | **PCB** | Thermal via adequacy, zone stitching, trace width vs current, DFM scoring, impedance, proximity/crosstalk |
 | **Manufacturing** | MPN coverage audit, JLCPCB/PCBWay format export, assembly complexity scoring |
 | **Lifecycle** | Component EOL/NRND/obsolescence alerts, temperature grade audit, alternative part suggestions |
+| **Thermal** | Junction temperature estimation for LDOs, switching regulators, shunt resistors. Package Rθ_JA lookup, PCB thermal via correction, proximity warnings for caps near hotspots. |
 | **EMC** | Ground plane voids, decoupling, I/O filtering, switching harmonics, clock routing, diff pair skew, board edge radiation, PDN impedance, ESD paths, crosstalk, thermal derating. FCC/CISPR/automotive/military. |
 
 ## 🔬 SPICE simulation
@@ -249,6 +252,23 @@ Simulation: 14 pass, 1 warn, 0 fail
   Opamp U4A (inverting, gain=-10): 20.0dB confirmed
     Bandwidth 98.8kHz (LM324 behavioral, GBW=1.0MHz)
     Note: signal frequency should stay below 85kHz for <1dB gain error
+```
+
+**Monte Carlo tolerance analysis** — run N simulations per subcircuit with randomized component values within tolerance bands. Shows which component dominates output variation:
+
+```
+Monte Carlo (N=100): RC filter R5/C3
+  fc: 15.9kHz ± 1.8kHz (3σ), spread 22.6%
+  Sensitivity: C3 (10%) contributes 68%, R5 (5%) contributes 32%
+```
+
+**What-if parameter sweep** — instantly see the impact of component changes without editing the schematic:
+
+```
+> "What happens if I change R5 from 10k to 4.7k?"
+
+  RC filter R5/C3: cutoff 1.59kHz → 3.39kHz (+112.8%)
+  Voltage divider R5/R6: ratio 0.32 → 0.50 (+56.4%)
 ```
 
 Requires ngspice, LTspice, or Xyce (auto-detected). Without one, simulation is skipped — the rest of the analysis still works. For the full methodology — see **[SPICE Integration Guide](spice-integration.md)**.
@@ -279,7 +299,7 @@ Pre-compliance test plan:
   Probe points: L1 (45.2, 32.1)mm, Y1 (62.0, 18.5)mm
 ```
 
-40 rule checks across power integrity, signal integrity, and radiation. Supports FCC, CISPR, automotive (CISPR 25), and military (MIL-STD-461G) standards. Generates a pre-compliance test plan with frequency band priorities, interface risk rankings, and near-field probe points. For the full methodology — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
+42 rule checks across power integrity, signal integrity, and radiation. Includes full-board PDN impedance with power tree analysis — traces impedance from regulator output through PCB traces to IC load points, and detects cross-rail coupling when a downstream switching regulator injects transients onto the upstream rail. Supports FCC, CISPR, automotive (CISPR 25), and military (MIL-STD-461G) standards. Generates a pre-compliance test plan with frequency band priorities, interface risk rankings, and near-field probe points. For the full methodology — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
 
 ## 📄 Datasheet sync
 
@@ -323,11 +343,12 @@ Cross-references LCSC part numbers, formats to JLCPCB's exact spec, flags basic 
 2. **Sync datasheets** — builds a local library the agent uses for validation
 3. **Analyze** schematic and PCB
 4. **Simulate** detected subcircuits (ngspice/LTspice/Xyce)
-5. **EMC pre-compliance** — check for ground plane issues, decoupling gaps, I/O filtering, switching harmonics
-6. **Review** — agent cross-references analysis + simulation + EMC + datasheets
-7. **Source** components from DigiKey/Mouser (prototype) or LCSC (production)
-8. **Export** BOM + per-supplier order files for your assembler
-9. **Order** from JLCPCB or PCBWay
+5. **EMC pre-compliance** — ground plane, decoupling, I/O filtering, switching harmonics, PDN impedance
+6. **Thermal analysis** — junction temperatures, hotspot identification, proximity warnings
+7. **Review** — agent cross-references analysis + simulation + EMC + thermal + datasheets
+8. **Source** components from DigiKey/Mouser (prototype) or LCSC (production)
+9. **Export** BOM + per-supplier order files for your assembler
+10. **Order** from JLCPCB or PCBWay
 
 Or just set up the GitHub Action and get automated reviews on every PR.
 
