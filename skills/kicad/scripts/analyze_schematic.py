@@ -847,7 +847,8 @@ def extract_title_block(root: list) -> dict:
 
 
 def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
-                  power_symbols: list[dict], junctions: list[dict]) -> dict:
+                  power_symbols: list[dict], junctions: list[dict],
+                  no_connects: list[dict] | None = None) -> dict:
     """Build a connectivity map using union-find on coordinates.
 
     Groups all electrically connected points into nets, then names them
@@ -1005,6 +1006,16 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
         k = add_point(junc["x"], junc["y"], {"source": "junction"}, sheet)
         union_with_overlapping_wires(k, junc["x"], junc["y"], sheet)
 
+    # Add no-connect markers to the union-find so NC'd pins are absorbed into
+    # the same group and the resulting net gets tagged as intentional NC.
+    # Without this, NC'd pins that have no wire create isolated __unnamed_N nets
+    # that look like unfinished connections to downstream analysis.
+    if no_connects:
+        for nc in no_connects:
+            sheet = nc.get("_sheet", 0)
+            k = add_point(nc["x"], nc["y"], {"source": "no_connect"}, sheet)
+            union_with_overlapping_wires(k, nc["x"], nc["y"], sheet)
+
     # Union component pins that land mid-wire (rare but possible)
     for comp in components:
         if comp.get("value") == "PWR_FLAG" or comp.get("type") == "power_flag":
@@ -1039,6 +1050,14 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
             if info["source"] == "label":
                 net_name = info["name"]
 
+        # Check if any member of this group is a no-connect marker OR a
+        # library-defined NC pin (pin type "no_connect" in the symbol def).
+        has_nc_marker = (
+            any(i["source"] == "no_connect" for i in all_info)
+            or any(i.get("pin_type") == "no_connect"
+                   for i in all_info if i["source"] == "pin")
+        )
+
         if net_name is None:
             # Only create unnamed nets if they have component pins
             has_pins = any(i["source"] == "pin" for i in all_info)
@@ -1068,11 +1087,14 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
                 # to the main GND power symbol network).
                 nets[net_name]["pins"].extend(pin_connections)
                 nets[net_name]["point_count"] += len(members)
+                if has_nc_marker:
+                    nets[net_name]["no_connect"] = True
             else:
                 nets[net_name] = {
                     "name": net_name,
                     "pins": pin_connections,
                     "point_count": len(members),
+                    "no_connect": has_nc_marker,
                 }
 
     return nets
@@ -1460,10 +1482,15 @@ def analyze_ic_pinouts(components: list[dict], nets: dict, no_connects: list[dic
             pin_key = (ref, pin_number)
             net_name, net_info = pin_net.get(pin_key, (None, None))
 
-            # Check if pin has a no-connect marker
+            # Check if pin has a no-connect marker (by position, net flag, or
+            # library-defined NC pin type)
             pin_pos = (round(pin["x"] / EPSILON) * EPSILON,
                        round(pin["y"] / EPSILON) * EPSILON)
-            has_no_connect = pin_pos in nc_positions
+            has_no_connect = (
+                pin_pos in nc_positions
+                or bool(net_info and net_info.get("no_connect"))
+                or pin.get("type") == "no_connect"
+            )
 
             # Get components sharing this net
             neighbors = []
@@ -1490,7 +1517,7 @@ def analyze_ic_pinouts(components: list[dict], nets: dict, no_connects: list[dic
                 "pin_number": pin_number,
                 "pin_name": pin_name,
                 "pin_type": pin["type"],
-                "net": net_name or ("NO_CONNECT" if has_no_connect else "UNCONNECTED"),
+                "net": "NO_CONNECT" if has_no_connect else (net_name or "UNCONNECTED"),
                 "connected_to": neighbor_summary,
             }
 
@@ -2459,6 +2486,8 @@ def parse_legacy_schematic(path: str) -> dict:
             lbl["_sheet"] = sheet_idx
         for j in junctions:
             j["_sheet"] = sheet_idx
+        for nc in no_connects:
+            nc["_sheet"] = sheet_idx
 
         all_components.extend(components)
         all_wires.extend(wires)
@@ -2549,7 +2578,8 @@ def parse_legacy_schematic(path: str) -> dict:
     bom = generate_bom(all_components)
 
     # Build nets from wires + labels + power symbols + component pins
-    nets = build_net_map(all_components, all_wires, all_labels, power_symbols, all_junctions)
+    nets = build_net_map(all_components, all_wires, all_labels, power_symbols, all_junctions,
+                         all_no_connects)
 
     stats = compute_statistics(all_components, nets, bom, all_wires, all_no_connects)
 
@@ -6469,6 +6499,8 @@ def analyze_schematic(path: str) -> dict:
             l["_sheet"] = sheet_idx
         for j in junctions:
             j["_sheet"] = sheet_idx
+        for nc in no_connects:
+            nc["_sheet"] = sheet_idx
 
         # KH-026: Namespace hierarchical labels per instance to prevent
         # multi-instance sub-sheets from merging unrelated nets.
@@ -6525,7 +6557,8 @@ def analyze_schematic(path: str) -> dict:
     power_symbols = extract_power_symbols(all_components)
 
     # Build net map across all sheets
-    nets = build_net_map(all_components, all_wires, all_labels, power_symbols, all_junctions)
+    nets = build_net_map(all_components, all_wires, all_labels, power_symbols, all_junctions,
+                         all_no_connects)
 
     # Generate BOM
     bom = generate_bom(all_components)
