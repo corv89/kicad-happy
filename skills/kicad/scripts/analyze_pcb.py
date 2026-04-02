@@ -174,6 +174,7 @@ class ZoneFills:
 def _arc_length_3pt(sx: float, sy: float, mx: float, my: float,
                     ex: float, ey: float) -> float:
     """Compute arc length from three points (start, mid, end) on a circle."""
+    # EQ-044: arc = R × θ from circumcircle (3-point arc length)
     D = 2.0 * (sx * (my - ey) + mx * (ey - sy) + ex * (sy - my))
     if abs(D) < 1e-10:
         # Collinear — treat as straight line
@@ -192,6 +193,7 @@ def _arc_length_3pt(sx: float, sy: float, mx: float, my: float,
 
     # Normalize angles relative to start
     def _norm(a: float) -> float:
+        # EQ-047: Angle normalization to [0, 2π)
         a = (a - a_s) % (2.0 * math.pi)
         return a
 
@@ -384,6 +386,7 @@ def extract_footprints(root: list) -> list[dict]:
 
     Handles both KiCad 6+ (footprint ...) and KiCad 5 (module ...) formats.
     """
+    # EQ-060: x'=x·cosθ-y·sinθ, y'=x·sinθ+y·cosθ (2D rotation)
     footprints = []
 
     # KiCad 6+: (footprint ...), KiCad 5: (module ...)
@@ -1081,6 +1084,7 @@ def group_components(footprints: list[dict]) -> dict:
 def analyze_power_nets(footprints: list[dict], tracks: dict,
                        net_names: dict[int, str]) -> list[dict]:
     """Analyze routing of power/ground nets — track widths, via counts."""
+    # EQ-052: d = √(Δx²+Δy²) (Euclidean distance)
     # Identify power/ground nets
     power_nets = {}
     for net_num, name in net_names.items():
@@ -1129,6 +1133,7 @@ def _build_routing_graph(segments, arcs, vias_list):
     Returns:
         Dict mapping net_id → {nodes: set, edges: dict[node → [(neighbor, length_mm, width_mm)]]}
     """
+    # EQ-045: d = √(Δx²+Δy²) (routing graph edge weight)
     SNAP = 0.001  # Coordinate snapping precision (mm)
 
     def _snap(x, y):
@@ -1260,6 +1265,7 @@ def analyze_pad_to_pad_distances(footprints, tracks, vias, net_names):
             "min_width_mm": float
         }
     """
+    # EQ-051: d = √(Δx²+Δy²) (pad-to-pad distance)
     # Build routing graphs
     graphs = _build_routing_graph(
         tracks.get("segments", []),
@@ -1341,6 +1347,7 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
     Returns:
         List of gap findings: [{net, layer, gap_start_mm, gap_length_mm, ...}]
     """
+    # EQ-053: d = √(Δx²+Δy²) (trace-to-plane gap detection)
     if not zone_fills.has_data:
         return []
 
@@ -1418,6 +1425,7 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
 
     Helps verify decoupling caps are placed close to IC power pins.
     """
+    # EQ-048: d = √(Δx²+Δy²) (cap-to-IC distance)
     ics = [fp for fp in footprints
            if re.match(r'^(U|IC)\d', fp.get("reference", ""))
            and not any(fp.get("value", "").lower().startswith(p)
@@ -1458,6 +1466,16 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     return results
 
 
+def _safe_num(val, default=0):
+    """Safely convert a value to float (handles None, str, etc.)."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
     """Calculate single-ended microstrip characteristic impedance.
 
@@ -1473,6 +1491,10 @@ def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
     Returns:
         Characteristic impedance in ohms, or None if inputs invalid
     """
+    width_mm = _safe_num(width_mm)
+    height_mm = _safe_num(height_mm)
+    thickness_mm = _safe_num(thickness_mm)
+    epsilon_r = _safe_num(epsilon_r)
     if width_mm <= 0 or height_mm <= 0 or thickness_mm <= 0 or epsilon_r <= 0:
         return None
     w = width_mm
@@ -1485,9 +1507,13 @@ def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
     else:
         w_eff = w + (t / math.pi) * (1 + math.log(4 * math.pi * w / t))
     # Wheeler's equations
+    # Source: IPC-2141 Design Guide
+    # Verified: https://f4inx.github.io/posts/microstrip-formulas-comparison.html
     if w_eff / h < 1:
+        # EQ-023: Z₀ = (60/√εr)ln(8h/w+w/4h) (Wheeler narrow microstrip)
         z0 = (60 / math.sqrt(er)) * math.log(8 * h / w_eff + w_eff / (4 * h))
     else:
+        # EQ-024: Z₀ = 120π/(√εr(w/h+1.393+0.667ln(w/h+1.444))) (Wheeler wide)
         z0 = (120 * math.pi) / (math.sqrt(er) * (w_eff / h + 1.393 + 0.667 * math.log(w_eff / h + 1.444)))
     return z0
 
@@ -1512,22 +1538,22 @@ def _build_layer_heights(stackup):
         if layer.get("type") != "copper":
             continue
         name = layer.get("name", "")
-        cu_t = layer.get("thickness", 0.035)
+        cu_t = _safe_num(layer.get("thickness"), 0.035)
 
         # Look for the nearest dielectric layer (below for top copper, above for bottom)
         # Try below first
         for j in range(i + 1, len(layers)):
             if layers[j].get("type") in ("core", "prepreg"):
-                h = layers[j].get("thickness", 0.2)
-                er = layers[j].get("epsilon_r", 4.5)
+                h = _safe_num(layers[j].get("thickness"), 0.2)
+                er = _safe_num(layers[j].get("epsilon_r"), 4.5)
                 heights[name] = (h, er, cu_t)
                 break
         else:
             # No dielectric below — try above
             for j in range(i - 1, -1, -1):
                 if layers[j].get("type") in ("core", "prepreg"):
-                    h = layers[j].get("thickness", 0.2)
-                    er = layers[j].get("epsilon_r", 4.5)
+                    h = _safe_num(layers[j].get("thickness"), 0.2)
+                    er = _safe_num(layers[j].get("epsilon_r"), 4.5)
                     heights[name] = (h, er, cu_t)
                     break
 
@@ -1550,6 +1576,7 @@ def analyze_net_lengths(tracks: dict, vias: dict,
     When stackup is provided, each trace segment also gets a characteristic
     impedance estimate (microstrip formula from IPC-2141).
     """
+    # EQ-050: L = √(Δx²+Δy²) (track segment length)
     # Pre-compute layer-to-dielectric-height mapping for impedance calculation
     layer_heights = _build_layer_heights(stackup) if stackup else {}
 
@@ -1752,10 +1779,12 @@ def analyze_trace_proximity(tracks: dict, net_names: dict[int, str],
     grid resolution used. Higher-level logic can use this to assess crosstalk
     risk, guard trace needs, or impedance concerns.
     """
+    # EQ-057: d = √(Δx²+Δy²) (grid-based proximity scan)
     grid: dict[tuple[str, int, int], set[int]] = {}
 
     def _mark(x1: float, y1: float, x2: float, y2: float,
               layer: str, net: int) -> None:
+        # EQ-046: d = √(Δx²+Δy²) (grid cell marking)
         if net <= 0:
             return
         dx, dy = x2 - x1, y2 - y1
@@ -1940,6 +1969,7 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
     - Via clusters near thermal pads (thermal via arrays)
     - Overall via distribution across layers
     """
+    # EQ-055: density = count / area_cm² (thermal via density)
     zone_vias: dict[int, dict] = {}  # net_num -> via stats within zone
     # For each zone, count vias on the same net within the zone outline
     # (approximate: use bounding box of zone outline)
@@ -2149,6 +2179,7 @@ def analyze_vias(vias: dict, footprints: list[dict],
     - Fanout pattern detection: clusters of vias near BGA/QFN pads
     - Current capacity facts: drill sizes mapped to IPC-2221 approximate ratings
     """
+    # EQ-058: area = π(d/2)² (via annular ring)
     all_vias = vias.get("vias", [])
     if not all_vias:
         return {}
@@ -2843,6 +2874,7 @@ def compute_statistics(footprints: list[dict], tracks: dict, vias: dict,
                        net_names: dict[int, str] | None = None,
                        layers: list[dict] | None = None) -> dict:
     """Compute summary statistics."""
+    # EQ-059: d = √(w²+h²) (board diagonal)
     # Resolve copper layer names from declarations
     if layers:
         copper_layer_names = {l["name"] for l in layers if "Cu" in l["name"]}
@@ -3073,6 +3105,7 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
         board_outline: Board outline with bounding_box.
         design_rules: Optional design rules from setup extraction.
     """
+    # EQ-049: d = √(Δx²+Δy²) (DFM clearance measurement)
     # JLCPCB standard process limits (mm)
     # Source: JLCPCB capabilities page, verified 2025-01.
     # Canonical table in references/standards-compliance.md "Fab House Capabilities"
@@ -3311,6 +3344,7 @@ def analyze_tombstoning_risk(footprints: list[dict], tracks: dict,
 
     Returns a list of at-risk components with risk level and reason.
     """
+    # EQ-056: d = √(Δx²+Δy²) (pad center asymmetry)
     # Identify small passive components
     small_passives = []
     for fp in footprints:
@@ -3475,6 +3509,7 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
 
     Returns a list of per-component thermal pad assessments.
     """
+    # EQ-054: effective = Σ(drill/0.3)² (drill-weighted via count)
     all_vias = vias.get("vias", [])
     results: list[dict] = []
 

@@ -196,6 +196,7 @@ def parse_value(value_str: str, component_type: str | None = None) -> float | No
     If component_type is "capacitor" and the result is a bare integer >=1.0
     (no unit suffix), treat it as picofarads (KH-153: legacy KiCad 5 convention).
     """
+    # EQ-068: SI prefix: p=1e-12 n=1e-9 u=1e-6 m=1e-3 k=1e3 M=1e6
     if not value_str:
         return None
 
@@ -744,6 +745,7 @@ def estimate_cap_esr(farads, package):
     Returns:
         Estimated ESR in ohms, or None if package not recognized
     """
+    # EQ-067: ESR estimate from package size + capacitance (empirical)
     if not package or not farads or farads <= 0:
         return None
     pkg = package.upper()
@@ -771,6 +773,7 @@ def estimate_cap_esl(package):
     Returns:
         Estimated ESL in henries, or None if package not recognized
     """
+    # EQ-066: ESL estimate from package size (empirical table)
     if not package:
         return None
     esl_nh = _CAP_ESL.get(package.upper())

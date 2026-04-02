@@ -69,7 +69,7 @@ Ask your agent:
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 mkdir -p ~/.claude/skills
-for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway spice; do
+for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.claude/skills/$skill
 done
 ```
@@ -81,7 +81,7 @@ done
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 mkdir -p ~/.codex/skills
-for skill in kicad bom digikey mouser lcsc element14 jlcpcb pcbway spice; do
+for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.codex/skills/$skill
 done
 ```
@@ -123,14 +123,14 @@ jobs:
           mode: upsert
 ```
 
-Every push and PR that touches KiCad files gets a **commit status check** (green/red with findings summary). On PRs, a structured review comment is also posted — power tree, protocol compliance, voltage derating, SPICE results, component health, and PCB stats. The comment updates on re-pushes. A [full report](skills/kicad/references/report-generation.md) is available on the Actions run page.
+Every push and PR that touches KiCad files gets a **commit status check** (green/red with findings summary). On PRs, a structured review comment is also posted — power tree, protocol compliance, voltage derating, SPICE results, EMC risk analysis, component health, and PCB stats. The comment updates on re-pushes. A [full report](skills/kicad/references/report-generation.md) is available on the Actions run page.
 
 <details>
 <summary><strong>Add AI-powered review (optional — needs Anthropic API key)</strong></summary>
 
-Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) for Claude to read the analysis + datasheets and write a natural-language design review. Two options:
+Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) for Claude to read the analysis + datasheets and write a natural-language design review. The cost estimates below apply only when using the Anthropic API (`ANTHROPIC_API_KEY`) for CI — there's no additional cost when reviewing locally with a Claude Code or OpenAI Codex subscription. Two options:
 
-**Quick review** (~$1-3 per PR, 5-10 min):
+**Quick review** (~$1-3 per PR via API, 5-10 min):
 
 ```yaml
       - uses: anthropics/claude-code-action@v1
@@ -154,7 +154,7 @@ Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claud
           claude_args: '--model claude-sonnet-4-6 --max-turns 25'
 ```
 
-**Thorough review** (~$5-15 per PR, 10-20 min):
+**Thorough review** (~$5-15 per PR via API, 10-20 min):
 
 ```yaml
       - uses: anthropics/claude-code-action@v1
@@ -193,7 +193,8 @@ See [`action/examples/`](action/examples/) for fork-safe workflows, distributor 
 | Skill | What it does |
 |-------|-------------|
 | **kicad** | ⚡ Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DFM. |
-| **spice** | 🔬 Automatic SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. ngspice, LTspice, Xyce. |
+| **spice** | 🔬 SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. ngspice, LTspice, Xyce. |
+| **emc** | 📡 EMC pre-compliance — 40 rule checks for radiated emission risks, PDN impedance, diff pair skew, ESD paths. FCC/CISPR/automotive/military. |
 | **bom** | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files. |
 | **digikey** | 🔎 Search DigiKey for components and download datasheets via API. |
 | **mouser** | 🔎 Search Mouser for components and download datasheets. |
@@ -228,6 +229,7 @@ The agent runs the analysis scripts, then autonomously digs deeper — tracing n
 | **PCB** | Thermal via adequacy, zone stitching, trace width vs current, DFM scoring, impedance, proximity/crosstalk |
 | **Manufacturing** | MPN coverage audit, JLCPCB/PCBWay format export, assembly complexity scoring |
 | **Lifecycle** | Component EOL/NRND/obsolescence alerts, temperature grade audit, alternative part suggestions |
+| **EMC** | Ground plane voids, decoupling, I/O filtering, switching harmonics, clock routing, diff pair skew, board edge radiation, PDN impedance, ESD paths, crosstalk, thermal derating. FCC/CISPR/automotive/military. |
 
 ## 🔬 SPICE simulation
 
@@ -250,6 +252,34 @@ Simulation: 14 pass, 1 warn, 0 fail
 ```
 
 Requires ngspice, LTspice, or Xyce (auto-detected). Without one, simulation is skipped — the rest of the analysis still works. For the full methodology — see **[SPICE Integration Guide](spice-integration.md)**.
+
+## 📡 EMC pre-compliance
+
+> "Will my board pass FCC Class B? Check for EMC issues."
+
+> "Analyze my switching regulator layout for EMI problems"
+
+> "Check my differential pairs for skew-induced common-mode radiation"
+
+The **emc** skill predicts the most common causes of EMC test failures — ground plane voids, insufficient decoupling, unfiltered I/O cables, switching regulator harmonics, differential pair skew, and more. It operates on the schematic and PCB analyzer output using geometric rule checks and analytical emission formulas (Ott, Paul, Bogatin). When ngspice is available, PDN impedance and EMI filter checks are SPICE-verified for higher accuracy — otherwise analytical models are used as fallback.
+
+```
+EMC risk score: 73/100
+  CRITICAL: 1 — SPI_CLK crosses ground plane void on In1.Cu
+  HIGH:     2 — USB diff pair 5.2mm skew (exceeds 25ps limit),
+                no ground via near TVS U5
+  MEDIUM:   3 — decoupling cap 7mm from U3, clock on outer layer,
+                via stitching gap near J2
+  INFO:     4 — cavity resonance at 715 MHz, switching harmonics
+                in 30-88 MHz band
+
+Pre-compliance test plan:
+  Focus band: 30-88 MHz (12 switching harmonics from U1, U4)
+  Highest risk interface: J1 (USB-C, unfiltered, 480 Mbps)
+  Probe points: L1 (45.2, 32.1)mm, Y1 (62.0, 18.5)mm
+```
+
+40 rule checks across power integrity, signal integrity, and radiation. Supports FCC, CISPR, automotive (CISPR 25), and military (MIL-STD-461G) standards. Generates a pre-compliance test plan with frequency band priorities, interface risk rankings, and near-field probe points. For the full methodology — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
 
 ## 📄 Datasheet sync
 
@@ -293,10 +323,11 @@ Cross-references LCSC part numbers, formats to JLCPCB's exact spec, flags basic 
 2. **Sync datasheets** — builds a local library the agent uses for validation
 3. **Analyze** schematic and PCB
 4. **Simulate** detected subcircuits (ngspice/LTspice/Xyce)
-5. **Review** — agent cross-references analysis + simulation + datasheets
-6. **Source** components from DigiKey/Mouser (prototype) or LCSC (production)
-7. **Export** BOM + per-supplier order files for your assembler
-8. **Order** from JLCPCB or PCBWay
+5. **EMC pre-compliance** — check for ground plane issues, decoupling gaps, I/O filtering, switching harmonics
+6. **Review** — agent cross-references analysis + simulation + EMC + datasheets
+7. **Source** components from DigiKey/Mouser (prototype) or LCSC (production)
+8. **Export** BOM + per-supplier order files for your assembler
+9. **Order** from JLCPCB or PCBWay
 
 Or just set up the GitHub Action and get automated reviews on every PR.
 
@@ -361,12 +392,15 @@ Everything above was validated against a [corpus of 1,035 open-source KiCad proj
 | Schematic files analyzed | 6,845 (100% success) |
 | PCB files analyzed | 3,498 (99.9% — 2 failures are empty stub files) |
 | Gerber directories analyzed | 1,050 (100% success) |
+| EMC pre-compliance analyses | 6,853 (100% success, 151K+ findings) |
 | Components parsed | 312,956 |
 | Nets traced | 531,418 |
 | SPICE subcircuit simulations | 30,646 across 17 types |
-| Regression assertions | 294,883 at 99.8% pass rate |
+| SPICE-verified EMC findings | 169 (PDN impedance via ngspice) |
+| Regression assertions | 520K+ at 100% pass rate |
+| Equations tracked & verified | 88 with source citations |
 | Bugfix regression guards | 77 (100% pass — no fixed bugs have returned) |
-| Closed analyzer issues | 186 |
+| Closed analyzer issues | 191 |
 
 Three-layer regression testing catches drift at every level:
 

@@ -17,8 +17,9 @@ description: Analyze KiCad EDA projects and PDF schematics — schematics, PCB l
 | `jlcpcb` | PCB fabrication & assembly ordering |
 | `pcbway` | Alternative PCB fabrication & assembly |
 | `spice` | SPICE simulation verification of detected subcircuits |
+| `emc` | EMC pre-compliance risk analysis — consumes schematic + PCB analyzer output |
 
-**Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc`/`element14` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation. Hand off to `spice` for simulation verification of RC/LC filters, voltage dividers, feedback networks, opamp gain stages, transistor circuits, crystal circuits, current sense resistors, and protection devices — run automatically during design reviews when ngspice is available.
+**Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc`/`element14` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation. Hand off to `spice` for simulation verification of RC/LC filters, voltage dividers, feedback networks, opamp gain stages, transistor circuits, crystal circuits, current sense resistors, and protection devices — run automatically during design reviews when ngspice is available. Hand off to `emc` for EMC pre-compliance risk analysis — run automatically during design reviews when both schematic and PCB analysis are available.
 
 ## PDF Schematic Analysis
 

@@ -176,6 +176,7 @@ def _format_eng(value):
 
     Examples: 10000 → '10k', 1e-9 → '1n', 4.7e-6 → '4.7u'
     """
+    # EQ-075: SI engineering notation formatting
     if value == 0:
         return "0"
     abs_val = abs(value)

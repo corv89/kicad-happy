@@ -475,7 +475,7 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
             r_val = ctx.parsed_values[res["reference"]]
             c_val = ctx.parsed_values[cap_ref]
 
-            # Compute cutoff frequency: fc = 1 / (2π·R·C)
+            # EQ-020: f_c = 1/(2πRC) (RC filter cutoff frequency)
             if r_val > 0 and c_val > 0:
                 fc = 1.0 / (2.0 * math.pi * r_val * c_val)
                 tau = r_val * c_val
@@ -610,7 +610,9 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
             c_val = ctx.parsed_values[cap["reference"]]
 
             if l_val > 0 and c_val > 0:
+                # EQ-021: f₀ = 1/(2π√(LC)) (LC resonant frequency)
                 f0 = 1.0 / (2.0 * math.pi * math.sqrt(l_val * c_val))
+                # EQ-022: Z₀ = √(L/C) (LC characteristic impedance)
                 z0 = math.sqrt(l_val / c_val)  # characteristic impedance
 
                 lc_entry = {
@@ -894,6 +896,7 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
 
 def detect_decoupling(ctx: AnalysisContext) -> list[dict]:
     """Detect decoupling capacitors per power rail."""
+    # EQ-069: f_SRF = 1/(2π√(ESL×C)) (decoupling SRF)
     decoupling_analysis: list[dict] = []
 
     # For each power rail, compute total decoupling capacitance and frequency coverage
@@ -1367,6 +1370,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             if has_inductor:
                 reg_info["topology"] = "switching"
                 reg_info["inductor"] = inductor_ref
+                reg_info["sw_net"] = sw_net
                 if boot_pin:
                     reg_info["has_bootstrap"] = True
                 # KH-084/KH-087: Trace through inductor to find output rail
@@ -1570,6 +1574,31 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 # Sort by value descending (bulk caps first)
                 output_caps.sort(key=lambda c: -c["farads"])
                 reg["output_capacitors"] = output_caps
+
+        # Detect input capacitors on the input rail
+        input_rail = reg.get("input_rail")
+        if input_rail and input_rail in ctx.nets:
+            input_caps = []
+            seen_refs_in = set()
+            for p in ctx.nets[input_rail]["pins"]:
+                cref = p["component"]
+                if cref == reg_ref or cref in seen_refs_in:
+                    continue
+                comp = ctx.comp_lookup.get(cref)
+                if not comp or comp["type"] != "capacitor":
+                    continue
+                c_val = ctx.parsed_values.get(cref)
+                if not c_val or c_val <= 0:
+                    continue
+                seen_refs_in.add(cref)
+                input_caps.append({
+                    "ref": cref,
+                    "value": comp["value"],
+                    "farads": c_val,
+                })
+            if input_caps:
+                input_caps.sort(key=lambda c: -c["farads"])
+                reg["input_capacitors"] = input_caps
 
         # Detect compensation caps on the FB net
         fb_net = reg.get("fb_net")
@@ -1849,6 +1878,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
 
 def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
     """Detect op-amp gain stage configurations."""
+    # EQ-071: G = 1+Rf/Ri or -Rf/Ri; G_dB = 20log₁₀|G| (opamp gain)
     opamp_circuits: list[dict] = []
     opamp_lib_keywords = ("amplifier_operational", "op_amp", "opamp")
     opamp_value_keywords = ("opa", "lm358", "lm324", "mcp6", "ad8", "tl07", "tl08",
@@ -3813,6 +3843,7 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
 
 def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict]:
     """Generate structured design observations for higher-level analysis."""
+    # EQ-070: Threshold comparisons for design quality metrics
     design_observations: list[dict] = []
 
     # Build helper sets

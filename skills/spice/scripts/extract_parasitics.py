@@ -46,6 +46,7 @@ def trace_resistance(length_mm, width_mm, copper_thickness_mm):
     l = length_mm * 1e-3   # → meters
     w = width_mm * 1e-3
     t = copper_thickness_mm * 1e-3
+    # EQ-016: R = ρL/(WT) (DC trace resistance)
     return RHO_CU * l / (w * t)
 
 
@@ -70,6 +71,7 @@ def via_resistance(board_thickness_mm, drill_mm, plating_um=VIA_PLATING_UM):
     if r_inner <= 0:
         r_inner = r_outer * 0.5  # Solid fill for small vias
     area = math.pi * (r_outer ** 2 - r_inner ** 2)
+    # EQ-017: R = ρH/(π(r²outer-r²inner)) (via barrel resistance)
     return RHO_CU * h / area
 
 
@@ -95,6 +97,9 @@ def via_inductance(board_thickness_mm, drill_mm):
     d = drill_mm * 1e-3
     if 2 * h <= d:
         return 0.0  # Degenerate case
+    # EQ-018: L = (µ₀H/2π)ln(2H/D) (via self-inductance)
+    # Source: Goldfarb & Pucel, IEEE MGWL Vol.1 No.6 pp.135-137, June 1991
+    # URL: https://www.semanticscholar.org/paper/a3f4614877b750e7b7eec1dfa5924d5ce8b99301
     return (MU_0 * h / (2 * math.pi)) * math.log(2 * h / d)
 
 
@@ -121,6 +126,7 @@ def coupling_capacitance(parallel_length_mm, trace_height_mm, spacing_mm, epsilo
     l = parallel_length_mm * 1e-3
     t = trace_height_mm * 1e-3
     s = spacing_mm * 1e-3
+    # EQ-019: C = ε₀εrLT/S (inter-trace coupling capacitance, parallel-plate approx)
     return EPS_0 * epsilon_r * l * t / s
 
 
@@ -134,6 +140,7 @@ def extract_parasitics(pcb_json, net_filter=None):
     Returns:
         Parasitics dict with per-net R, L, C values
     """
+    # EQ-072: Orchestrates EQ-016..019 per net from PCB data
     # Extract stackup info
     setup = pcb_json.get("setup", {})
     stackup = setup.get("stackup", [])
