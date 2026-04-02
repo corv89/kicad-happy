@@ -306,3 +306,224 @@ def run_filter_spice(inductor_h, cap_f, switching_freq_hz,
             shutil.rmtree(workdir, ignore_errors=True)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Goertzel algorithm for single-frequency magnitude (no numpy needed)
+# ---------------------------------------------------------------------------
+
+def _goertzel_magnitude(samples, sample_rate, target_freq):
+    """Compute magnitude at a single frequency using the Goertzel algorithm.
+
+    O(N) per frequency — more efficient than full FFT when only a few
+    frequencies are needed. Works with Python stdlib only.
+
+    Args:
+        samples: List of float samples (time-domain signal).
+        sample_rate: Sample rate in Hz.
+        target_freq: Frequency to measure in Hz.
+
+    Returns:
+        Magnitude (linear, not dB).
+    """
+    n = len(samples)
+    if n == 0:
+        return 0.0
+    k = int(0.5 + n * target_freq / sample_rate)
+    omega = 2 * math.pi * k / n
+    coeff = 2 * math.cos(omega)
+    s0 = 0.0
+    s1 = 0.0
+    s2 = 0.0
+    for sample in samples:
+        s0 = sample + coeff * s1 - s2
+        s2 = s1
+        s1 = s0
+    magnitude = math.sqrt(s1**2 + s2**2 - coeff * s1 * s2)
+    return magnitude / n  # Normalize
+
+
+# ---------------------------------------------------------------------------
+# Switching Waveform Transient + FFT
+# ---------------------------------------------------------------------------
+
+def run_switching_fft(v_peak, duty_cycle, rise_time_s, switching_freq_hz,
+                      backend=None, n_harmonics=15, timeout=15):
+    """Run transient simulation of a switching waveform and extract harmonics.
+
+    Generates a PULSE source at the switching frequency, runs transient
+    analysis for 20 cycles, dumps the raw waveform, and computes harmonic
+    magnitudes using the Goertzel algorithm.
+
+    Args:
+        v_peak: Peak voltage of the switching node.
+        duty_cycle: Duty cycle (0 to 1).
+        rise_time_s: 10-90% rise time in seconds.
+        switching_freq_hz: Switching frequency in Hz.
+        backend: SimulatorBackend instance.
+        n_harmonics: Number of harmonics to extract.
+        timeout: Simulation timeout in seconds.
+
+    Returns:
+        (success, harmonics) where harmonics is a list of
+        {harmonic, freq_hz, amplitude_v, amplitude_dbuv} dicts.
+        Returns (False, None) on failure.
+    """
+    if backend is None:
+        return False, None
+
+    t_period = 1.0 / switching_freq_hz
+    t_on = duty_cycle * t_period
+    t_sim = 20 * t_period  # 20 cycles for steady state
+    # Time step: at least 100 points per rise time for accuracy
+    t_step = min(rise_time_s / 10, t_period / 200)
+
+    netlist = (
+        f'* Switching waveform for harmonic FFT\n'
+        f'V1 sw 0 PULSE(0 {_format_eng(v_peak)} 0 '
+        f'{_format_eng(rise_time_s)} {_format_eng(rise_time_s)} '
+        f'{_format_eng(t_on - rise_time_s)} {_format_eng(t_period)})\n'
+        f'R1 sw 0 1Meg\n'
+    )
+
+    workdir = tempfile.mkdtemp(prefix='emc_fft_')
+    cir_file = os.path.join(workdir, 'fft.cir')
+    raw_file = os.path.join(workdir, 'fft_raw.txt')
+    out_file = os.path.join(workdir, 'fft_results.txt')
+
+    try:
+        # Build ngspice-specific netlist with .control block to dump raw data
+        cir_content = (
+            f'{netlist}\n'
+            f'.tran {_format_eng(t_step)} {_format_eng(t_sim)}\n'
+            f'.control\n'
+            f'run\n'
+            f'wrdata {raw_file} v(sw)\n'
+            f'echo "done=1" > {out_file}\n'
+            f'.endc\n'
+            f'.end\n'
+        )
+
+        with open(cir_file, 'w') as f:
+            f.write(cir_content)
+
+        success, stdout, stderr = backend.run(cir_file, timeout=timeout)
+        if not success:
+            return False, None
+
+        # Parse raw ASCII data: columns are time, v(sw)
+        if not os.path.exists(raw_file):
+            return False, None
+
+        times = []
+        values = []
+        with open(raw_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or line.startswith('*'):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        t = float(parts[0])
+                        v = float(parts[1])
+                        times.append(t)
+                        values.append(v)
+                    except ValueError:
+                        continue
+
+        if len(values) < 100:
+            return False, None
+
+        # Use only the last 10 cycles (skip initial transient)
+        t_start = 10 * t_period
+        start_idx = 0
+        for i, t in enumerate(times):
+            if t >= t_start:
+                start_idx = i
+                break
+
+        steady_values = values[start_idx:]
+        if len(steady_values) < 50:
+            steady_values = values  # Fall back to full waveform
+
+        # Compute sample rate from time data
+        if len(times) > 1:
+            dt = (times[-1] - times[start_idx]) / (len(steady_values) - 1)
+            sample_rate = 1.0 / dt if dt > 0 else 1.0 / t_step
+        else:
+            return False, None
+
+        # Extract harmonics using Goertzel
+        harmonics = []
+        for n in range(1, n_harmonics + 1):
+            h_freq = n * switching_freq_hz
+            if h_freq > sample_rate / 2:
+                break  # Nyquist limit
+            mag = _goertzel_magnitude(steady_values, sample_rate, h_freq)
+            mag_dbuv = 20 * math.log10(mag * 1e6) if mag > 0 else -999
+            harmonics.append({
+                'harmonic': n,
+                'freq_hz': h_freq,
+                'amplitude_v': mag,
+                'amplitude_dbuv': mag_dbuv,
+            })
+
+        if not harmonics:
+            return False, None
+
+        return True, harmonics
+
+    except Exception:
+        return False, None
+    finally:
+        import shutil
+        try:
+            shutil.rmtree(workdir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def verify_pdn_with_suggested_cap(caps, suggested_cap, plane_cap_f,
+                                  z_target, backend, timeout=10):
+    """Re-run PDN SPICE sweep with a suggested cap added and check if the
+    anti-resonance peak is resolved.
+
+    Args:
+        caps: Original cap model list.
+        suggested_cap: Dict with farads, esr_ohm, esl_h to add.
+        plane_cap_f: Interplane capacitance.
+        z_target: Target impedance.
+        backend: SimulatorBackend.
+
+    Returns:
+        (success, peak_before_ohm, peak_after_ohm) or (False, None, None).
+    """
+    if backend is None:
+        return False, None, None
+
+    from emc_formulas import find_anti_resonances
+
+    # Run with original caps
+    ok1, sweep1 = run_pdn_spice(caps, plane_cap_f, backend, timeout=timeout)
+    if not ok1 or not sweep1:
+        return False, None, None
+
+    peaks_before = find_anti_resonances(sweep1, z_target=z_target)
+    exceeding_before = [p for p in peaks_before if p.get('exceeds_target')]
+    if not exceeding_before:
+        return True, 0, 0  # No peak to fix
+
+    peak_before = max(p['impedance_ohm'] for p in exceeding_before)
+
+    # Run with suggested cap added
+    augmented = list(caps) + [suggested_cap]
+    ok2, sweep2 = run_pdn_spice(augmented, plane_cap_f, backend, timeout=timeout)
+    if not ok2 or not sweep2:
+        return False, peak_before, None
+
+    peaks_after = find_anti_resonances(sweep2, z_target=z_target)
+    exceeding_after = [p for p in peaks_after if p.get('exceeds_target')]
+    peak_after = max((p['impedance_ohm'] for p in exceeding_after), default=0)
+
+    return True, peak_before, peak_after
