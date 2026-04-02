@@ -346,19 +346,27 @@ def diff_schematic(base, head, threshold):
     if bom_diff["added"] or bom_diff["removed"] or bom_diff["quantity_changes"]:
         result["bom"] = bom_diff
 
-    # Connectivity issues
+    # Connectivity issues (items may be strings or dicts)
+    def _conn_key(item):
+        if isinstance(item, dict):
+            return json.dumps(item, sort_keys=True)
+        return str(item)
+
     conn_diff = {}
     for section in ("single_pin_nets", "floating_nets", "multi_driver_nets"):
-        base_set = set(base.get("connectivity_issues", {}).get(section, []))
-        head_set = set(head.get("connectivity_issues", {}).get(section, []))
-        new = sorted(head_set - base_set)
-        resolved = sorted(base_set - head_set)
-        if new or resolved:
-            conn_diff[section] = {}
-            if new:
-                conn_diff[section]["new"] = new
-            if resolved:
-                conn_diff[section]["resolved"] = resolved
+        base_items = base.get("connectivity_issues", {}).get(section, [])
+        head_items = head.get("connectivity_issues", {}).get(section, [])
+        base_map = {_conn_key(i): i for i in base_items}
+        head_map = {_conn_key(i): i for i in head_items}
+        new_keys = set(head_map) - set(base_map)
+        resolved_keys = set(base_map) - set(head_map)
+        if new_keys or resolved_keys:
+            entry = {}
+            if new_keys:
+                entry["new"] = [head_map[k] for k in sorted(new_keys)]
+            if resolved_keys:
+                entry["resolved"] = [base_map[k] for k in sorted(resolved_keys)]
+            conn_diff[section] = entry
     if conn_diff:
         result["connectivity"] = conn_diff
 
