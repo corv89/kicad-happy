@@ -1434,7 +1434,8 @@ def analyze_ic_pinouts(ctx: AnalysisContext) -> list[dict]:
     # Build no-connect position set
     nc_positions = set()
     for nc in no_connects:
-        nc_positions.add((round(nc["x"] / EPSILON) * EPSILON,
+        nc_positions.add((nc.get("_sheet", 0),
+                          round(nc["x"] / EPSILON) * EPSILON,
                           round(nc["y"] / EPSILON) * EPSILON))
 
     results = []
@@ -1465,7 +1466,8 @@ def analyze_ic_pinouts(ctx: AnalysisContext) -> list[dict]:
             net_name, net_info = pin_net.get(pin_key, (None, None))
 
             # Check if pin has a no-connect marker
-            pin_pos = (round(pin["x"] / EPSILON) * EPSILON,
+            pin_pos = (ic.get("_sheet", 0),
+                       round(pin["x"] / EPSILON) * EPSILON,
                        round(pin["y"] / EPSILON) * EPSILON)
             has_no_connect = pin_pos in nc_positions
 
@@ -2687,7 +2689,8 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
     # Build set of no-connect positions for quick lookup
     nc_positions = set()
     for nc in no_connects:
-        nc_positions.add((round(nc["x"] / EPSILON) * EPSILON,
+        nc_positions.add((nc.get("_sheet", 0),
+                          round(nc["x"] / EPSILON) * EPSILON,
                           round(nc["y"] / EPSILON) * EPSILON))
 
     # Build set of all pins that appear in any net
@@ -2705,7 +2708,8 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
             pin_key = (comp["reference"], pin["number"])
             if pin_key not in connected_pins:
                 # Check if there's a no-connect marker at this pin
-                pin_pos = (round(pin["x"] / EPSILON) * EPSILON,
+                pin_pos = (comp.get("_sheet", 0),
+                           round(pin["x"] / EPSILON) * EPSILON,
                            round(pin["y"] / EPSILON) * EPSILON)
                 if pin_pos not in nc_positions:
                     unconnected_pins.append({
@@ -3599,24 +3603,10 @@ def _estimate_rail_voltage(net_name: str) -> float | None:
     nu = net_name.upper()
     if nu in ("GND", "VSS", "AGND", "DGND"):
         return 0
-    # Parse voltage from name: +3.3V, +5V, +12V, +3V3, +1V8, etc.
-    m = re.match(r'\+?(\d+)V(\d+)', nu)
-    if m:
-        return float(f"{m.group(1)}.{m.group(2)}")
-    m = re.match(r'\+?(\d+\.?\d*)V?$', nu)
-    if m:
-        return float(m.group(1))
-    # Common names
-    if "3.3" in nu or "3V3" in nu:
-        return 3.3
-    if "5V" in nu or nu == "+5":
-        return 5.0
-    if "12V" in nu:
-        return 12.0
-    if "1.8" in nu or "1V8" in nu:
-        return 1.8
-    if "2.5" in nu or "2V5" in nu:
-        return 2.5
+    v = _parse_voltage_from_net_name(net_name)
+    if v is not None:
+        return v
+    # Hardcoded fallbacks for common names without voltage numbers
     if "VBUS" in nu or "USB" in nu:
         return 5.0
     return None

@@ -62,11 +62,17 @@ def _is_ground_net(name: str) -> bool:
     """Check if a net name is specifically a ground net."""
     if not name:
         return False
+    # Strip hierarchical sheet path prefix (e.g., "/Power Supply/GND" → "GND")
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
     low = name.lower()
-    for prefix in ('gnd', 'agnd', 'dgnd', 'pgnd', 'gnda', 'gndd',
-                   'earth', 'vss', 'vee', 'gndpwr', 'gnd_'):
-        if low == prefix or low.startswith(prefix) or low.endswith(prefix):
-            return True
+    if low in ('gnd', 'vss', 'agnd', 'dgnd', 'pgnd', 'gnda', 'gndd',
+               'earth', 'vee', 'gndpwr', '0v'):
+        return True
+    if low.startswith('gnd') or low.endswith('gnd'):
+        return True
+    if low.startswith('vss'):
+        return True
     return False
 
 
@@ -2779,19 +2785,24 @@ def check_thermal_emc(pcb: Optional[Dict],
             package = cap.get('package', '0603')
             value_str = cap.get('value', '')
 
-            # Estimate rated voltage from common cap values
-            # Without datasheet data, assume rated voltage from value heuristic
-            # Most small caps on 3.3V rails are rated 6.3V or 10V
-            # On 5V rails, rated 10V or 16V
-            rated_v = 10.0  # conservative default
-            if vout <= 1.8:
-                rated_v = 6.3
-            elif vout <= 3.3:
-                rated_v = 6.3
-            elif vout <= 5.0:
-                rated_v = 10.0
-            elif vout <= 12.0:
-                rated_v = 25.0
+            # Try to extract rated voltage from value string (e.g., "100nF/16V")
+            rated_v = None
+            rv_match = re.search(r'(\d+\.?\d*)\s*V(?:\b|[^a-zA-Z])', value_str)
+            if rv_match:
+                rv_candidate = float(rv_match.group(1))
+                if 1.0 <= rv_candidate <= 100:
+                    rated_v = rv_candidate
+            # Fallback: estimate from rail voltage
+            if rated_v is None:
+                rated_v = 10.0  # conservative default
+                if vout <= 1.8:
+                    rated_v = 6.3
+                elif vout <= 3.3:
+                    rated_v = 6.3
+                elif vout <= 5.0:
+                    rated_v = 10.0
+                elif vout <= 12.0:
+                    rated_v = 25.0
 
             voltage_ratio = vout / rated_v
             dielectric = _classify_dielectric(value_str)
@@ -2986,22 +2997,7 @@ def check_shielding_advisory(pcb: Dict,
                     'or adding absorber material.'
                 ),
             })
-        else:
-            # Always report the slot frequency for test planning
-            findings.append({
-                'category': 'shielding',
-                'severity': 'INFO',
-                'rule_id': 'SH-001',
-                'title': f'{conn_ref} aperture slot resonance',
-                'description': (
-                    f'{conn_ref} ({conn_val}) ~{aperture_mm}mm aperture → '
-                    f'slot antenna resonance at {f_slot/1e9:.1f} GHz. '
-                    f'No known board emission sources coincide with this frequency.'
-                ),
-                'components': [conn_ref],
-                'nets': [],
-                'recommendation': 'No action needed — slot resonance is above emission frequencies.',
-            })
+        # Non-coincident connectors: no finding (reduces noise)
 
     return findings
 
