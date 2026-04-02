@@ -19,6 +19,8 @@ JLCPCB is a PCB fabrication and assembly service based in Shenzhen, China. It is
 | `mouser` | Search Mouser (prototype sourcing, secondary) |
 | `lcsc` | Search LCSC (production sourcing — JLCPCB uses LCSC parts library) |
 | `pcbway` | Alternative PCB fabrication & assembly |
+| `emc` | EMC pre-compliance risk analysis — run before fab to catch EMC issues |
+| `spice` | SPICE simulation — verify analog subcircuits before committing to fab |
 
 ## Assembly Parts Library
 

@@ -25,6 +25,12 @@ Quantitative design rules used by the EMC analyzer. Each rule has a threshold, r
 - **Severity:** MEDIUM
 - **Threshold:** Ground zone fill ratio <60%
 
+### GP-005: Multiple ground domains
+- **Severity:** MEDIUM
+- **Threshold:** More than one ground domain detected
+- **Rationale:** Multiple ground domains require careful single-point connection to avoid ground loops. Unintentional splits create return current detours and loop antennas.
+- **Fix:** Verify domains connect at a single intentional point (e.g., near the ADC for analog/digital split). Ensure no signal traces cross the domain boundary.
+
 ## Decoupling
 
 ### DC-001: Decoupling cap distance
@@ -39,6 +45,13 @@ Quantitative design rules used by the EMC analyzer. Each rule has a threshold, r
 - **Threshold:** IC (U/IC prefix) with no capacitor within 10mm
 - **Source:** Every major IC manufacturer's application notes recommend decoupling on all power pins. TI SLUA383, Analog Devices MT-101.
 
+### DC-003: Decoupling cap far from via
+- **Severity:** MEDIUM
+- **Threshold:** Decoupling cap pad >3mm from nearest via to power/ground plane
+- **Rationale:** Connection inductance is dominated by via transitions rather than cap-to-IC distance. Long traces between cap pad and via add ~0.5–0.8 nH/mm, degrading high-frequency decoupling.
+- **Source:** LearnEMC, "Estimating the Connection Inductance of Decoupling Capacitors."
+- **Fix:** Minimize trace between cap pad and its via. Use short fat traces or co-planar via layout.
+
 ## I/O Interface Filtering
 
 ### IO-001: No EMC filtering near connector
@@ -46,6 +59,12 @@ Quantitative design rules used by the EMC analyzer. Each rule has a threshold, r
 - **Threshold:** No ferrite bead, CM choke, or ESD/TVS device within 25mm
 - **Rationale:** Common-mode currents on cables dominate radiated emissions at 30–300 MHz. Even microamps of CM current can exceed emission limits (5 µA on a 1m cable at 100 MHz = 46.4 dBµV/m, exceeding FCC Class B by ~3 dB).
 - **Source:** Ott, *EMC Engineering*, Ch. 19 — common-mode cable radiation is the dominant emission mechanism. The 25mm threshold is a heuristic for geometric proximity checking. TI ESD layout guides (SLVA680, SLVAEX9) recommend placement "as close to the connector as PCB design rules allow" but do not specify a numeric distance.
+
+### IO-002: Insufficient ground pins on connector
+- **Severity:** MEDIUM (high-speed: USB, HDMI, Ethernet, PCIe), LOW (general)
+- **Threshold:** Ground pins < max(2, signal_pins / 4) for connectors with >2 signal pins
+- **Rationale:** High-speed connectors need adequate ground pins for return current paths and cable shielding to maintain signal integrity and reduce emissions.
+- **Fix:** Add ground pins or use a connector variant with integrated shielding.
 
 ## Switching Regulator EMC
 
@@ -60,6 +79,20 @@ Quantitative design rules used by the EMC analyzer. Each rule has a threshold, r
 - **Source:** Paul, C.R. *Introduction to EMC*, Ch. 3, §3.2 — trapezoidal waveform spectral envelope derivation.
 - **Fix:** Minimize hot loop area. Consider spread-spectrum clocking if the regulator supports it.
 
+### SW-002: Large switching node copper area
+- **Severity:** HIGH (>100 mm²), MEDIUM (25–100 mm²)
+- **Threshold:** Total copper area on SW/PH/LX net >25 mm² (zones + traces combined)
+- **Rationale:** Large copper on the switching node acts as an antenna for switching noise. Only minimal copper should connect IC pin to inductor pad.
+- **Source:** TI SLVA477, "Layout Tips for Switching Regulators."
+- **Fix:** Remove unnecessary zones or copper pours on SW node. Use minimal-area traces from IC to inductor only.
+
+### SW-003: Large input capacitor hot loop
+- **Severity:** HIGH (>100 mm²), MEDIUM (25–100 mm²)
+- **Threshold:** Triangle area (input cap → IC → inductor) >25 mm²
+- **Rationale:** Hot loops radiate switching noise proportional to loop area × current × frequency. The input capacitor loop is the dominant emission source in most switching regulators.
+- **Source:** Paul, *Introduction to EMC*, Ch. 10; Ridley, *Power Supply Design Vol. 2*.
+- **Fix:** Place input cap, IC, and inductor in a tight triangle. Minimize trace length between them.
+
 ## Clock Routing
 
 ### CK-001: Clock on outer layer
@@ -72,6 +105,12 @@ Quantitative design rules used by the EMC analyzer. Each rule has a threshold, r
 - **Severity:** MEDIUM
 - **Threshold:** Clock net >100mm
 - **Source:** Johnson, H. *High-Speed Digital Design*, Ch. 1 — longer traces are more effective antennas.
+
+### CK-003: Clock routed near connector
+- **Severity:** MEDIUM
+- **Threshold:** Clock net trace segment within 10mm of an external connector
+- **Rationale:** Clock harmonics can couple to attached cables via proximity, increasing radiated emissions. Clock traces near connector apertures create efficient radiators.
+- **Fix:** Route clock traces away from connectors. Use ground guard traces if routing is constrained.
 
 ## Via Stitching
 
@@ -247,6 +286,77 @@ Source: Goldfarb, E. & Pucha, R. "Modeling Via Grounds in Microstrip." IEEE Micr
 - **Rationale:** A downstream switching regulator draws pulsed current from its input rail at its switching frequency. If the upstream PDN impedance is high at that frequency, it creates voltage ripple on the upstream rail that affects all other loads sharing that rail.
 - **Formula:** I_in_transient = V_out × I_out / (V_in × η × D) at f_sw
 - **Source:** Basso, *Switch-Mode Power Supplies* (McGraw-Hill); Ridley, *Power Supply Design Vol. 2*.
+
+## Return Path Continuity
+
+### RP-001: Missing stitching via at layer transition
+- **Severity:** HIGH (differential pair or high-speed net), MEDIUM (all transitions unstitched), LOW (partial)
+- **Threshold:** Signal via transitions layers without a ground stitching via within max(2 × dielectric_height, 1.0 mm)
+- **Rationale:** When a signal changes layers, return current must also change planes. Without a nearby ground via, return current takes a long detour, creating a large loop antenna.
+- **Source:** Ott, "PCB Stack-Up Part 6"; Sierra Circuits return path design guide.
+- **Fix:** Add ground stitching via adjacent to each signal via. Use multiple ground vias for differential pairs.
+
+## Crosstalk
+
+### XT-001: Trace spacing violation (3H rule)
+- **Severity:** HIGH (aggressor-victim pair: clock/switching near analog/ADC), MEDIUM (at least one aggressor), LOW (general)
+- **Threshold:** Parallel trace coupling length ≥5mm with spacing < 3 × dielectric height on outer layers
+- **Rationale:** 3× dielectric height spacing gives <3% near-end crosstalk. Closer spacing creates coupling that adds to emissions and can cause false signal transitions.
+- **Source:** Bogatin, *Signal and Power Integrity*, Ch. 13; Johnson, *High-Speed Digital Design*, Ch. 5.
+- **Fix:** Increase spacing to ≥3H or insert ground guard trace between aggressor and victim.
+
+## EMI Filter Verification
+
+### EF-001: Filter cutoff too close to switching frequency
+- **Severity:** MEDIUM
+- **Threshold:** f_sw / f_cutoff < 5
+- **Rationale:** EMI input filters on switching regulators must provide adequate attenuation at the switching frequency. A ratio ≥5 between switching frequency and filter cutoff ensures sufficient margin for the -40 dB/decade rolloff.
+- **Source:** Paul, *Introduction to EMC*, Ch. 9; Analog Devices, "Speed Up the Design of EMI Filters for SMPS."
+- **Fix:** Increase filter inductance or capacitance to lower cutoff to ≤f_sw/5.
+
+### EF-002: Filter cutoff verified (passing check)
+- **Severity:** INFO
+- **Threshold:** f_sw / f_cutoff ≥ 5
+- **Rationale:** Informational confirmation that the EMI filter design meets the 5× cutoff ratio criterion for adequate attenuation.
+
+## ESD Protection Path
+
+### ES-001: ESD device far from connector
+- **Severity:** MEDIUM
+- **Threshold:** TVS/ESD protection device >15mm from protected connector
+- **Rationale:** During 8kV IEC 61000-4-2 ESD strike (dI/dt = 37.5 GA/s), each nH of inductance in the path creates ~37.5V of overshoot. Trace inductance is ~0.5–0.8 nH/mm, so every extra mm degrades clamping performance.
+- **Source:** TI SLVA680 "ESD Protection Layout Guide"; ST AN5686 "PCB Layout Tips for ESD Protection."
+- **Fix:** Move TVS within 10mm of connector. Keep ESD current path as short as possible.
+
+### ES-002: Insufficient ground vias near ESD device
+- **Severity:** HIGH (no ground via within 3mm), LOW (single ground via)
+- **Threshold:** <2 ground stitching vias within 3mm of TVS ground pad
+- **Rationale:** TVS ground path inductance is the most critical parasitic in ESD protection. Two parallel vias halve the inductance (~0.5 nH → ~0.25 nH), improving clamping by ~9V at 37.5 GA/s.
+- **Fix:** Add ≥2 ground vias directly adjacent to TVS ground pad. Use short, wide traces to ground plane.
+
+## Thermal-EMC Interaction
+
+### TH-001: MLCC DC bias derating
+- **Severity:** MEDIUM
+- **Threshold:** Effective capacitance <50% of nominal due to DC bias
+- **Rationale:** Ceramic capacitors lose capacitance under DC bias. Severe derating (>50%) shifts the self-resonant frequency (SRF) and may leave gaps in decoupling coverage, affecting PDN impedance.
+- **Source:** Murata "DC Bias Characteristics of MLCCs"; Analog Devices, "Temperature and Voltage Variation of Ceramic Capacitors."
+- **Fix:** Use larger package (lower derating), higher voltage rating, or C0G/NP0 dielectric for critical decoupling.
+
+### TH-002: Ferrite bead near heat source
+- **Severity:** LOW
+- **Threshold:** Ferrite bead within 10mm of a switching regulator
+- **Rationale:** Ferrite permeability (µ) decreases significantly with temperature. If a regulator runs hot (>85°C), ferrite impedance may drop 30–50%, reducing filtering effectiveness.
+- **Fix:** Verify ferrite's thermal rating. Consider relocating away from heat source or using higher-temperature-rated material.
+
+## Shielding
+
+### SH-001: Connector aperture slot resonance
+- **Severity:** MEDIUM (resonance coincides with emission source), INFO (general)
+- **Threshold:** Slot resonance frequency (f = c / 2L) within ±20% of a board emission source (crystal harmonics, switching harmonics)
+- **Rationale:** A connector aperture acts as a resonant slot antenna. When slot resonance overlaps with on-board emission sources, the connector becomes an efficient radiator.
+- **Source:** Ott, *EMC Engineering*, Ch. 6 — aperture theory and slot antenna radiation.
+- **Fix:** Use shielded connector variants. Add absorber material inside enclosure near aperture.
 
 ## References
 

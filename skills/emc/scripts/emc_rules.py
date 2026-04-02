@@ -222,7 +222,7 @@ def _connector_refs(footprints: list) -> list:
         ref = fp.get('reference', '')
         raw_val = fp.get('value', '')
         val = (raw_val if isinstance(raw_val, str) else str(raw_val)).lower()
-        raw_lib = fp.get('lib_id', '')
+        raw_lib = fp.get('library', fp.get('lib_id', ''))
         lib = (raw_lib if isinstance(raw_lib, str) else str(raw_lib)).lower()
         if ref.startswith('J') or ref.startswith('P') or ref.startswith('CN'):
             # Exclude internal headers / test points
@@ -580,7 +580,7 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
         ref = fp.get('reference', '')
         raw_val = fp.get('value', '')
         val = (raw_val if isinstance(raw_val, str) else str(raw_val)).lower()
-        raw_lib = fp.get('lib_id', '')
+        raw_lib = fp.get('library', fp.get('lib_id', ''))
         lib = (raw_lib if isinstance(raw_lib, str) else str(raw_lib)).lower()
         is_filter = False
         if ref.startswith('FB') or ref.startswith('L'):
@@ -638,7 +638,7 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
             # Determine if this connector is likely external
             # Simple heuristic: USB, HDMI, Ethernet, barrel jack, RJ45 are external
             is_external = False
-            combined = (conn_val + ' ' + conn.get('lib_id', '')).lower()
+            combined = (conn_val + ' ' + conn.get('library', conn.get('lib_id', ''))).lower()
             for kw in ('usb', 'hdmi', 'rj45', 'rj11', 'ethernet', 'barrel',
                        'dc_jack', 'audio', 'jack', 'dsub', 'vga', 'sma',
                        'bnc', 'screw_terminal', 'phoenix', 'molex_minifit',
@@ -709,7 +709,7 @@ def check_connector_ground_pins(pcb: Dict,
         if gnd_count < min_gnd:
             # Check if this is a high-speed connector
             is_hs = False
-            combined = (conn_val + ' ' + conn.get('lib_id', '')).lower()
+            combined = (conn_val + ' ' + conn.get('library', conn.get('lib_id', ''))).lower()
             for kw in ('usb', 'hdmi', 'ethernet', 'rj45', 'pcie', 'sata', 'lvds'):
                 if kw in combined:
                     is_hs = True
@@ -749,7 +749,7 @@ def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') ->
     regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
 
     for reg in regulators:
-        topology = reg.get('topology', '')
+        topology = reg.get('topology', '').lower()
         if topology in ('ldo', 'linear'):
             continue  # LDOs don't switch
 
@@ -851,7 +851,6 @@ def _estimate_switching_freq(part_value: str) -> Optional[float]:
         'XL6009': 400e3,   # XL6009: 400kHz typ (XLSEMI datasheet, 320-430kHz)
         'XL4015': 180e3,   # XL4015: 180kHz (XLSEMI datasheet)
         'MT3608': 1.2e6,   # MT3608: 1.2MHz (Aerosemi datasheet)
-        'MT3608': 1.2e6,
     }
 
     for prefix, freq in known_freqs.items():
@@ -1309,7 +1308,7 @@ def estimate_switching_emissions(schematic: Dict,
     regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
 
     for reg in regulators:
-        topology = reg.get('topology', '')
+        topology = reg.get('topology', '').lower()
         if topology in ('ldo', 'linear'):
             continue
 
@@ -1407,8 +1406,8 @@ def check_switching_node_area(pcb: Optional[Dict],
         sw_net = reg.get('sw_net')
         if not sw_net:
             continue
-        topology = reg.get('topology', '')
-        if topology in ('LDO', 'ldo', 'linear'):
+        topology = reg.get('topology', '').lower()
+        if topology in ('ldo', 'linear'):
             continue
 
         ref = reg.get('ref', reg.get('reference', ''))
@@ -1505,8 +1504,8 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
             fp_pos[ref] = (fp.get('x') or 0, fp.get('y') or 0)
 
     for reg in regulators:
-        topology = reg.get('topology', '')
-        if topology in ('LDO', 'ldo', 'linear', 'unknown', 'ic_with_internal_regulator'):
+        topology = reg.get('topology', '').lower()
+        if topology in ('ldo', 'linear', 'unknown', 'ic_with_internal_regulator'):
             continue
 
         ref = reg.get('ref', reg.get('reference', ''))
@@ -2224,7 +2223,7 @@ def check_connector_area_stitching(pcb: Dict,
 
         if avg_spacing > required_spacing * 2:
             is_external = False
-            combined = (conn_val + ' ' + conn.get('lib_id', '')).lower()
+            combined = (conn_val + ' ' + conn.get('library', conn.get('lib_id', ''))).lower()
             for kw in ('usb', 'hdmi', 'rj45', 'ethernet', 'sma', 'bnc',
                        'barrel', 'dc_jack', 'audio', 'dsub'):
                 if kw in combined:
@@ -2403,7 +2402,7 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
         return findings
 
     for reg in regulators:
-        topology = reg.get('topology', '')
+        topology = reg.get('topology', '').lower()
         if topology in ('ldo', 'linear'):
             continue  # LDOs don't need EMI input filters
 
@@ -2796,7 +2795,7 @@ def check_thermal_emc(pcb: Optional[Dict],
         # Find switching regulator positions
         reg_positions = []
         for reg in regulators:
-            if reg.get('topology') in ('ldo', 'linear'):
+            if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
             ref = reg.get('ref', reg.get('reference', ''))
             for fp in footprints:
@@ -2812,7 +2811,7 @@ def check_thermal_emc(pcb: Optional[Dict],
         for fp in footprints:
             ref = fp.get('reference', '')
             val = fp.get('value', '').lower()
-            lib = fp.get('lib_id', '').lower()
+            lib = fp.get('library', fp.get('lib_id', '')).lower()
             is_ferrite = ref.startswith('FB') or ('ferrite' in val) or ('bead' in val) or ('ferrite' in lib)
             if not is_ferrite:
                 continue
@@ -2884,7 +2883,7 @@ def check_shielding_advisory(pcb: Dict,
                 emission_freqs.append(f * 3)  # 3rd harmonic
 
         for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
-            if reg.get('topology') in ('ldo', 'linear'):
+            if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
             sw = _estimate_switching_freq(reg.get('value', ''))
             if sw:
@@ -2909,7 +2908,7 @@ def check_shielding_advisory(pcb: Dict,
     for conn in connectors:
         conn_ref = conn.get('reference', '')
         conn_val = conn.get('value', '')
-        combined = (conn_val + ' ' + conn.get('lib_id', '')).lower()
+        combined = (conn_val + ' ' + conn.get('library', conn.get('lib_id', ''))).lower()
 
         # Estimate aperture size
         aperture_mm = 12  # default
@@ -3582,7 +3581,7 @@ def generate_test_plan(schematic: Optional[Dict], pcb: Optional[Dict],
     # Switching regulator harmonics
     if schematic:
         for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
-            if reg.get('topology') in ('ldo', 'linear'):
+            if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
             ref = reg.get('ref', reg.get('reference', ''))
             val = reg.get('value', '')

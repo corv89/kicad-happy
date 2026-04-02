@@ -59,6 +59,33 @@ Analyzes `setup.stackup` for adjacent signal layers, signal-to-reference plane s
 ### Category 8: Emission Estimates (rules EE-xxx)
 Informational calculations: board cavity resonance frequencies and switching regulator harmonic envelopes. These are order-of-magnitude estimates (±10-20 dB), not pass/fail predictions.
 
+### Category 9: Differential Pair EMC (rules DP-xxx)
+Checks intra-pair skew against protocol-specific limits (USB HS 25ps, PCIe 5ps, Ethernet 50ps), estimates CM radiation from skew, detects reference plane changes under diff pairs, and flags outer-layer routing when inner layers are available. Uses `net_lengths` layer distribution and schematic differential pair detection.
+
+### Category 10: Board Edge Analysis (rules BE-xxx)
+Detects signal traces near the board edge (slot antenna effect), checks ground pour ring coverage around the perimeter, and verifies via stitching density near external connectors. Uses board outline, zone data, and connector positions.
+
+### Category 11: PDN Impedance (rules PD-xxx)
+Analyzes power delivery network impedance from regulator to IC. PD-001/PD-002 check anti-resonance peaks in the decoupling capacitor network (SPICE-enhanced when available). PD-003 computes distributed rail impedance at IC load points including trace R+L. PD-004 detects cross-rail coupling where downstream switching regulators inject noise onto upstream rails.
+
+### Category 12: Return Path Continuity (rules RP-xxx)
+Checks that signal layer transitions (vias) have nearby ground stitching vias for return current continuity. Uses `layer_transitions` data from `--full` mode. Higher severity for differential pairs and high-speed nets.
+
+### Category 13: Crosstalk (rules XT-xxx)
+Identifies parallel trace pairs violating the 3H spacing rule (spacing ≥ 3× dielectric height). Uses `trace_proximity` data from `--proximity` mode. Classifies severity based on aggressor/victim roles (clock near analog = HIGH).
+
+### Category 14: EMI Filter Verification (rules EF-xxx)
+Validates that input LC filters on switching regulators have cutoff frequencies sufficiently below the switching frequency (ratio ≥5). Uses SPICE insertion loss analysis when available for improved accuracy.
+
+### Category 15: ESD Protection Path (rules ES-xxx)
+Checks TVS/ESD device proximity to protected connectors and ground via density near TVS ground pads. Based on IEC 61000-4-2 ESD path inductance requirements.
+
+### Category 16: Thermal-EMC Interaction (rules TH-xxx)
+Detects MLCC capacitors with significant DC bias derating (which shifts SRF, affecting PDN coverage) and ferrite beads near heat sources (which lose impedance at elevated temperatures).
+
+### Category 17: Shielding Advisories (rules SH-xxx)
+Calculates connector aperture slot resonance frequencies and flags coincidences with on-board emission sources (crystal and switching harmonics).
+
 ## Risk Scoring
 
 ```

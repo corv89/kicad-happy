@@ -47,7 +47,7 @@ Example: Resistor at (152.4, 176.53) rotated 90 deg, pin 1 at relative (0, 3.81)
 
 Large IC symbols (e.g., ESP32 modules) have pins on the left **and** right sides. Two different pins can share the same Y-coordinate but have very different X-coordinates. A `no_connect` or wire at `(91.44, 77.47)` is NOT the same pin as a wire endpoint at `(60.96, 77.47)` — they are on opposite sides of the symbol.
 
-**Always verify BOTH X and Y** when matching coordinates. To determine which side a pin exits from:
+**Always verify BOTH X and Y** when matching coordinates. Use exact floating-point comparison — KiCad stores coordinates with nanometer precision internally, and properly connected elements share the exact same coordinate values. If you see any difference (even 0.001mm), the coordinates are NOT the same point; they indicate a wiring error or coordinate transform bug. To determine which side a pin exits from:
 1. Find the pin's relative offset in the `lib_symbols` definition — negative X = left side, positive X = right side
 2. Apply the symbol's placement transform to get the absolute position
 3. Match against wires/labels/no_connects using the **exact** (X, Y) pair
@@ -97,6 +97,17 @@ When a component is removed from a schematic (e.g., R13 was a GPIO pullup), its 
 
 ### Connector naming conventions
 Not all "programming" connectors are JTAG. A 2x3 header (J2) with TX, RX, GND, 3V3, EN, and BOOT pins is a **serial programming header** (UART), not a JTAG header. JTAG requires TCK, TMS, TDI, TDO signals. Check the actual pin assignments before labeling a connector.
+
+## Multi-Unit Symbols
+
+Components like LM324 (4 opamps), CD4066 (4 switches), or STM32 (multi-bank pin assignments) contain multiple units in one package. Each unit is a separate `_U_1` / `_U_2` / etc. sub-symbol in the `lib_symbols` section. When tracing nets:
+
+1. **Identify which unit is placed** — the placed symbol's `lib_id` suffix (e.g., `LM324_1_1` = unit 1) tells you which sub-symbol provides the pin offsets
+2. **Each unit has its own pin set** — unit 1 of an LM324 has pins 1/2/3 (IN+/IN-/OUT), unit 2 has pins 5/6/7, etc. Power pins (VCC/GND) are typically in a shared sub-symbol `_0_1`
+3. **Power pins may not be placed** — the `_0_1` sub-symbol with VCC/GND is often placed on only one instance (or a dedicated power sheet). Don't flag missing power connections on other units — check if any unit of the same component has them connected
+4. **Reference designator is shared** — all units share the same reference (e.g., U1A, U1B, U1C, U1D are all U1). The analyzer reports them as separate symbol instances with the same `reference` field
+
+To find all units of a component: search for placed symbols where the `lib_id` base name matches (ignoring the `_U_V` suffix) and the `reference` property is the same.
 
 ## Complete Example
 

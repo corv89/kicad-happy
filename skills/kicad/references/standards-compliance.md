@@ -402,7 +402,7 @@ Source: **ECMA-287 Table 3.5**, verified from PDF. Values for basic and suppleme
 
 Linear interpolation between entries is permitted (round up to 0.1 mm).
 
-**Common case for FR-4 PCB at 120V AC mains:** PD2, Material Group IIIb → creepage = 1.5 mm basic, 3.0 mm reinforced. At 230V AC: 2.5 mm basic, 5.0 mm reinforced.
+**Common case for FR-4 PCB at 120V AC mains:** Use the 125V row (closest standard voltage). PD2, Material Group IIIb → creepage = 1.5 mm basic, 3.0 mm reinforced. At 230V AC (use 250V row): 2.5 mm basic, 5.0 mm reinforced.
 
 ### Minimum Separation for Coated Printed Boards
 
@@ -602,7 +602,7 @@ When standards checking is triggered, add this section to the report (after the 
 
 Canonical reference for DFM tier determination. The analyzer (`analyze_pcb.py`) uses these values in its `LIMITS_STD` and `LIMITS_ADV` constants. Report generation must cite values from this table — do not substitute values from training data.
 
-**Source:** JLCPCB capabilities page (verified 2025-01), PCBWay capabilities page (verified 2025-01).
+**Source:** JLCPCB capabilities page (verified 2025-01), PCBWay capabilities page (verified 2025-01). Fab capabilities change periodically — check the fab's website for the latest values before making DFM decisions.
 
 ### JLCPCB
 

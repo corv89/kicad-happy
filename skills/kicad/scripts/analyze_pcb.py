@@ -4140,7 +4140,7 @@ def _get_schema():
             "segments": "[{x1, y1, x2, y2: float, layer}]",
         },
         "component_groups": "{prefix: {count: int, type, examples: [ref]}}",
-        "footprints": "[{reference, value, lib_id, layer, x: float, y: float, angle: float, type: smd|through_hole|mixed, mpn, manufacturer, description, exclude_from_bom: bool, exclude_from_pos: bool, dnp: bool, pad_nets: {pad_number: {net, pin}}, connected_nets: [string]}]",
+        "footprints": "[{reference, value, library, layer, x: float, y: float, angle: float, type: smd|through_hole|mixed, mpn, manufacturer, description, exclude_from_bom: bool, exclude_from_pos: bool, dnp: bool, pad_nets: {pad_number: {net, pin}}, connected_nets: [string]}]",
         "tracks": {
             "segment_count": "int", "arc_count": "int",
             "width_distribution": "{width_mm_str: count}",

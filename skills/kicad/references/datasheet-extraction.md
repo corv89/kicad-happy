@@ -208,10 +208,10 @@ Category-dependent. Include whatever the datasheet provides:
 ```json
 {
   "gbw_hz": 1000000,
-  "slew_rate_vus": 0.3,
-  "input_offset_voltage_mv": 2.0,
-  "open_loop_gain_db": 100,
-  "input_impedance_ohms": 2000000,
+  "slew_vus": 0.3,
+  "vos_mv": 2.0,
+  "aol_db": 100,
+  "rin_ohms": 2000000,
   "cmrr_db": 85
 }
 ```
@@ -310,6 +310,12 @@ Filled by the cache manager and scorer — the extractor only needs to provide `
 ### ESD protection (USBLC6-2SC6, etc.)
 - **Critical:** Pin-to-pin mapping (which I/O protects which line), clamping voltage, parasitic capacitance
 - Correct wiring is essential — swapped I/O pins provide no protection
+
+### Comparators (LM393, TLV3201, etc.)
+- **Critical:** Propagation delay (tPD), input offset voltage, supply range, output type (push-pull vs open-drain)
+- For open-drain outputs: maximum sink current, required pull-up resistor value
+- Input common-mode range — determines usable voltage range for comparison
+- Hysteresis: internal (if any) and external resistor recommendations
 
 ### MOSFETs (BSS138, IRF540, etc.)
 - **Critical:** VGS threshold range, RDS(on), maximum VDS, maximum ID, gate charge
