@@ -4193,8 +4193,9 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["return_path_continuity"] = return_path
 
     if include_trace_segments:
-        result["_raw_tracks"] = tracks
-        result["_raw_vias"] = vias
+        result["tracks"]["segments"] = tracks.get("segments", [])
+        result["tracks"]["arcs"] = tracks.get("arcs", [])
+        result["vias"]["vias"] = vias.get("vias", [])
 
     return result
 
@@ -4263,15 +4264,6 @@ def main():
 
     result = analyze_pcb(args.pcb, proximity=args.proximity,
                          include_trace_segments=args.full)
-
-    if args.full:
-        raw_tracks = result.pop("_raw_tracks", None)
-        raw_vias = result.pop("_raw_vias", None)
-        if raw_tracks:
-            result["tracks"]["segments"] = raw_tracks.get("segments", [])
-            result["tracks"]["arcs"] = raw_tracks.get("arcs", [])
-        if raw_vias:
-            result["vias"]["vias"] = raw_vias.get("vias", [])
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)

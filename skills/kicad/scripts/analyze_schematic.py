@@ -463,7 +463,7 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
     return components
 
 
-def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict | None = None, pin_net: dict | None = None) -> dict:
+def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     """Analyze signal processing circuits: filters, dividers, feedback networks.
 
     Orchestrator that calls individual detector functions from signal_detectors.py.
@@ -498,17 +498,7 @@ def analyze_signal_paths(components: list[dict], nets: dict, lib_symbols: dict |
         _merge_series_dividers,
     )
 
-    if pin_net is None:
-        pin_net = build_pin_to_net_map(nets)
-    if lib_symbols is None:
-        lib_symbols = {}
-
-    ctx = AnalysisContext(
-        components=components,
-        nets=nets,
-        lib_symbols=lib_symbols,
-        pin_net=pin_net,
-    )
+    nets = ctx.nets
 
     # Run detectors in dependency order
     vd_result = detect_voltage_dividers(ctx)
@@ -1632,6 +1622,8 @@ def identify_subcircuits(ctx: AnalysisContext) -> list[dict]:
     nets = ctx.nets
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
     subcircuits = []
 
     ics = [c for c in components if c["type"] == "ic"]
@@ -1650,7 +1642,7 @@ def identify_subcircuits(ctx: AnalysisContext) -> list[dict]:
         # Skip power/ground nets — every IC shares VCC/GND, inflating neighbors
         neighbors = set()
         for net_name in ic_nets:
-            if _is_power_net_name(net_name) or _is_ground_name(net_name):
+            if is_power_net(net_name) or is_ground(net_name):
                 continue
             if net_name in nets:
                 for p in nets[net_name]["pins"]:
@@ -2575,7 +2567,7 @@ def parse_legacy_schematic(path: str) -> dict:
     subcircuits = identify_subcircuits(ctx)
 
     # Signal path and filter analysis
-    signal_analysis = analyze_signal_paths(all_components, nets, lib_symbols, pin_net=pin_net)
+    signal_analysis = analyze_signal_paths(ctx)
 
     # Design rule analysis
     design_analysis = analyze_design_rules(ctx, results_in=signal_analysis)
@@ -3051,9 +3043,8 @@ def _detect_cross_domain_signals(ctx: AnalysisContext, power_domains: dict,
     return cross_domain
 
 
-def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
-    """Detect I2C, SPI, UART, CAN, SDIO buses and check configuration."""
-    components = ctx.components
+def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
+    """Detect I2C buses by net name and pin name matching."""
     nets = ctx.nets
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
@@ -3061,9 +3052,9 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
     is_ground = ctx.is_ground
     is_power_net = ctx.is_power_net
 
-    buses = {"i2c": [], "spi": [], "uart": [], "can": []}
+    results = []
 
-    # I2C: look for SDA/SCL net pairs by net name
+    # Look for SDA/SCL net pairs by net name
     i2c_nets = {}
     for net_name in nets:
         nu = net_name.upper()
@@ -3109,7 +3100,7 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                 load_count = len(devices)
                 # Typical I2C input capacitance: ~5pF per device pin
                 estimated_cin_pF = load_count * 5
-                buses["i2c"].append({
+                results.append({
                     "net": net_name,
                     "line": line,
                     "devices": devices,
@@ -3162,7 +3153,7 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
 
             if devices:  # Skip connector-only routing with no ICs
                 load_count = len(devices)
-                buses["i2c"].append({
+                results.append({
                     "net": net_name,
                     "line": bus_type,
                     "devices": devices,
@@ -3172,16 +3163,20 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                     "has_pull_up": len(pullups) > 0,
                 })
 
-    # SPI: look for MOSI/MISO/SCK/CS patterns (and newer COPI/CIPO/SDI/SDO)
-    # Build a set of nets already identified as SPI to guard I2C pin-name
-    # detection against false positives (SCL substring matches on SCLK).
+    return results
+
+
+def _detect_spi_buses(ctx: AnalysisContext) -> list[dict]:
+    """Detect SPI buses by MOSI/MISO/SCK/CS patterns (and newer COPI/CIPO/SDI/SDO)."""
+    nets = ctx.nets
+    comp_lookup = ctx.comp_lookup
+
     _spi_net_kw = ("MOSI", "MISO", "SCK", "SCLK", "COPI", "CIPO", "SDI", "SDO")
     _spi_canon = {  # normalize alternative names to canonical SPI signals
         "COPI": "MOSI", "SDO": "MOSI", "SDI": "MISO", "CIPO": "MISO",
         "SCLK": "SCK",
     }
     spi_signals = {}
-    spi_nets: set[str] = set()
     for net_name, net_info in nets.items():
         nu = net_name.upper()
         for kw in _spi_net_kw:
@@ -3193,7 +3188,6 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                     "devices": [p["component"] for p in net_info["pins"]
                                 if comp_lookup.get(p["component"], {}).get("type") == "ic"],
                 }
-                spi_nets.add(net_name)
         # Also check pin names
         for p in net_info["pins"]:
             pn = p.get("pin_name", "").upper()
@@ -3206,8 +3200,8 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                         "devices": [pp["component"] for pp in net_info["pins"]
                                     if comp_lookup.get(pp["component"], {}).get("type") == "ic"],
                     }
-                    spi_nets.add(net_name)
 
+    results = []
     for bus_id, signals in spi_signals.items():
         if len(signals) >= 2:  # At least 2 SPI signals to count as a bus
             # Skip if no ICs on any signal net (connector-only routing)
@@ -3218,13 +3212,20 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
             all_spi_devs = set()
             for sig_data in signals.values():
                 all_spi_devs.update(sig_data.get("devices", []))
-            buses["spi"].append({
+            results.append({
                 "bus_id": bus_id,
                 "signals": signals,
                 "load_count": len(all_spi_devs),
             })
 
-    # UART: look for TX/RX pairs (exclude other protocols that happen to contain TX/RX)
+    return results
+
+
+def _detect_uart_buses(ctx: AnalysisContext) -> list[dict]:
+    """Detect UART buses by TX/RX net name patterns."""
+    nets = ctx.nets
+    comp_lookup = ctx.comp_lookup
+
     _uart_exclude = ("CAN", "SPI", "I2C", "MOSI", "MISO", "SCL", "SDA",
                      "RMII", "MII", "EMAC", "ENET", "ETH",
                      "PCIE", "PCI_", "HDMI", "LVDS", "MIPI",
@@ -3244,10 +3245,17 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                 "devices": devices,
                 "pin_count": len(net_info["pins"]),
             }
-    if uart_nets:
-        buses["uart"] = list(uart_nets.values())
 
-    # SDIO/SD/eMMC: look for CLK + CMD + D0 minimum
+    return list(uart_nets.values())
+
+
+def _detect_sdio_buses(ctx: AnalysisContext) -> list[dict]:
+    """Detect SDIO/SD/eMMC buses by CLK + CMD + D0 minimum."""
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    is_power_net = ctx.is_power_net
+
     _sdio_prefixes = ("SDIO", "SD_", "SD1_", "SD2_", "EMMC", "MMC", "WL_SDIO")
     sdio_signals = {}
     for net_name in nets:
@@ -3283,6 +3291,7 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
             sdio_signals.setdefault(bus_key, {})[sig_type] = net_name
 
     # Build SDIO bus entries
+    results = []
     for bus_key, sigs in sdio_signals.items():
         if "CLK" not in sigs or "CMD" not in sigs or "D0" not in sigs:
             continue
@@ -3314,7 +3323,7 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                     if comp_lookup.get(p["component"], {}).get("type") == "ic":
                         all_devices.add(p["component"])
 
-        buses.setdefault("sdio", []).append({
+        results.append({
             "bus_id": bus_key,
             "bus_width": bus_width,
             "signals": {sig: net for sig, net in sigs.items()},
@@ -3323,7 +3332,15 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
             "pullup_signals": pullup_nets,
         })
 
-    # CAN: look for CAN_TX/CAN_RX nets, CANH/CANL, or CAN transceiver ICs
+    return results
+
+
+def _detect_can_buses(ctx: AnalysisContext) -> list[dict]:
+    """Detect CAN buses by net name keywords and transceiver IC presence."""
+    components = ctx.components
+    nets = ctx.nets
+    comp_lookup = ctx.comp_lookup
+
     can_keywords = ("can_tx", "can_rx", "cantx", "canrx", "canh", "canl", "can_h", "can_l")
     # SN65HVD2xx/10xx are CAN; SN65HVD7x are RS-485 -- use specific prefixes
     can_transceiver_kw = ("sn65hvd2", "sn65hvd10", "mcp2551", "mcp2562", "mcp251",
@@ -3350,10 +3367,15 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                     "transceiver": comp["reference"],
                     "devices": [comp["reference"]],
                 }
-    if can_nets_found:
-        buses["can"] = list(can_nets_found.values())
 
-    # RS-485/RS-422: detect transceiver ICs by part number
+    return list(can_nets_found.values())
+
+
+def _detect_rs485_buses(ctx: AnalysisContext) -> list[dict]:
+    """Detect RS-485/RS-422 buses by transceiver IC part number."""
+    components = ctx.components
+    pin_net = ctx.pin_net
+
     _rs485_kw = ("max485", "max3485", "max13485", "max14840", "max22500",
                  "sn65hvd7", "sn65hvd3", "sn75176", "sn75lbc",
                  "thvd14", "thvd15", "thvd16",
@@ -3362,6 +3384,8 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                  "adm485", "adm2485", "adm2587", "adm3485",
                  "ltc285", "ltc248", "ltc249",
                  "st3485", "st485")
+
+    results = []
     for comp in components:
         if comp["type"] != "ic":
             continue
@@ -3404,7 +3428,29 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
             entry["de_net"] = de_net
         if re_net:
             entry["re_net"] = re_net
-        buses.setdefault("rs485", []).append(entry)
+        results.append(entry)
+
+    return results
+
+
+def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
+    """Detect I2C, SPI, UART, CAN, SDIO, RS-485 buses and check configuration."""
+    nets = ctx.nets
+
+    buses: dict = {
+        "i2c": _detect_i2c_buses(ctx),
+        "spi": _detect_spi_buses(ctx),
+        "uart": _detect_uart_buses(ctx),
+        "can": _detect_can_buses(ctx),
+    }
+
+    sdio = _detect_sdio_buses(ctx)
+    if sdio:
+        buses["sdio"] = sdio
+
+    rs485 = _detect_rs485_buses(ctx)
+    if rs485:
+        buses["rs485"] = rs485
 
     # SPI enrichment: add chip_select count and bus_mode
     for spi_entry in buses.get("spi", []):
@@ -3459,6 +3505,8 @@ def _detect_differential_pairs(ctx: AnalysisContext) -> list:
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     parsed_values = ctx.parsed_values
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
 
     diff_pairs = []
 
@@ -3491,9 +3539,9 @@ def _detect_differential_pairs(ctx: AnalysisContext) -> list:
                     if pair_key in found_pairs:
                         continue
                     # Skip power/ground nets (V+/V-, IN+/IN- on power rails)
-                    if _is_power_net_name(pos_real) or _is_power_net_name(neg_real):
+                    if is_power_net(pos_real) or is_power_net(neg_real):
                         continue
-                    if _is_ground_name(pos_real) or _is_ground_name(neg_real):
+                    if is_ground(pos_real) or is_ground(neg_real):
                         continue
                     found_pairs.add(pair_key)
 
@@ -4619,6 +4667,8 @@ def analyze_pdn_impedance(ctx: AnalysisContext, signal_analysis: dict | None = N
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
     # EQ-062: |Z| = √(ESR²+(ωL-1/ωC)²) swept over frequency
     # Package-dependent parasitics
     # Typical MLCC parasitics — aligned with emc_formulas.py values
@@ -4670,9 +4720,9 @@ def analyze_pdn_impedance(ctx: AnalysisContext, signal_analysis: dict | None = N
     for net_name, net_info in nets.items():
         if net_name.startswith("__unnamed_"):
             continue
-        if _is_ground_name(net_name):
+        if is_ground(net_name):
             continue
-        if not _is_power_net_name(net_name):
+        if not is_power_net(net_name):
             continue
 
         for p in net_info["pins"]:
@@ -4686,7 +4736,7 @@ def analyze_pdn_impedance(ctx: AnalysisContext, signal_analysis: dict | None = N
             n1, _ = pin_net.get((p["component"], "1"), (None, None))
             n2, _ = pin_net.get((p["component"], "2"), (None, None))
             other = n2 if n1 == net_name else n1
-            if not _is_ground_name(other):
+            if not is_ground(other):
                 continue
 
             pkg = _extract_package_code(comp.get("footprint", ""))
@@ -4836,6 +4886,8 @@ def analyze_sleep_current(ctx: AnalysisContext,
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
     rail_currents: dict[str, list[dict]] = {}
     _get_two_pin_nets = ctx.get_two_pin_nets
 
@@ -4852,9 +4904,9 @@ def analyze_sleep_current(ctx: AnalysisContext,
 
         pwr_net = None
         gnd_net = None
-        if _is_power_net_name(n1) and not _is_ground_name(n1) and _is_ground_name(n2):
+        if is_power_net(n1) and not is_ground(n1) and is_ground(n2):
             pwr_net, gnd_net = n1, n2
-        elif _is_power_net_name(n2) and not _is_ground_name(n2) and _is_ground_name(n1):
+        elif is_power_net(n2) and not is_ground(n2) and is_ground(n1):
             pwr_net, gnd_net = n2, n1
 
         if pwr_net and gnd_net:
@@ -4882,9 +4934,9 @@ def analyze_sleep_current(ctx: AnalysisContext,
             continue
 
         # Pull-up resistor: one side to power rail, other side to a signal net
-        if _is_power_net_name(n1) and not _is_ground_name(n1) and not _is_power_net_name(n2):
+        if is_power_net(n1) and not is_ground(n1) and not is_power_net(n2):
             pwr_net = n1
-        elif _is_power_net_name(n2) and not _is_ground_name(n2) and not _is_power_net_name(n1):
+        elif is_power_net(n2) and not is_ground(n2) and not is_power_net(n1):
             pwr_net = n2
         else:
             continue
@@ -4927,7 +4979,7 @@ def analyze_sleep_current(ctx: AnalysisContext,
                 # Find what power rail this LED circuit connects to
                 r_n1, r_n2 = _get_two_pin_nets(r_comp["reference"])
                 for rn in (r_n1, r_n2):
-                    if rn and rn != net_name and _is_power_net_name(rn) and not _is_ground_name(rn):
+                    if rn and rn != net_name and is_power_net(rn) and not is_ground(rn):
                         v_rail = _estimate_rail_voltage(rn)
                         if v_rail and v_rail > 0:
                             # LED forward voltage ~2V typical
@@ -5065,8 +5117,7 @@ _DERATING_PROFILES = {
 }
 
 
-def analyze_voltage_derating(components: list[dict], nets: dict,
-                             signal_analysis: dict, pin_net: dict,
+def analyze_voltage_derating(ctx: AnalysisContext, signal_analysis: dict,
                              project_dir: str | None = None,
                              derating_profile: str = "commercial") -> dict:
     """Check component voltage/power ratings against applied conditions.
@@ -5078,6 +5129,11 @@ def analyze_voltage_derating(components: list[dict], nets: dict,
 
     Derating profiles: 'commercial' (default), 'military', 'automotive'.
     """
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
 
     def _parse_voltage_rating(value_str: str) -> float | None:
         if not value_str:
@@ -5113,13 +5169,13 @@ def analyze_voltage_derating(components: list[dict], nets: dict,
         n1, _ = pin_net.get((ref, "1"), (None, None))
         n2, _ = pin_net.get((ref, "2"), (None, None))
         pwr_net = gnd_net = None
-        if n1 and _is_power_net_name(n1) and not _is_ground_name(n1):
+        if n1 and is_power_net(n1) and not is_ground(n1):
             pwr_net = n1
-        if n2 and _is_power_net_name(n2) and not _is_ground_name(n2):
+        if n2 and is_power_net(n2) and not is_ground(n2):
             pwr_net = pwr_net or n2
-        if n1 and _is_ground_name(n1):
+        if n1 and is_ground(n1):
             gnd_net = n1
-        if n2 and _is_ground_name(n2):
+        if n2 and is_ground(n2):
             gnd_net = gnd_net or n2
         return pwr_net, gnd_net, n1, n2
 
@@ -5220,9 +5276,9 @@ def analyze_voltage_derating(components: list[dict], nets: dict,
         max_rail_name = ""
         for pin in comp.get("pins", []):
             net_name, _ = pin_net.get((ref, pin["number"]), (None, None))
-            if not net_name or _is_ground_name(net_name):
+            if not net_name or is_ground(net_name):
                 continue
-            if _is_power_net_name(net_name):
+            if is_power_net(net_name):
                 v = _get_rail_voltage(net_name)
                 if v is not None and v > max_rail_v:
                     max_rail_v, max_rail_name = v, net_name
@@ -5253,8 +5309,8 @@ def analyze_voltage_derating(components: list[dict], nets: dict,
         ref = comp["reference"]
         pwr_net, gnd_net, n1, n2 = _find_power_net(ref)
         if not pwr_net or not gnd_net:
-            v1 = _get_rail_voltage(n1) if n1 and _is_power_net_name(n1) else None
-            v2 = _get_rail_voltage(n2) if n2 and _is_power_net_name(n2) else None
+            v1 = _get_rail_voltage(n1) if n1 and is_power_net(n1) else None
+            v2 = _get_rail_voltage(n2) if n2 and is_power_net(n2) else None
             if v1 is not None and v2 is not None and v1 != v2:
                 v_across = abs(v1 - v2)
             elif pwr_net and gnd_net:
@@ -5494,6 +5550,8 @@ def analyze_power_budget(ctx: AnalysisContext,
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
 
     # Rough current estimates by IC type keywords (mA)
     ic_current_estimates = {
@@ -5520,7 +5578,7 @@ def analyze_power_budget(ctx: AnalysisContext,
             continue
         ref = comp["reference"]
         for pnum, (net_name, _) in ref_pins.get(ref, {}).items():
-            if net_name and _is_power_net_name(net_name) and not _is_ground_name(net_name):
+            if net_name and is_power_net(net_name) and not is_ground(net_name):
                 # Check if this is a power pin (by pin type or name)
                 if net_name in nets:
                     for p in nets[net_name]["pins"]:
@@ -5633,6 +5691,8 @@ def analyze_power_sequencing(ctx: AnalysisContext,
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
     regulators = signal_analysis.get("power_regulators", [])
     if not regulators:
         return {}
@@ -5679,10 +5739,10 @@ def analyze_power_sequencing(ctx: AnalysisContext,
             }
 
             # Determine what drives EN
-            if _is_power_net_name(en_net):
+            if is_power_net(en_net):
                 dep_entry["en_source"] = "always_on"
                 dep_entry["en_driven_by"] = en_net
-            elif _is_ground_name(en_net):
+            elif is_ground(en_net):
                 dep_entry["en_source"] = "disabled"
                 dep_entry["en_driven_by"] = en_net
             elif en_net in nets:
@@ -5919,6 +5979,8 @@ def analyze_test_coverage(ctx: AnalysisContext) -> dict:
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_power_net = ctx.is_power_net
+    is_ground = ctx.is_ground
 
     # Find test points
     test_points = []
@@ -6003,7 +6065,7 @@ def analyze_test_coverage(ctx: AnalysisContext) -> dict:
         category = ""
 
         # Power rails
-        if _is_power_net_name(net_name) and not _is_ground_name(net_name):
+        if is_power_net(net_name) and not is_ground(net_name):
             is_key = True
             category = "power_rail"
 
@@ -6215,6 +6277,7 @@ def analyze_usb_compliance(ctx: AnalysisContext,
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_ground = ctx.is_ground
 
     # Find USB connectors
     usb_connectors = []
@@ -6279,7 +6342,7 @@ def analyze_usb_compliance(ctx: AnalysisContext,
                             rn1, _ = pin_net.get((rc["reference"], "1"), (None, None))
                             rn2, _ = pin_net.get((rc["reference"], "2"), (None, None))
                             other = rn2 if rn1 == net_name else rn1
-                            if _is_ground_name(other):
+                            if is_ground(other):
                                 if is_cc1:
                                     cc1_ok = True
                                 else:
@@ -6399,6 +6462,7 @@ def analyze_inrush_current(ctx: AnalysisContext,
     pin_net = ctx.pin_net
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
+    is_ground = ctx.is_ground
     regulators = signal_analysis.get("power_regulators", [])
     if not regulators:
         return {}
@@ -6425,7 +6489,7 @@ def analyze_inrush_current(ctx: AnalysisContext,
             n1, _ = pin_net.get((comp["reference"], "1"), (None, None))
             n2, _ = pin_net.get((comp["reference"], "2"), (None, None))
             other = n2 if n1 == out_rail else n1
-            if _is_ground_name(other):
+            if is_ground(other):
                 total_cap_f += cap_val
                 output_caps.append({
                     "ref": comp["reference"],
@@ -6642,7 +6706,7 @@ def analyze_schematic(path: str) -> dict:
     connectivity_issues = analyze_connectivity(all_components, nets, all_no_connects)
 
     # Signal path and filter analysis
-    signal_analysis = analyze_signal_paths(all_components, nets, all_lib_symbols, pin_net=pin_net)
+    signal_analysis = analyze_signal_paths(ctx)
 
     # Deep EE analysis: power domains, buses, differential pairs, ERC
     design_analysis = analyze_design_rules(ctx, results_in=signal_analysis)
@@ -6672,7 +6736,7 @@ def analyze_schematic(path: str) -> dict:
     # ---- Tier 3: High-level design analyses ----
     pdn_analysis = analyze_pdn_impedance(ctx, signal_analysis)
     sleep_current = analyze_sleep_current(ctx, signal_analysis)
-    voltage_derating = analyze_voltage_derating(all_components, nets, signal_analysis, pin_net,
+    voltage_derating = analyze_voltage_derating(ctx, signal_analysis,
                                                  project_dir=str(Path(path).parent))
     power_budget = analyze_power_budget(ctx, signal_analysis)
     power_sequencing = analyze_power_sequencing(ctx, signal_analysis)
