@@ -162,6 +162,21 @@ def evaluate_lc_filter(det, sim_results):
         result["status"] = "fail"
         result["note"] = f"{f_error:.1f}% deviation from expected resonance"
 
+    # Q factor evaluation for power supply LC filters
+    if bw_lo is not None and bw_hi is not None and bw_hi > bw_lo:
+        q_sim = result["simulated"]["Q_factor"]
+        if q_sim > 20:
+            if result.get("status") != "fail":
+                result["status"] = "warn"
+            warnings = result.get("warnings", [])
+            warnings.append(f"High Q factor ({q_sim:.1f}) — underdamped, risk of oscillation or ringing in power path")
+            result["warnings"] = warnings
+        elif q_sim > 10 and result.get("status") == "pass":
+            result["status"] = "warn"
+            warnings = result.get("warnings", [])
+            warnings.append(f"Q={q_sim:.1f} — moderately underdamped, consider adding series resistance for damping")
+            result["warnings"] = warnings
+
     return result
 
 
@@ -292,6 +307,25 @@ def evaluate_opamp_circuit(det, sim_results):
         result["status"] = "pass"
         result["note"] = "No expected gain to compare — reporting measured values"
 
+    # Multi-frequency gain flatness (Q6)
+    gain_low = sim_results.get("gain_low")
+    gain_high = sim_results.get("gain_high")
+    if gain_low is not None and gain_high is not None and gain_db is not None:
+        gains = [gain_db, gain_low, gain_high]
+        result["simulated"]["gain_low_dB"] = round(gain_low, 2)
+        result["simulated"]["gain_high_dB"] = round(gain_high, 2)
+        gain_spread_db = max(gains) - min(gains)
+        result["simulated"]["gain_spread_dB"] = round(gain_spread_db, 2)
+        if gain_spread_db > 3:
+            note = result.get("note", "") or ""
+            result["note"] = (note +
+                f" Gain varies {gain_spread_db:.1f} dB across frequency — frequency-dependent response.").strip()
+
+    # Phase at bandwidth (M6 — stability indicator)
+    phase_at_bw = sim_results.get("phase_at_bw")
+    if phase_at_bw is not None:
+        result["simulated"]["phase_at_bw_deg"] = round(phase_at_bw, 1)
+
     return result
 
 
@@ -332,6 +366,28 @@ def evaluate_crystal_circuit(det, sim_results):
     else:
         result["status"] = "warn"
         result["note"] = "Missing or insufficient load capacitors"
+
+    # Evaluate series resonance accuracy
+    if f_series is not None and det.get("frequency"):
+        nominal_freq = det["frequency"]
+        if nominal_freq > 0:
+            f_error_pct = abs(f_series - nominal_freq) / nominal_freq * 100
+            result["simulated"]["f_series_hz"] = f_series
+            result["simulated"]["f_error_pct"] = round(f_error_pct, 2)
+            if f_error_pct > 1:
+                result["status"] = "warn"
+                result["note"] = (result.get("note", "") +
+                    f" Series resonance {f_series/1e6:.3f} MHz deviates {f_error_pct:.1f}% from nominal.").strip()
+
+    if rm is not None:
+        result["simulated"]["motional_resistance_ohm"] = round(rm, 1)
+        freq_val = det.get("frequency", 0) or 0
+        rm_limit = 50000 if freq_val < 100e3 else 100  # 32kHz crystals have high Rm
+        if rm > rm_limit:
+            if result["status"] == "pass":
+                result["status"] = "warn"
+            result["note"] = (result.get("note", "") +
+                f" High motional resistance ({rm:.0f}\u03a9) \u2014 verify oscillator IC can drive this crystal.").strip()
 
     return result
 

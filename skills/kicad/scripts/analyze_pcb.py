@@ -2081,6 +2081,86 @@ def analyze_current_capacity(tracks: dict, vias: dict, zones: list[dict],
     }
 
 
+def _find_thermal_pads(fp: dict) -> list[dict]:
+    """Identify thermal/exposed pads on a footprint.
+
+    Returns list of pad dicts that are likely thermal pads —
+    large center pads on power/ground nets, typical of QFN/BGA packages.
+    """
+    pads = fp.get("pads", [])
+    if len(pads) < 3:
+        return []
+
+    # Calculate SMD pad area statistics (skip paste-only pads)
+    pad_areas: list[tuple[dict, float]] = []
+    for p in pads:
+        if p.get("type") != "smd":
+            continue
+        pad_layers = p.get("layers", [])
+        if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
+            continue
+        w = p.get("width", p.get("size_x", 0))
+        h = p.get("height", p.get("size_y", 0))
+        area = w * h
+        if area > 0:
+            pad_areas.append((p, area))
+
+    if not pad_areas:
+        return []
+
+    avg_area = sum(a for _, a in pad_areas) / len(pad_areas)
+    all_areas_sorted = sorted(a for _, a in pad_areas)
+    median_area = all_areas_sorted[len(all_areas_sorted) // 2]
+
+    thermal = []
+    for p, area in pad_areas:
+        pad_num = str(p.get("number", ""))
+        is_ep = pad_num in ("0", "EP", "")
+
+        # DFN/QFN variants use highest-numbered pad as EP — detect by
+        # area ratio (pad >= 3x the median signal pad area)
+        if not is_ep and median_area > 0:
+            other_areas = sorted(a for pad, a in pad_areas
+                                 if str(pad.get("number", "")) != pad_num)
+            if other_areas:
+                median_signal = other_areas[len(other_areas) // 2]
+                if median_signal > 0 and area >= median_signal * 3.0:
+                    is_ep = True
+
+        # Thermal pad: explicitly named EP/0 with area >= 2mm²,
+        # or any pad with area > 6mm² (large enough to need thermal vias)
+        if not ((is_ep and area >= 2.0) or area > 6.0):
+            continue
+
+        # Must be at least 2x the average pad area
+        if avg_area > 0 and area < avg_area * 2.0:
+            continue
+
+        # Must have a net — structural/shield pads with no net are not thermal
+        net_name = p.get("net_name", "")
+        pad_net_num = p.get("net_number", -1)
+        if not net_name or pad_net_num <= 0:
+            continue
+
+        # Must be on a ground or power net (thermal pads dissipate heat)
+        net_upper = net_name.upper()
+        is_power_or_gnd = (
+            net_upper in ("GND", "VSS", "AGND", "DGND", "PGND", "VCC", "VDD",
+                          "AVCC", "AVDD", "DVCC", "DVDD", "VBUS")
+            or net_upper.startswith("+")
+            or net_upper.startswith("V+")
+            or "GND" in net_upper
+            or "VCC" in net_upper
+            or "VDD" in net_upper
+        )
+        if not is_power_or_gnd and not is_ep:
+            continue
+
+        thermal.append(p)
+
+    return thermal
+
+
 def analyze_thermal_vias(footprints: list[dict], vias: dict,
                          zones: list[dict]) -> dict:
     """Provide facts for thermal analysis — via stitching, thermal pads, via-in-pad.
@@ -2158,12 +2238,10 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
 
         stitching.append(entry)
 
-    # Thermal pad detection — look for large center pads (pad 0 or EP)
-    # on QFN/BGA/DFN packages
+    # Thermal pad detection — use shared helper for QFN/BGA/DFN packages
     thermal_pads = []
     for fp in footprints:
         ref = fp.get("reference", "")
-        lib = fp.get("library", "").lower()
 
         # Skip component types that don't have thermal pads
         ref_prefix = ""
@@ -2175,78 +2253,12 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
         if ref_prefix in ("BT", "TP", "J"):
             continue
 
-        # Compute average SMD pad area for this footprint to detect thermal pads
-        # (thermal pads are typically the largest pad, at least 2x average)
-        smd_pad_areas = []
-        for pad in fp.get("pads", []):
-            if pad.get("type") == "smd":
-                # Skip paste-only pads (stencil apertures with no copper)
-                pad_layers = pad.get("layers", [])
-                if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
-                    continue
-                pw = pad.get("width", 0)
-                ph = pad.get("height", 0)
-                pa = pw * ph
-                if pa > 0:
-                    smd_pad_areas.append(pa)
-        avg_pad_area = sum(smd_pad_areas) / len(smd_pad_areas) if smd_pad_areas else 0
-        # Compute median for area-ratio EP detection
-        sorted_smd_areas = sorted(smd_pad_areas)
-        median_smd_area = sorted_smd_areas[len(sorted_smd_areas) // 2] if sorted_smd_areas else 0
-
-        for pad in fp.get("pads", []):
+        for pad in _find_thermal_pads(fp):
             pad_num = str(pad.get("number", ""))
-            # Thermal/exposed pads are typically numbered 0, EP, or have large area
-            is_ep = pad_num in ("0", "EP", "")
             w = pad.get("width", 0)
             h = pad.get("height", 0)
             pad_area = w * h
-
-            # DFN/QFN variants use highest-numbered pad as EP — detect by
-            # area ratio (pad ≥3x the median signal pad area)
-            if not is_ep and median_smd_area > 0:
-                other_areas = sorted(a for a in smd_pad_areas if a != pad_area)
-                if not other_areas:
-                    other_areas = sorted_smd_areas
-                if other_areas:
-                    median_signal = other_areas[len(other_areas) // 2]
-                    if median_signal > 0 and pad_area >= median_signal * 3.0:
-                        is_ep = True
-
-            # Only flag SMD pads that are genuine thermal pads:
-            # - Must be SMD type
-            # - Must be large enough (>=2mm² if EP/0, >6mm² otherwise)
-            # - Must be at least 2x the average pad area for this component
-            #   (thermal pads are distinctly larger than signal pads)
-            # - Must be on a ground or power net (thermal pads dissipate heat
-            #   and are almost always connected to GND or a power plane)
-            if pad.get("type") != "smd" or pad_area < 2.0:
-                continue
-            # Skip paste-only pads (stencil apertures with no copper)
-            pad_layers = pad.get("layers", [])
-            if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
-                continue
-            if not (is_ep or pad_area > 6.0):
-                continue
-            if avg_pad_area > 0 and pad_area < avg_pad_area * 2.0:
-                continue
-            # Must have a net — structural/shield pads with no net are not thermal
             net_name = pad.get("net_name", "")
-            pad_net_num = pad.get("net_number", -1)
-            if not net_name or pad_net_num <= 0:
-                continue
-            net_upper = net_name.upper()
-            is_power_or_gnd = (
-                net_upper in ("GND", "VSS", "AGND", "DGND", "PGND", "VCC", "VDD",
-                              "AVCC", "AVDD", "DVCC", "DVDD", "VBUS")
-                or net_upper.startswith("+")
-                or net_upper.startswith("V+")
-                or "GND" in net_upper
-                or "VCC" in net_upper
-                or "VDD" in net_upper
-            )
-            if not is_power_or_gnd and not is_ep:
-                continue
 
             ax = pad.get("abs_x", fp["x"])
             ay = pad.get("abs_y", fp["y"])
@@ -3049,6 +3061,7 @@ def compute_statistics(footprints: list[dict], tracks: dict, vias: dict,
         "total_track_length_mm": round(total_length, 2),
         "board_width_mm": outline["bounding_box"]["width"] if outline.get("bounding_box") else None,
         "board_height_mm": outline["bounding_box"]["height"] if outline.get("bounding_box") else None,
+        "board_area_mm2": round(outline["bounding_box"]["width"] * outline["bounding_box"]["height"], 1) if outline.get("bounding_box") else None,
         "net_count": sum(1 for v in (net_names or {}).values() if v),
         "routing_complete": connectivity.get("routing_complete", False),
         "unrouted_net_count": connectivity.get("unrouted_count", 0),
@@ -3652,91 +3665,16 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
         if ref_prefix in ("BT", "TP", "J"):
             continue
 
-        # Find thermal/exposed pads: large center SMD pads
-        # Criteria: pad type is SMD, area > 4mm², and either named EP/0 or
-        # the largest pad (by area) if it's significantly larger than others
-        pads = fp.get("pads", [])
-        if not pads:
-            continue
-
-        # Compute pad areas
-        pad_areas: list[tuple[dict, float]] = []
-        for pad in pads:
-            if pad.get("type") != "smd":
-                continue
-            # Skip paste-only pads (stencil apertures with no copper)
-            pad_layers = pad.get("layers", [])
-            if not any(l.endswith(".Cu") or l == "*.Cu" for l in pad_layers):
-                continue
-            w = pad.get("width", 0)
-            h = pad.get("height", 0)
-            area = w * h
-            if area > 0:
-                pad_areas.append((pad, area))
-
-        if not pad_areas:
-            continue
-
-        # Compute average SMD pad area for the 2x heuristic
-        avg_pad_area = sum(a for _, a in pad_areas) / len(pad_areas) if pad_areas else 0
-
-        # Find thermal pads
-        thermal_pads_found: list[tuple[dict, float]] = []
-        # Compute median signal pad area for area-ratio EP detection
-        all_areas_sorted = sorted(a for _, a in pad_areas)
-        median_pad_area = all_areas_sorted[len(all_areas_sorted) // 2] if all_areas_sorted else 0
-        for pad, area in pad_areas:
-            pad_num = str(pad.get("number", ""))
-            is_ep = pad_num in ("0", "EP", "")
-            # DFN/QFN variants use highest-numbered pad as EP — detect by
-            # area ratio (pad ≥3x the median signal pad area)
-            if not is_ep and median_pad_area > 0:
-                other_areas = sorted(a for p, a in pad_areas
-                                     if str(p.get("number", "")) != pad_num)
-                if other_areas:
-                    median_signal = other_areas[len(other_areas) // 2]
-                    if median_signal > 0 and area >= median_signal * 3.0:
-                        is_ep = True
-
-            # Thermal pad: explicitly named EP/0 with area >= 2mm²,
-            # or any pad with area > 6mm² (large enough to need thermal vias)
-            if not ((is_ep and area >= 2.0) or area > 6.0):
-                continue
-
-            # Must be at least 2x the average pad area (thermal pads are
-            # distinctly larger than signal pads on the same component)
-            if avg_pad_area > 0 and area < avg_pad_area * 2.0:
-                continue
-
-            # Must have a net — structural/shield pads with no net are not thermal
-            pad_net_name = pad.get("net_name", "")
-            pad_net_num = pad.get("net_number", -1)
-            if not pad_net_name or pad_net_num <= 0:
-                continue
-
-            # Must be on a ground or power net (thermal pads dissipate heat)
-            net_upper = pad_net_name.upper()
-            is_power_or_gnd = (
-                net_upper in ("GND", "VSS", "AGND", "DGND", "PGND", "VCC", "VDD",
-                              "AVCC", "AVDD", "DVCC", "DVDD", "VBUS")
-                or net_upper.startswith("+")
-                or net_upper.startswith("V+")
-                or "GND" in net_upper
-                or "VCC" in net_upper
-                or "VDD" in net_upper
-            )
-            if not is_power_or_gnd and not is_ep:
-                continue
-
-            thermal_pads_found.append((pad, area))
-
+        thermal_pads_found = _find_thermal_pads(fp)
         if not thermal_pads_found:
             continue
 
-        for pad, pad_area in thermal_pads_found:
+        pads = fp.get("pads", [])
+        for pad in thermal_pads_found:
             pad_num = str(pad.get("number", ""))
             w = pad.get("width", 0)
             h = pad.get("height", 0)
+            pad_area = w * h
             ax = pad.get("abs_x", fp["x"])
             ay = pad.get("abs_y", fp["y"])
             net_num = pad.get("net_number", -1)
@@ -4175,13 +4113,14 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         footprint_summary.append(fp_summary)
 
     result = {
+        "analyzer_type": "pcb",
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": version,
         "statistics": stats,
         "layers": layers,
         "setup": setup,
-        "nets": {v: k for k, v in net_names.items() if v},  # net_name -> net_index
+        "nets": {k: v for k, v in net_names.items() if v},  # net_id -> net_name
         "board_outline": outline,
         "component_groups": component_groups,
         "footprints": footprint_summary,

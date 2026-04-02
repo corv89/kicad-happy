@@ -224,6 +224,11 @@ def _pct_delta(old, new):
 
 def detect_type(data):
     """Infer analyzer type from top-level JSON keys."""
+    # Prefer explicit analyzer_type field when present
+    at = data.get("analyzer_type")
+    if at:
+        return at
+    # Fallback heuristic for older JSON files
     if "signal_analysis" in data:
         return "schematic"
     if "footprints" in data and "tracks" in data:

@@ -504,6 +504,12 @@ def generate_opamp_circuit(det, output_file, context=None, parasitics=None):
     f_meas = max(1, min(f_meas, 1000))  # Clamp to [1, 1000] Hz
     f_meas_str = _format_eng(f_meas)
 
+    # Multi-frequency gain measurement points (Q6)
+    f_low = max(1, f_meas / 10)
+    f_high = min(f_meas * 10, 10e6)
+    f_low_str = _format_eng(f_low)
+    f_high_str = _format_eng(f_high)
+
     model_extra = {
         "model_source": model_source,
         "model_gbw": str(model_specs.get("gbw_hz", 0) if model_specs else 0),
@@ -538,10 +544,13 @@ IAC 0 {stim_net} DC 0 AC 1u
         analyses = [("ac", "dec 100 1 100Meg")]
         measurements = [
             ("gain_1k", "find", f"vdb({out_net})", f"at={f_meas_str}"),
+            ("gain_low", "find", f"vdb({out_net})", f"at={f_low_str}"),
+            ("gain_high", "find", f"vdb({out_net})", f"at={f_high_str}"),
             ("tz_mag", "find", f"vm({out_net})", f"at={f_meas_str}"),
             ("tz_ohms", "let", "tz_mag / 1e-6", True),
             ("target", "let", "gain_1k - 3"),
             ("bw_3db", "when", f"vdb({out_net})", "target", "fall=1"),
+            ("phase_at_bw", "find", f"vp({out_net})", "bw_3db"),
         ]
         model_extra["expected_tz"] = str(expected_tz)
         return SpiceTestbench(circuit, analyses, measurements, model_extra)
@@ -571,8 +580,11 @@ VAC {stim_net} 0 DC 0 AC 1
     analyses = [("ac", "dec 100 1 100Meg")]
     measurements = [
         ("gain_1k", "find", f"vdb({out_net})", f"at={f_meas_str}"),
+        ("gain_low", "find", f"vdb({out_net})", f"at={f_low_str}"),
+        ("gain_high", "find", f"vdb({out_net})", f"at={f_high_str}"),
         ("target", "let", "gain_1k - 3"),
         ("bw_3db", "when", f"vdb({out_net})", "target", "fall=1"),
+        ("phase_at_bw", "find", f"vp({out_net})", "bw_3db"),
     ]
     return SpiceTestbench(circuit, analyses, measurements, model_extra)
 
