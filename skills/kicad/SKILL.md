@@ -298,6 +298,33 @@ Auto-detects analyzer type (schematic, PCB, EMC, SPICE). Reports:
 
 The GitHub Action supports `diff-base: true` to automatically compare PR changes against the base branch.
 
+### Thermal Hotspot Estimation
+
+Estimates junction temperatures of power-dissipating components by combining schematic power data with PCB thermal infrastructure (copper pour, thermal vias, package type). Use when the user says "check thermals", "thermal analysis", "will this overheat", "junction temperature", "power dissipation", or "thermal design".
+
+```bash
+# Run thermal analysis (requires both schematic and PCB JSON)
+python3 <skill-path>/scripts/analyze_thermal.py -s analysis.json -p pcb.json
+
+# Human-readable text report
+python3 <skill-path>/scripts/analyze_thermal.py -s analysis.json -p pcb.json --text
+
+# Custom ambient temperature (default: 25°C)
+python3 <skill-path>/scripts/analyze_thermal.py -s analysis.json -p pcb.json --ambient 40 -o thermal.json
+```
+
+Models each power component (LDO, switching regulator, shunt resistor) as a point heat source. Computes Tj = T_ambient + P_diss × Rθ_JA_effective, where Rθ_JA comes from a package lookup table (SOT-223: 60°C/W, QFN-5x5: 25°C/W, etc.) and is corrected for PCB thermal vias and copper pour. Rules:
+
+| Rule | Condition | Severity |
+|------|-----------|----------|
+| TS-001 | Tj exceeds absolute maximum | CRITICAL |
+| TS-002 | Tj within 15°C of absolute maximum | HIGH |
+| TS-003 | Tj > 85°C (may affect nearby passives) | MEDIUM |
+| TS-004 | P > 0.5W with no thermal vias | MEDIUM |
+| TS-005 | Significant power, within safe limits | INFO |
+| TP-001 | MLCC within 10mm of hot component | LOW |
+| TP-002 | Electrolytic cap within 10mm of hot component | MEDIUM |
+
 ## Reference Files
 
 Detailed methodology and format documentation lives in reference files. Read these as needed — they provide deep-dive content beyond what the scripts output automatically.

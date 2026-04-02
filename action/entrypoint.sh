@@ -211,6 +211,28 @@ if [ -n "$SCH_JSON" ] || [ -n "$PCB_JSON" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Run thermal analysis (optional, requires both schematic and PCB)
+# ---------------------------------------------------------------------------
+
+THERMAL_JSON=""
+if [ -n "$SCH_JSON" ] && [ -n "$PCB_JSON" ]; then
+    echo "::group::Thermal Analysis"
+    THERMAL_JSON="$OUTDIR/thermal.json"
+    THERMAL_ARGS=(--schematic "$SCH_JSON" --pcb "$PCB_JSON" --output "$THERMAL_JSON")
+    if [ -n "$DS_DIR" ] && [ -d "$DS_DIR/extracted" ]; then
+        THERMAL_ARGS+=(--datasheets "$DS_DIR/extracted")
+    fi
+    if python3 "$SCRIPTS/analyze_thermal.py" "${THERMAL_ARGS[@]}" 2>"$OUTDIR/thermal.err"; then
+        SUMMARY=$(python3 -c "import json; d=json.load(open('$THERMAL_JSON')); s=d.get('summary',{}); print(f\"score {s.get('thermal_score',0)}/100, {s.get('critical',0)} crit, {s.get('high',0)} high, {s.get('components_analyzed',0)} components\")" 2>/dev/null || echo "?")
+        echo "Thermal: $SUMMARY"
+    else
+        echo "::notice::Thermal analysis failed (non-blocking)"
+        THERMAL_JSON=""
+    fi
+    echo "::endgroup::"
+fi
+
+# ---------------------------------------------------------------------------
 # Diff against base branch (PR only, opt-in)
 # ---------------------------------------------------------------------------
 
@@ -283,6 +305,7 @@ ARGS=()
 [ -n "$SPICE_JSON" ] && [ -f "$SPICE_JSON" ] && ARGS+=(--spice "$SPICE_JSON")
 [ -n "$EMC_JSON" ] && [ -f "$EMC_JSON" ] && ARGS+=(--emc "$EMC_JSON")
 [ -n "$DIFF_JSON" ] && [ -f "$DIFF_JSON" ] && ARGS+=(--diff "$DIFF_JSON")
+[ -n "$THERMAL_JSON" ] && [ -f "$THERMAL_JSON" ] && ARGS+=(--thermal "$THERMAL_JSON")
 ARGS+=(--severity "${INPUT_SEVERITY:-all}")
 ARGS+=(--derating-profile "${INPUT_DERATING_PROFILE:-commercial}")
 ARGS+=(--output "$REPORT")
