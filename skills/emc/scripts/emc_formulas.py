@@ -948,13 +948,11 @@ def trace_resistance_ohm(length_mm: float, width_mm: float,
 
 def trace_inductance_h(length_mm: float, width_mm: float,
                        height_mm: float = 0.2) -> float:
-    """Approximate inductance of a microstrip trace over a reference plane.
+    """Total inductance of a microstrip trace over a reference plane.
 
-    # EQ-091: L_nH ≈ 5 × length × ln(2h/w) (microstrip trace inductance)
-    # Source: Johnson & Graham "High-Speed Signal Propagation" Ch. 5
-    # Source: IPC-2141A Section 4.2.1 (microstrip approximation)
-    L ≈ (μ₀ / (2π)) × h × ln(2h/w) per unit length, simplified to:
-    L_nH ≈ 5 × length_mm × ln(2 × height / width) for typical PCBs.
+    # EQ-091: L = Z₀/v_phase × length (Wheeler microstrip inductance)
+    # Delegates to trace_inductance_nh_per_mm() for the per-mm value,
+    # which uses the Wheeler formula (typical: 0.3-0.8 nH/mm).
 
     Args:
         length_mm: Trace length in mm.
@@ -964,13 +962,9 @@ def trace_inductance_h(length_mm: float, width_mm: float,
     Returns:
         Inductance in Henries.
     """
-    if width_mm <= 0 or height_mm <= 0 or length_mm <= 0:
+    if length_mm <= 0:
         return 0.0
-    ratio = 2.0 * height_mm / width_mm
-    if ratio <= 0:
-        return 0.0
-    # nH per mm ≈ 5 × ln(2h/w) for microstrip
-    l_nh_per_mm = 5.0 * math.log(max(ratio, 1.01))
+    l_nh_per_mm = trace_inductance_nh_per_mm(width_mm, height_mm)
     return l_nh_per_mm * length_mm * 1e-9
 
 

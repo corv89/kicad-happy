@@ -989,6 +989,54 @@ def extract_board_outline(root: list) -> dict:
     all_x = []
     all_y = []
     for e in edges:
+        if e["type"] == "circle":
+            # Circle: bounding box is center ± radius
+            cx, cy = e["center"]
+            ex, ey = e["end"]
+            r = math.sqrt((ex - cx) ** 2 + (ey - cy) ** 2)
+            all_x.extend([cx - r, cx + r])
+            all_y.extend([cy - r, cy + r])
+            continue
+        if e["type"] == "arc" and e.get("mid"):
+            # Arc: include start/end plus any cardinal extrema the arc passes through
+            sx, sy = e["start"]
+            mx, my = e["mid"]
+            ex, ey = e["end"]
+            all_x.extend([sx, ex])
+            all_y.extend([sy, ey])
+            # Compute center and radius from 3 points
+            D = 2.0 * (sx * (my - ey) + mx * (ey - sy) + ex * (sy - my))
+            if abs(D) > 1e-10:
+                ss = sx * sx + sy * sy
+                ms = mx * mx + my * my
+                es = ex * ex + ey * ey
+                ucx = (ss * (my - ey) + ms * (ey - sy) + es * (sy - my)) / D
+                ucy = (ss * (ex - mx) + ms * (sx - ex) + es * (mx - sx)) / D
+                r = math.sqrt((sx - ucx) ** 2 + (sy - ucy) ** 2)
+                # Find which cardinal angles the arc sweeps through
+                a_s = math.atan2(sy - ucy, sx - ucx)
+                a_m = math.atan2(my - ucy, mx - ucx)
+                a_e = math.atan2(ey - ucy, ex - ucx)
+                # Determine sweep direction (CW or CCW) using mid-point
+                nm = (a_m - a_s) % (2.0 * math.pi)
+                ne = (a_e - a_s) % (2.0 * math.pi)
+                if nm > ne:
+                    # Arc goes CW (negative sweep) — swap direction
+                    sweep = -((2.0 * math.pi) - ne)
+                else:
+                    sweep = ne
+                # Check each cardinal angle (0, π/2, π, 3π/2)
+                for cardinal, dx, dy in [(0, 1, 0), (math.pi / 2, 0, 1),
+                                         (math.pi, -1, 0), (3 * math.pi / 2, 0, -1)]:
+                    offset = (cardinal - a_s) % (2.0 * math.pi)
+                    if sweep > 0 and offset <= sweep:
+                        all_x.append(ucx + r * dx)
+                        all_y.append(ucy + r * dy)
+                    elif sweep < 0 and offset >= (2.0 * math.pi + sweep):
+                        all_x.append(ucx + r * dx)
+                        all_y.append(ucy + r * dy)
+            continue
+        # Lines, rects, arcs without mid: use raw endpoint coordinates
         for key in ["start", "end", "center", "mid"]:
             if key in e and e[key] is not None:
                 all_x.append(e[key][0])
@@ -1329,7 +1377,7 @@ def analyze_pad_to_pad_distances(footprints, tracks, vias, net_names):
 
 
 def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
-                                    signal_nets=None):
+                                    signal_nets=None, ref_layer_map=None):
     """Check ground/power plane continuity under signal traces.
 
     For each signal net's trace segments, samples points along the trace
@@ -1379,7 +1427,10 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
 
         for seg in segs:
             layer = seg.get("layer", "F.Cu")
-            opp_layer = "B.Cu" if layer == "F.Cu" else "F.Cu"
+            if ref_layer_map:
+                opp_layer = ref_layer_map.get(layer, "B.Cu" if layer == "F.Cu" else "F.Cu")
+            else:
+                opp_layer = "B.Cu" if layer == "F.Cu" else "F.Cu"
 
             x1, y1 = seg["x1"], seg["y1"]
             x2, y2 = seg["x2"], seg["y2"]
@@ -1474,6 +1525,59 @@ def _safe_num(val, default=0):
         return float(val)
     except (ValueError, TypeError):
         return default
+
+
+def _build_reference_layer_map(stackup: list[dict]) -> dict[str, str]:
+    """Map each copper layer to its adjacent reference plane copper layer.
+
+    Walks the stackup in order and for each copper layer, finds the nearest
+    other copper layer (above or below, preferring the one separated by
+    thinner dielectric). Returns a mapping like {"F.Cu": "In1.Cu", "In1.Cu": "F.Cu", ...}.
+
+    Falls back to simple F.Cu<->B.Cu when no stackup is available.
+    """
+    if not stackup:
+        return {"F.Cu": "B.Cu", "B.Cu": "F.Cu"}
+
+    # Extract ordered copper layer names and their stackup indices
+    copper_layers: list[tuple[int, str]] = []
+    for i, layer in enumerate(stackup):
+        if layer.get("type") == "copper":
+            copper_layers.append((i, layer.get("name", "")))
+
+    if len(copper_layers) < 2:
+        return {"F.Cu": "B.Cu", "B.Cu": "F.Cu"}
+
+    ref_map: dict[str, str] = {}
+    for ci, (idx, name) in enumerate(copper_layers):
+        # Find dielectric thickness to adjacent copper layers above and below
+        best_neighbor = None
+        best_thickness = float("inf")
+
+        for direction, neighbor_ci in [(-1, ci - 1), (1, ci + 1)]:
+            if neighbor_ci < 0 or neighbor_ci >= len(copper_layers):
+                continue
+            n_idx, n_name = copper_layers[neighbor_ci]
+            # Sum dielectric thickness between this layer and the neighbor
+            lo = min(idx, n_idx)
+            hi = max(idx, n_idx)
+            thickness = 0.0
+            for k in range(lo + 1, hi):
+                if stackup[k].get("type") in ("core", "prepreg"):
+                    t = stackup[k].get("thickness")
+                    if t is not None:
+                        try:
+                            thickness += float(t)
+                        except (ValueError, TypeError):
+                            thickness += 0.2
+            if thickness < best_thickness:
+                best_thickness = thickness
+                best_neighbor = n_name
+
+        if best_neighbor:
+            ref_map[name] = best_neighbor
+
+    return ref_map
 
 
 def _microstrip_impedance(width_mm, height_mm, thickness_mm, epsilon_r):
@@ -3781,7 +3885,8 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
 
 
 def analyze_copper_presence(footprints: list[dict], zones: list[dict],
-                            zone_fills: ZoneFills) -> dict:
+                            zone_fills: ZoneFills,
+                            ref_layer_map: dict[str, str] | None = None) -> dict:
     """Check zone copper presence at component pad locations.
 
     Uses point-in-polygon tests against zone filled polygon data to determine
@@ -3813,7 +3918,10 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
     for fp in footprints:
         ref = fp.get("reference", "")
         fp_layer = fp.get("layer", "F.Cu")
-        opposite_layer = "B.Cu" if fp_layer == "F.Cu" else "F.Cu"
+        if ref_layer_map:
+            opposite_layer = ref_layer_map.get(fp_layer, "B.Cu" if fp_layer == "F.Cu" else "F.Cu")
+        else:
+            opposite_layer = "B.Cu" if fp_layer == "F.Cu" else "F.Cu"
         pads = fp.get("pads", [])
         if not pads:
             continue
@@ -4014,14 +4122,19 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     # Thermal pad via adequacy for QFN/BGA packages
     thermal_pad_vias = analyze_thermal_pad_vias(footprints, vias)
 
+    # Build reference layer map from stackup for multi-layer boards
+    ref_layer_map = _build_reference_layer_map(setup.get("stackup", []))
+
     # Copper presence analysis (cross-layer zone fill at pad locations)
-    copper_presence = analyze_copper_presence(footprints, zones, zone_fills)
+    copper_presence = analyze_copper_presence(footprints, zones, zone_fills,
+                                              ref_layer_map=ref_layer_map)
 
     # Return path continuity (only with --full, expensive)
     return_path = None
     if include_trace_segments and zone_fills.has_data:
         return_path = analyze_return_path_continuity(
-            tracks, net_names, zones, zone_fills)
+            tracks, net_names, zones, zone_fills,
+            ref_layer_map=ref_layer_map)
 
     # Compact footprint output — include pad-to-net mapping but omit pad geometry
     footprint_summary = []
