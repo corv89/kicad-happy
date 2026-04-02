@@ -348,24 +348,52 @@ python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --text
 
 Finds all subcircuit detections referencing the changed component(s), patches values, recalculates derived fields (filter cutoff, divider ratio, opamp gain, etc.), and shows before/after comparison with percentage deltas. The `--spice` flag runs SPICE simulations on both original and patched circuits for dynamic verification. The `--output` flag exports a patched analysis JSON that can be fed to EMC, thermal, or diff analysis.
 
+### Component Lifecycle & Temperature Audit
+
+Queries distributor APIs to check component lifecycle status (active, NRND, EOL, obsolete) and operating temperature range coverage. Use when the user says "check for obsolete parts", "lifecycle audit", "are any parts end of life", "temperature audit", "will this work at industrial temp range", or during production readiness reviews.
+
+```bash
+# Basic lifecycle check
+python3 <skill-path>/scripts/lifecycle_audit.py analysis.json
+
+# With temperature range validation (preset or custom)
+python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --temp-range industrial
+python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --temp-range "-40,105"
+
+# Query specific distributors only
+python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --only digikey,lcsc
+
+# Search for replacement parts when EOL/NRND found
+python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --suggest-alternatives
+
+# Save results
+python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --output lifecycle.json
+```
+
+Reads the analyzer JSON BOM section, extracts unique MPNs, queries distributors (LCSC no-auth, DigiKey, element14, Mouser) for lifecycle status and operating temperature. Temperature presets: `commercial` (0/70°C), `industrial` (-40/85°C), `extended` (-40/105°C), `automotive` (-40/125°C), `military` (-55/125°C). Also checks datasheet extraction cache for temperature data before making API calls.
+
+**Requires network access** — unlike the core analyzers, this script calls distributor APIs. Same environment variables as the distributor skills (DIGIKEY_CLIENT_ID/SECRET, MOUSER_SEARCH_API_KEY, ELEMENT14_API_KEY). LCSC requires no credentials.
+
 ## Reference Files
 
 Detailed methodology and format documentation lives in reference files. Read these as needed — they provide deep-dive content beyond what the scripts output automatically.
 
 | Reference | Lines | When to Read |
 |-----------|-------|-------------|
-| `schematic-analysis.md` | 1117 | Deep schematic review: datasheet validation, design patterns, error taxonomy, tolerance stacking, GPIO audit, motor control, battery life, supply chain |
-| `pcb-layout-analysis.md` | 414 | Advanced PCB: impedance calculations, differential pairs, return paths, copper balance, edge clearance, copper-sensitive components (capacitive touch, antennas), custom analysis scripts |
-| `file-formats.md` | 361 | Manual file inspection: S-expression structure, field-by-field docs for all KiCad file types, version detection |
+| `schematic-analysis.md` | 1133 | Deep schematic review: datasheet validation, design patterns, error taxonomy, tolerance stacking, GPIO audit, motor control, battery life, supply chain |
+| `pcb-layout-analysis.md` | 447 | Advanced PCB: impedance calculations, differential pairs, return paths, copper balance, edge clearance, copper-sensitive components (capacitive touch, antennas), custom analysis scripts |
+| `output-schema.md` | 227 | Full analyzer JSON schema with field names, types, and common extraction patterns |
+| `datasheet-extraction.md` | 352 | Structured datasheet extraction schema, extraction guidance, scoring rubric for cached extractions |
+| `file-formats.md` | 379 | Manual file inspection: S-expression structure, field-by-field docs for all KiCad file types, version detection |
 | `gerber-parsing.md` | 729 | Gerber/Excellon format details, X2 attributes, analysis techniques |
 | `pdf-schematic-extraction.md` | 315 | PDF schematic analysis: extraction workflow, notation conventions, KiCad translation |
-| `supplementary-data-sources.md` | 301 | Legacy KiCad 5 data recovery: netlist parsing, cache library, PCB cross-reference |
+| `supplementary-data-sources.md` | 288 | Legacy KiCad 5 data recovery: netlist parsing, cache library, PCB cross-reference |
 | `net-tracing.md` | 109 | Manual net tracing: coordinate math, Y-axis inversion, rotation transforms |
-| `manual-schematic-parsing.md` | 285 | Fallback when schematic script fails |
-| `manual-pcb-parsing.md` | 457 | Fallback when PCB script fails |
+| `manual-schematic-parsing.md` | 289 | Fallback when schematic script fails |
+| `manual-pcb-parsing.md` | 464 | Fallback when PCB script fails |
 | `manual-gerber-parsing.md` | 621 | Fallback when Gerber script fails |
-| `report-generation.md` | 479 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
-| `standards-compliance.md` | 597 | IPC/IEC standards tables: conductor spacing (IPC-2221A Table 6-1), current capacity (IPC-2221A/IPC-2152), annular rings, hole sizes, impedance, via protection (IPC-4761), creepage/clearance (ECMA-287/IEC 60664-1). Consider for all boards; auto-trigger for professional/industrial designs, high voltage, mains input, or safety isolation. |
+| `report-generation.md` | 573 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
+| `standards-compliance.md` | 638 | IPC/IEC standards tables: conductor spacing (IPC-2221A Table 6-1), current capacity (IPC-2221A/IPC-2152), annular rings, hole sizes, impedance, via protection (IPC-4761), creepage/clearance (ECMA-287/IEC 60664-1). Consider for all boards; auto-trigger for professional/industrial designs, high voltage, mains input, or safety isolation. |
 
 For script internals, data structures, signal analysis patterns, and batch test suite documentation, see `scripts/README.md`.
 

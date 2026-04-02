@@ -30,6 +30,7 @@ class AnalysisContext:
     comp_lookup: dict[str, dict] = field(default_factory=dict)
     parsed_values: dict[str, float] = field(default_factory=dict)
     known_power_rails: set[str] = field(default_factory=set)
+    ref_pins: dict[str, dict[str, tuple[str | None, str | None]]] = field(default_factory=dict)
     generator_version: str = "unknown"
 
     def __post_init__(self) -> None:
@@ -46,6 +47,11 @@ class AnalysisContext:
                     if p["component"].startswith("#PWR") or p["component"].startswith("#FLG"):
                         self.known_power_rails.add(net_name)
                         break
+        if not self.ref_pins:
+            rp: dict[str, dict[str, tuple[str | None, str | None]]] = {}
+            for (comp_ref, pin_num), val in self.pin_net.items():
+                rp.setdefault(comp_ref, {})[pin_num] = val
+            self.ref_pins = rp
 
     def is_power_net(self, name: str | None) -> bool:
         return is_power_net_name(name, self.known_power_rails)

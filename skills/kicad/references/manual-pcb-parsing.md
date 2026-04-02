@@ -32,7 +32,7 @@ Always try the script first — it handles coordinate transforms, via classifica
 
 ## Performance: Line-by-Line Parsing
 
-KiCad PCB files can be 20K-70K+ lines, with zones containing thousands of polygon vertices. **Never use full-content regex with `re.DOTALL`** — it causes catastrophic backtracking on large files. Use line-by-line state-machine parsing instead.
+KiCad PCB files can be 20K-70K+ lines, with zones containing thousands of polygon vertices. **Never use full-content regex with `re.DOTALL` on the entire file** — it causes catastrophic backtracking on large files. Use line-by-line state-machine parsing instead for top-level extraction. `re.DOTALL` is acceptable on small, pre-extracted blocks (e.g., a single footprint or pad block) where the input size is bounded.
 
 ### Buffer Accumulation Pattern
 
@@ -230,17 +230,19 @@ for line in lines:
             m_sz = re.search(r'\(size\s+([\d.]+)\)', buf)
             m_dr = re.search(r'\(drill\s+([\d.]+)\)', buf)
             m_ly = re.search(r'\(layers\s+"([^"]+)"\s+"([^"]+)"\)', buf)
+            # KiCad ≤9: (net 5) with numeric ID; KiCad 10: (net "NetName") with string
             m_n = re.search(r'\(net\s+(\d+)\)', buf)
+            m_nn = re.search(r'\(net\s+"([^"]+)"\)', buf)
             via_type = 'through'
             if '(via blind' in buf: via_type = 'blind'
             elif '(via micro' in buf: via_type = 'micro'
-            if all([m_at, m_sz, m_dr, m_n]):
+            if all([m_at, m_sz, m_dr]) and (m_n or m_nn):
                 vias.append({
                     'x': float(m_at.group(1)), 'y': float(m_at.group(2)),
                     'size': float(m_sz.group(1)), 'drill': float(m_dr.group(1)),
                     'type': via_type,
                     'layers': (m_ly.group(1), m_ly.group(2)) if m_ly else ('F.Cu', 'B.Cu'),
-                    'net': int(m_n.group(1)),
+                    'net': int(m_n.group(1)) if m_n else m_nn.group(1),
                     'free': '(free yes)' in buf
                 })
             buf = None

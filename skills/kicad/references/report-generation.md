@@ -7,13 +7,13 @@ Guide for producing comprehensive design review reports from analyzer output + r
 | Section | Line | Purpose |
 |---------|------|---------|
 | Report Structure | ~18 | Full report template (copy and fill in) |
-| Analyzer Output Field Reference | ~342 | Maps every JSON output field to its report section — use as checklist |
-| Severity Definitions | ~446 | CRITICAL / WARNING / SUGGESTION criteria |
-| Writing Principles | ~454 | How to write actionable findings |
-| Handling Different Design Domains | ~490 | Domain-specific focus areas (IoT, motor, RF, analog, industrial) |
-| Cross-Referencing with Raw Schematic | ~507 | Mandatory verification steps |
-| Known Analyzer Limitations | ~518 | What the tool can and can't catch |
-| Report Length Guidelines | ~529 | Target report sizes by complexity |
+| Analyzer Output Field Reference | ~364 | Maps every JSON output field to its report section — use as checklist |
+| Severity Definitions | ~468 | CRITICAL / WARNING / SUGGESTION criteria |
+| Writing Principles | ~476 | How to write actionable findings |
+| Handling Different Design Domains | ~512 | Domain-specific focus areas (IoT, motor, RF, analog, industrial) |
+| Cross-Referencing with Raw Schematic | ~529 | Mandatory verification steps |
+| Known Analyzer Limitations | ~540 | What the tool can and can't catch |
+| Report Length Guidelines | ~563 | Target report sizes by complexity |
 
 ## Report Structure
 
@@ -355,10 +355,18 @@ This verification must happen at the PCB pad level, not just the schematic pin l
 | SUGGESTION | [Improvements, best practices, documentation gaps] | [Rationale, optional fix] |
 
 ## Positive Findings
-[Numbered list of things the design does well — builds designer confidence and validates good practices]
+[Numbered list of things the design does well — builds designer confidence and validates good practices. Examples:]
+1. All ICs have local decoupling capacitors within 3mm — good EMC practice
+2. USB differential pairs are length-matched within 0.2mm — well within USB 2.0 spec (25ps)
+3. Feedback divider values for U3 (TPS61023) match the datasheet application circuit exactly (590K/200K → 2.37V)
+4. Thermal vias under QFN packages: U1 has 9 vias (TI recommends 6-9) — adequate thermal path
 
 ## Analyzer Gaps
-[Numbered list of things the analyzer missed, got wrong, or couldn't detect — transparency about tool limitations]
+[Numbered list of things the analyzer missed, got wrong, or couldn't detect — transparency about tool limitations. Examples:]
+1. Crystal Y1 (32.768 kHz) load capacitor validation skipped — no CL spec in analyzer output for this crystal
+2. Connector J3 pinout could not be verified — no datasheet found for this custom connector
+3. Analog ground (AGND) to digital ground (DGND) connection point not analyzed — single-point connection must be verified visually
+4. U5 (custom library symbol from `mylib:XYZ123`) — pin mapping not verified against datasheet due to missing MPN
 ```
 
 ## Analyzer Output Field Reference

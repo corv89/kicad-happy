@@ -903,7 +903,7 @@ For FR4 (εr ≈ 4.5):
 | 500 MHz | 283 mm | 28.3 mm (likely needs controlled impedance) |
 | 1 GHz | 141 mm | 14.1 mm (always needs controlled impedance) |
 
-Most hobby/prototype boards with ≤48 MHz clocks don't need transmission line treatment. Flag it as a **Suggestion** for 25-100 MHz clocks and a **Warning** for >100 MHz.
+Most hobby/prototype boards with clocks ≤25 MHz don't need transmission line treatment. Flag it as a **Suggestion** for 25–100 MHz clocks and a **Warning** for >100 MHz.
 
 ### Common Clock Issues
 

@@ -1199,6 +1199,179 @@ def get_net_neighbors(net_info: dict, exclude_ref: str) -> list[dict]:
     return neighbors
 
 
+# Static lookup tables for IC function classification (used by _classify_ic_function)
+_IC_LIB_PREFIX_MAP = {
+    "regulator_linear": "linear regulator",
+    "regulator_switching": "switching regulator",
+    "regulator_controller": "regulator controller",
+    "amplifier_operational": "operational amplifier",
+    "amplifier_audio": "audio amplifier",
+    "amplifier_instrumentation": "instrumentation amplifier",
+    "amplifier_difference": "difference amplifier",
+    "amplifier_current": "current sense amplifier",
+    "amplifier_buffer": "buffer amplifier",
+    "amplifier_video": "video amplifier",
+    "analog_adc": "ADC",
+    "analog_dac": "DAC",
+    "analog_switch": "analog switch",
+    "comparator": "comparator",
+    "converter_dcdc": "DC-DC converter",
+    "driver_motor": "motor driver",
+    "driver_led": "LED driver",
+    "driver_gate": "gate driver",
+    "driver_display": "display driver",
+    "driver_fet": "FET driver",
+    "interface_can_lin": "CAN/LIN transceiver",
+    "interface_ethernet": "Ethernet PHY",
+    "interface_usb": "USB interface",
+    "interface_uart": "UART interface",
+    "interface_spi": "SPI interface",
+    "interface_i2c": "I2C interface",
+    "interface_rs485": "RS-485 transceiver",
+    "interface_lvds": "LVDS interface",
+    "interface_hdmi": "HDMI interface",
+    "interface_optical": "optical interface",
+    "logic_74xx": "logic IC (74xx)",
+    "logic_4000": "logic IC (4000 series)",
+    "logic_level": "level shifter",
+    "memory_eeprom": "EEPROM",
+    "memory_flash": "flash memory",
+    "memory_ram": "RAM",
+    "memory_rom": "ROM",
+    "mcu": "microcontroller",
+    "fpga": "FPGA",
+    "cpld": "CPLD",
+    "dsp": "DSP",
+    "power_management": "power management IC",
+    "power_supervisor": "voltage supervisor",
+    "power_protection": "power protection IC",
+    "rf_amplifier": "RF amplifier",
+    "rf_mixer": "RF mixer",
+    "rf_switch": "RF switch",
+    "rf": "RF IC",
+    "sensor_temperature": "temperature sensor",
+    "sensor_pressure": "pressure sensor",
+    "sensor_humidity": "humidity sensor",
+    "sensor_current": "current sensor",
+    "sensor_motion": "motion sensor",
+    "sensor_magnetic": "magnetic sensor",
+    "sensor_optical": "optical sensor",
+    "sensor": "sensor IC",
+    "timer": "timer IC",
+    "reference_voltage": "voltage reference",
+}
+
+_IC_VALUE_KEYWORDS = [
+    # Microcontrollers
+    (("esp32", "esp8266", "esp32s", "esp32c", "esp32h"), "microcontroller (ESP)"),
+    (("stm32", "stm8"), "microcontroller (STM)"),
+    (("atmega", "attiny", "at90", "atxmega"), "microcontroller (AVR)"),
+    (("pic16", "pic18", "pic24", "pic32", "dspic"), "microcontroller (PIC)"),
+    (("rp2040", "rp2350"), "microcontroller (RP)"),
+    (("nrf51", "nrf52", "nrf53", "nrf91"), "microcontroller (nRF)"),
+    (("samd", "same", "samg", "saml", "samr"), "microcontroller (SAM)"),
+    (("msp430", "msp432"), "microcontroller (MSP)"),
+    (("efm32", "efr32"), "microcontroller (EFx32)"),
+    (("cy8c",), "microcontroller (Cypress)"),
+    (("gd32",), "microcontroller (GD32)"),
+    (("ch32",), "microcontroller (CH32)"),
+    (("kb2040",), "microcontroller (RP dev board)"),
+    # FPGAs
+    (("ice40", "ecp5", "machxo", "nexus"), "FPGA (Lattice)"),
+    (("xc7", "xc6", "xczu", "xc2", "xcku", "artix", "spartan", "kintex", "virtex", "zynq"), "FPGA (Xilinx)"),
+    (("10cl", "10m0", "5cg", "max10", "cyclone"), "FPGA (Intel)"),
+    # Regulators
+    (("lm117", "lm317", "lm337", "lm78", "lm79", "ams1117", "ap2112",
+          "mic5205", "mic5504", "xc6206", "xc6220", "tps73", "tps76", "rt9013",
+          "ld1117", "mcp1700", "mcp1703", "mcp1826", "ht7333", "ht7350"), "linear regulator"),
+    (("lm2596", "lm2576", "mc34063", "tps54", "tps56", "tps61", "tps62",
+          "tps63", "tps65", "mp1584", "mp2307", "mp2315", "mp2359",
+          "ap3012", "sy80", "mt3608"), "switching regulator"),
+    # Shift registers / logic
+    (("74hc", "74lvc", "74ahc", "74act", "74ac", "sn74"), "logic IC"),
+    (("cd4", "hef4", "mc14"), "logic IC (CMOS)"),
+    # Communication
+    (("max232", "max3232", "sp3232"), "RS-232 transceiver"),
+    (("max485", "max3485", "sn65hvd", "thvd1", "isl317"), "RS-485 transceiver"),
+    (("mcp2515", "mcp2551", "mcp2562", "sn65hvd23", "tja1"), "CAN transceiver"),
+    (("cp2102", "ch340", "ft232", "ft2232", "pl2303", "ch9102"), "USB-UART bridge"),
+    (("usb3300", "usb3320", "usb2514", "tusb"), "USB IC"),
+    (("lan87", "lan91", "lan8720", "lan8710", "ksz", "dp83", "rtl81", "ip101"), "Ethernet PHY"),
+    (("w5500", "w5100", "enc28j60"), "Ethernet controller"),
+    (("sx127", "sx126", "rfm9", "rfm6", "cc1101", "at86rf"), "radio transceiver"),
+    # Audio
+    (("max9", "ssm2", "tpa", "lm386", "tda", "pam8"), "audio amplifier"),
+    (("wm8", "es8", "ak4", "pcm51", "pcm17", "cs42", "sgtl5", "tlv320"), "audio codec"),
+    # Display / LED
+    (("ssd1306", "ssd1309", "st7735", "st7789", "ili9", "hx8357",
+          "uc1701", "nt35", "sharp_ls"), "display controller"),
+    (("ws2812", "sk6812", "apa102", "ws2813", "ws2815"), "addressable LED"),
+    (("pca9685", "tlc5940", "is31fl"), "LED driver IC"),
+    # Sensors
+    (("bme280", "bme680", "bmp280", "bmp390"), "environmental sensor"),
+    (("mpu6", "mpu9", "icm20", "lsm6", "bno0", "lis3"), "IMU/motion sensor"),
+    (("ina21", "ina22", "ina23", "ina18", "ina19"), "current sense amplifier"),
+    (("ads1", "mcp33", "mcp34", "mcp35", "max114", "max119"), "ADC"),
+    (("mcp47", "dac8", "ad56", "ad57"), "DAC"),
+    # Power management
+    (("bq24", "bq25", "bq40", "ltc40", "mcp738"), "battery management"),
+    (("tps20", "tps21", "ap22"), "power switch/load switch"),
+    # Miscellaneous
+    (("drv8", "a4988", "tmc2", "tmc5"), "motor driver"),
+    (("esd", "prtr", "usblc", "tpd", "pesd", "sp05"), "ESD protection"),
+    (("ds1307", "ds3231", "pcf8523", "rv3028", "rv8803"), "RTC"),
+    (("at24c", "24lc", "24aa", "m24c", "cat24"), "EEPROM"),
+    (("w25q", "at25", "mx25", "gd25", "is25", "sst26"), "SPI flash"),
+]
+
+_IC_DESC_KEYWORDS = [
+    ("microcontroller", "microcontroller"),
+    ("mcu", "microcontroller"),
+    ("fpga", "FPGA"),
+    ("cpld", "CPLD"),
+    ("voltage regulator", "voltage regulator"),
+    ("ldo", "linear regulator"),
+    ("buck converter", "switching regulator"),
+    ("boost converter", "switching regulator"),
+    ("dc-dc", "DC-DC converter"),
+    ("operational amplifier", "operational amplifier"),
+    ("op-amp", "operational amplifier"),
+    ("opamp", "operational amplifier"),
+    ("comparator", "comparator"),
+    ("adc", "ADC"),
+    ("dac", "DAC"),
+    ("uart", "UART interface"),
+    ("usart", "UART interface"),
+    ("spi", "SPI interface"),
+    ("i2c", "I2C interface"),
+    ("can transceiver", "CAN transceiver"),
+    ("rs-485", "RS-485 transceiver"),
+    ("rs-232", "RS-232 transceiver"),
+    ("ethernet", "Ethernet IC"),
+    ("usb", "USB IC"),
+    ("motor driver", "motor driver"),
+    ("gate driver", "gate driver"),
+    ("led driver", "LED driver"),
+    ("audio", "audio IC"),
+    ("codec", "audio codec"),
+    ("sensor", "sensor IC"),
+    ("eeprom", "EEPROM"),
+    ("flash", "flash memory"),
+    ("shift register", "shift register"),
+    ("multiplexer", "multiplexer"),
+    ("level shift", "level shifter"),
+    ("voltage reference", "voltage reference"),
+    ("timer", "timer IC"),
+    ("rtc", "RTC"),
+    ("real-time clock", "RTC"),
+    ("power supervisor", "voltage supervisor"),
+    ("watchdog", "watchdog timer"),
+    ("battery", "battery management"),
+    ("charger", "battery charger"),
+    ("rf", "RF IC"),
+]
+
+
 def _classify_ic_function(lib_id: str, value: str, description: str) -> str:
     """Classify IC function from library ID, value, and description.
 
@@ -1217,192 +1390,24 @@ def _classify_ic_function(lib_id: str, value: str, description: str) -> str:
         return ""
 
     # Tier 1: KiCad standard library prefix mapping
-    _LIB_PREFIX_MAP = {
-        "regulator_linear": "linear regulator",
-        "regulator_switching": "switching regulator",
-        "regulator_controller": "regulator controller",
-        "amplifier_operational": "operational amplifier",
-        "amplifier_audio": "audio amplifier",
-        "amplifier_instrumentation": "instrumentation amplifier",
-        "amplifier_difference": "difference amplifier",
-        "amplifier_current": "current sense amplifier",
-        "amplifier_buffer": "buffer amplifier",
-        "amplifier_video": "video amplifier",
-        "analog_adc": "ADC",
-        "analog_dac": "DAC",
-        "analog_switch": "analog switch",
-        "comparator": "comparator",
-        "converter_dcdc": "DC-DC converter",
-        "driver_motor": "motor driver",
-        "driver_led": "LED driver",
-        "driver_gate": "gate driver",
-        "driver_display": "display driver",
-        "driver_fet": "FET driver",
-        "interface_can_lin": "CAN/LIN transceiver",
-        "interface_ethernet": "Ethernet PHY",
-        "interface_usb": "USB interface",
-        "interface_uart": "UART interface",
-        "interface_spi": "SPI interface",
-        "interface_i2c": "I2C interface",
-        "interface_rs485": "RS-485 transceiver",
-        "interface_lvds": "LVDS interface",
-        "interface_hdmi": "HDMI interface",
-        "interface_optical": "optical interface",
-        "logic_74xx": "logic IC (74xx)",
-        "logic_4000": "logic IC (4000 series)",
-        "logic_level": "level shifter",
-        "memory_eeprom": "EEPROM",
-        "memory_flash": "flash memory",
-        "memory_ram": "RAM",
-        "memory_rom": "ROM",
-        "mcu": "microcontroller",
-        "fpga": "FPGA",
-        "cpld": "CPLD",
-        "dsp": "DSP",
-        "power_management": "power management IC",
-        "power_supervisor": "voltage supervisor",
-        "power_protection": "power protection IC",
-        "rf_amplifier": "RF amplifier",
-        "rf_mixer": "RF mixer",
-        "rf_switch": "RF switch",
-        "rf": "RF IC",
-        "sensor_temperature": "temperature sensor",
-        "sensor_pressure": "pressure sensor",
-        "sensor_humidity": "humidity sensor",
-        "sensor_current": "current sensor",
-        "sensor_motion": "motion sensor",
-        "sensor_magnetic": "magnetic sensor",
-        "sensor_optical": "optical sensor",
-        "sensor": "sensor IC",
-        "timer": "timer IC",
-        "reference_voltage": "voltage reference",
-    }
-    for prefix, func in _LIB_PREFIX_MAP.items():
+    for prefix, func in _IC_LIB_PREFIX_MAP.items():
         if lib_prefix == prefix or lib_lower.startswith(prefix + ":"):
             return func
 
     # Tier 2: Value / part number keyword matching
-    _VALUE_KEYWORDS = [
-        # Microcontrollers
-        (("esp32", "esp8266", "esp32s", "esp32c", "esp32h"), "microcontroller (ESP)"),
-        (("stm32", "stm8"), "microcontroller (STM)"),
-        (("atmega", "attiny", "at90", "atxmega"), "microcontroller (AVR)"),
-        (("pic16", "pic18", "pic24", "pic32", "dspic"), "microcontroller (PIC)"),
-        (("rp2040", "rp2350"), "microcontroller (RP)"),
-        (("nrf51", "nrf52", "nrf53", "nrf91"), "microcontroller (nRF)"),
-        (("samd", "same", "samg", "saml", "samr"), "microcontroller (SAM)"),
-        (("msp430", "msp432"), "microcontroller (MSP)"),
-        (("efm32", "efr32"), "microcontroller (EFx32)"),
-        (("cy8c",), "microcontroller (Cypress)"),
-        (("gd32",), "microcontroller (GD32)"),
-        (("ch32",), "microcontroller (CH32)"),
-        (("kb2040",), "microcontroller (RP dev board)"),
-        # FPGAs
-        (("ice40", "ecp5", "machxo", "nexus"), "FPGA (Lattice)"),
-        (("xc7", "xc6", "xczu", "xc2", "xcku", "artix", "spartan", "kintex", "virtex", "zynq"), "FPGA (Xilinx)"),
-        (("10cl", "10m0", "5cg", "max10", "cyclone"), "FPGA (Intel)"),
-        # Regulators
-        (("lm117", "lm317", "lm337", "lm78", "lm79", "ams1117", "ap2112",
-          "mic5205", "mic5504", "xc6206", "xc6220", "tps73", "tps76", "rt9013",
-          "ld1117", "mcp1700", "mcp1703", "mcp1826", "ht7333", "ht7350"), "linear regulator"),
-        (("lm2596", "lm2576", "mc34063", "tps54", "tps56", "tps61", "tps62",
-          "tps63", "tps65", "mp1584", "mp2307", "mp2315", "mp2359",
-          "ap3012", "sy80", "mt3608"), "switching regulator"),
-        # Shift registers / logic
-        (("74hc", "74lvc", "74ahc", "74act", "74ac", "sn74"), "logic IC"),
-        (("cd4", "hef4", "mc14"), "logic IC (CMOS)"),
-        # Communication
-        (("max232", "max3232", "sp3232"), "RS-232 transceiver"),
-        (("max485", "max3485", "sn65hvd", "thvd1", "isl317"), "RS-485 transceiver"),
-        (("mcp2515", "mcp2551", "mcp2562", "sn65hvd23", "tja1"), "CAN transceiver"),
-        (("cp2102", "ch340", "ft232", "ft2232", "pl2303", "ch9102"), "USB-UART bridge"),
-        (("usb3300", "usb3320", "usb2514", "tusb"), "USB IC"),
-        (("lan87", "lan91", "lan8720", "lan8710", "ksz", "dp83", "rtl81", "ip101"), "Ethernet PHY"),
-        (("w5500", "w5100", "enc28j60"), "Ethernet controller"),
-        (("sx127", "sx126", "rfm9", "rfm6", "cc1101", "at86rf"), "radio transceiver"),
-        # Audio
-        (("max9", "ssm2", "tpa", "lm386", "tda", "pam8"), "audio amplifier"),
-        (("wm8", "es8", "ak4", "pcm51", "pcm17", "cs42", "sgtl5", "tlv320"), "audio codec"),
-        # Display / LED
-        (("ssd1306", "ssd1309", "st7735", "st7789", "ili9", "hx8357",
-          "uc1701", "nt35", "sharp_ls"), "display controller"),
-        (("ws2812", "sk6812", "apa102", "ws2813", "ws2815"), "addressable LED"),
-        (("pca9685", "tlc5940", "is31fl"), "LED driver IC"),
-        # Sensors
-        (("bme280", "bme680", "bmp280", "bmp390"), "environmental sensor"),
-        (("mpu6", "mpu9", "icm20", "lsm6", "bno0", "lis3"), "IMU/motion sensor"),
-        (("ina21", "ina22", "ina23", "ina18", "ina19"), "current sense amplifier"),
-        (("ads1", "mcp33", "mcp34", "mcp35", "max114", "max119"), "ADC"),
-        (("mcp47", "dac8", "ad56", "ad57"), "DAC"),
-        # Power management
-        (("bq24", "bq25", "bq40", "ltc40", "mcp738"), "battery management"),
-        (("tps20", "tps21", "ap22"), "power switch/load switch"),
-        # Miscellaneous
-        (("drv8", "a4988", "tmc2", "tmc5"), "motor driver"),
-        (("esd", "prtr", "usblc", "tpd", "pesd", "sp05"), "ESD protection"),
-        (("ds1307", "ds3231", "pcf8523", "rv3028", "rv8803"), "RTC"),
-        (("at24c", "24lc", "24aa", "m24c", "cat24"), "EEPROM"),
-        (("w25q", "at25", "mx25", "gd25", "is25", "sst26"), "SPI flash"),
-    ]
-    for keywords, func in _VALUE_KEYWORDS:
+    for keywords, func in _IC_VALUE_KEYWORDS:
         if any(val_lower.startswith(k) for k in keywords):
             return func
 
     # Also check lib_id part name (after colon)
     lib_part = lib_lower.split(":")[-1] if ":" in lib_lower else ""
     if lib_part:
-        for keywords, func in _VALUE_KEYWORDS:
+        for keywords, func in _IC_VALUE_KEYWORDS:
             if any(lib_part.startswith(k) for k in keywords):
                 return func
 
     # Tier 3: Description keyword fallback
-    _DESC_KEYWORDS = [
-        ("microcontroller", "microcontroller"),
-        ("mcu", "microcontroller"),
-        ("fpga", "FPGA"),
-        ("cpld", "CPLD"),
-        ("voltage regulator", "voltage regulator"),
-        ("ldo", "linear regulator"),
-        ("buck converter", "switching regulator"),
-        ("boost converter", "switching regulator"),
-        ("dc-dc", "DC-DC converter"),
-        ("operational amplifier", "operational amplifier"),
-        ("op-amp", "operational amplifier"),
-        ("opamp", "operational amplifier"),
-        ("comparator", "comparator"),
-        ("adc", "ADC"),
-        ("dac", "DAC"),
-        ("uart", "UART interface"),
-        ("usart", "UART interface"),
-        ("spi", "SPI interface"),
-        ("i2c", "I2C interface"),
-        ("can transceiver", "CAN transceiver"),
-        ("rs-485", "RS-485 transceiver"),
-        ("rs-232", "RS-232 transceiver"),
-        ("ethernet", "Ethernet IC"),
-        ("usb", "USB IC"),
-        ("motor driver", "motor driver"),
-        ("gate driver", "gate driver"),
-        ("led driver", "LED driver"),
-        ("audio", "audio IC"),
-        ("codec", "audio codec"),
-        ("sensor", "sensor IC"),
-        ("eeprom", "EEPROM"),
-        ("flash", "flash memory"),
-        ("shift register", "shift register"),
-        ("multiplexer", "multiplexer"),
-        ("level shift", "level shifter"),
-        ("voltage reference", "voltage reference"),
-        ("timer", "timer IC"),
-        ("rtc", "RTC"),
-        ("real-time clock", "RTC"),
-        ("power supervisor", "voltage supervisor"),
-        ("watchdog", "watchdog timer"),
-        ("battery", "battery management"),
-        ("charger", "battery charger"),
-        ("rf", "RF IC"),
-    ]
-    for keyword, func in _DESC_KEYWORDS:
+    for keyword, func in _IC_DESC_KEYWORDS:
         if keyword in desc_lower:
             return func
 
@@ -4559,24 +4564,31 @@ def validate_hierarchical_labels(labels: list[dict], nets: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def analyze_pdn_impedance(components: list[dict], nets: dict, pin_net: dict) -> dict:
+def analyze_pdn_impedance(ctx: AnalysisContext) -> dict:
     """PDN impedance profiling per power rail.
 
     Groups all capacitors by power rail, estimates ESR/ESL from package size,
     computes combined impedance at frequency points (1 kHz to 1 GHz), and flags
     frequency gaps and anti-resonances.
     """
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
     # EQ-062: |Z| = √(ESR²+(ωL-1/ωC)²) swept over frequency
     # Package-dependent parasitics
+    # Typical MLCC parasitics — aligned with emc_formulas.py values
     esl_by_pkg = {
-        "0201": 0.2e-9, "0402": 0.3e-9, "0603": 0.5e-9,
-        "0805": 0.8e-9, "1206": 1.2e-9, "1210": 1.5e-9,
-        "1812": 2.0e-9, "2220": 2.5e-9,
+        "0201": 0.3e-9, "0402": 0.5e-9, "0603": 0.7e-9,
+        "0805": 0.9e-9, "1206": 1.1e-9, "1210": 1.2e-9,
+        "1812": 1.5e-9, "2220": 1.8e-9,
     }
+    # ESR for X5R/X7R at 1 MHz — aligned with emc_formulas.py values
     esr_base_by_pkg = {
-        "0201": 0.020, "0402": 0.015, "0603": 0.012,
-        "0805": 0.010, "1206": 0.010, "1210": 0.010,
-        "1812": 0.010, "2220": 0.010,
+        "0201": 0.5, "0402": 0.3, "0603": 0.1,
+        "0805": 0.05, "1206": 0.03, "1210": 0.02,
+        "1812": 0.02, "2220": 0.015,
     }
 
     def _extract_package_code(footprint: str) -> str | None:
@@ -4609,8 +4621,6 @@ def analyze_pdn_impedance(components: list[dict], nets: dict, pin_net: dict) -> 
         x_c = 1.0 / (2.0 * math.pi * f * c_farads) if c_farads > 0 else 1e12
         x_l = 2.0 * math.pi * f * esl
         return math.sqrt(esr ** 2 + (x_l - x_c) ** 2)
-
-    comp_lookup = {c["reference"]: c for c in components}
 
     # Build power rail -> caps mapping
     rail_caps: dict[str, list[dict]] = {}
@@ -4750,7 +4760,7 @@ def analyze_pdn_impedance(components: list[dict], nets: dict, pin_net: dict) -> 
     return result
 
 
-def analyze_sleep_current(components: list[dict], nets: dict, pin_net: dict,
+def analyze_sleep_current(ctx: AnalysisContext,
                           signal_analysis: dict | None = None) -> dict:
     """Sleep/quiescent current audit.
 
@@ -4758,7 +4768,11 @@ def analyze_sleep_current(components: list[dict], nets: dict, pin_net: dict,
     ground, pull-up/pull-down resistors to power rails, LED indicators, and
     regulator quiescent currents (estimated from part family).
     """
-    comp_lookup = {c["reference"]: c for c in components}
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
     rail_currents: dict[str, list[dict]] = {}
 
     def _get_two_pin_nets(ref: str) -> tuple[str | None, str | None]:
@@ -4836,10 +4850,7 @@ def analyze_sleep_current(components: list[dict], nets: dict, pin_net: dict,
             continue
         ref = comp["reference"]
         # Find nets connected to LED pins
-        led_nets = []
-        for pkey, (net_name, _) in pin_net.items():
-            if pkey[0] == ref:
-                led_nets.append(net_name)
+        led_nets = [net for net, _ in ref_pins.get(ref, {}).values()]
 
         for net_name in led_nets:
             if not net_name or net_name not in nets:
@@ -5412,14 +5423,18 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
             "total_issues": sum(len(f.get("issues", []) or []) for f in findings)}
 
 
-def analyze_power_budget(components: list[dict], nets: dict,
-                         signal_analysis: dict, pin_net: dict) -> dict:
+def analyze_power_budget(ctx: AnalysisContext,
+                         signal_analysis: dict) -> dict:
     """Power budget estimation per rail.
 
     Identifies each rail's regulator and max current, counts ICs per rail with
     rough current estimation by type, and estimates thermal dissipation for LDOs.
     """
-    comp_lookup = {c["reference"]: c for c in components}
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
 
     # Rough current estimates by IC type keywords (mA)
     ic_current_estimates = {
@@ -5445,9 +5460,7 @@ def analyze_power_budget(components: list[dict], nets: dict,
         if comp["type"] != "ic":
             continue
         ref = comp["reference"]
-        for pkey, (net_name, _) in pin_net.items():
-            if pkey[0] != ref:
-                continue
+        for pnum, (net_name, _) in ref_pins.get(ref, {}).items():
             if net_name and _is_power_net_name(net_name) and not _is_ground_name(net_name):
                 # Check if this is a power pin (by pin type or name)
                 if net_name in nets:
@@ -5549,14 +5562,18 @@ def analyze_power_budget(components: list[dict], nets: dict,
     return result
 
 
-def analyze_power_sequencing(components: list[dict], nets: dict,
-                             signal_analysis: dict, pin_net: dict) -> dict:
+def analyze_power_sequencing(ctx: AnalysisContext,
+                             signal_analysis: dict) -> dict:
     """Power sequencing dependency analysis.
 
     For each regulator, finds what drives its EN pin and PG (power-good) output,
     builds a dependency graph, and flags floating EN pins.
     """
-    comp_lookup = {c["reference"]: c for c in components}
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
     regulators = signal_analysis.get("power_regulators", [])
     if not regulators:
         return {}
@@ -5574,16 +5591,14 @@ def analyze_power_sequencing(components: list[dict], nets: dict,
 
         # Gather all pins for this IC
         ic_pins: dict[str, tuple[str, str]] = {}  # pin_name -> (net_name, pin_number)
-        for pkey, (net_name, _) in pin_net.items():
-            if pkey[0] == ref:
-                pin_num = pkey[1]
-                pin_name = ""
-                if net_name in nets:
-                    for p in nets[net_name]["pins"]:
-                        if p["component"] == ref and p["pin_number"] == pin_num:
-                            pin_name = p.get("pin_name", "").upper()
-                            break
-                ic_pins[pin_name] = (net_name, pin_num)
+        for pin_num, (net_name, _) in ref_pins.get(ref, {}).items():
+            pin_name = ""
+            if net_name in nets:
+                for p in nets[net_name]["pins"]:
+                    if p["component"] == ref and p["pin_number"] == pin_num:
+                        pin_name = p.get("pin_name", "").upper()
+                        break
+            ic_pins[pin_name] = (net_name, pin_num)
 
         # Find EN pin
         en_net = None
@@ -5834,12 +5849,18 @@ def analyze_bom_optimization(components: list[dict]) -> dict:
     return result
 
 
-def analyze_test_coverage(components: list[dict], nets: dict, pin_net: dict) -> dict:
+def analyze_test_coverage(ctx: AnalysisContext) -> dict:
     """Test point and debug interface coverage analysis.
 
     Finds test points, checks which key nets have them, and identifies
     debug connectors (SWD, JTAG, UART headers).
     """
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
+
     # Find test points
     test_points = []
     tp_nets = set()
@@ -5853,8 +5874,8 @@ def analyze_test_coverage(components: list[dict], nets: dict, pin_net: dict) -> 
                                                     "testpad", "test_pad"))
         if is_tp:
             # Find what net it's on
-            for pkey, (net_name, _) in pin_net.items():
-                if pkey[0] == ref and net_name:
+            for pnum, (net_name, _) in ref_pins.get(ref, {}).items():
+                if net_name:
                     test_points.append({
                         "ref": ref,
                         "net": net_name,
@@ -5880,10 +5901,7 @@ def analyze_test_coverage(components: list[dict], nets: dict, pin_net: dict) -> 
         combined = val + " " + fp + " " + lib
 
         # Collect connected net names for this connector (try pin_net first, fall back to nets dict)
-        conn_nets = []
-        for pkey, (net_name, _) in pin_net.items():
-            if pkey[0] == ref and net_name:
-                conn_nets.append(net_name)
+        conn_nets = [net for net, _ in ref_pins.get(ref, {}).values() if net]
         # Fallback: if pin_net gave few results (e.g., pin number collisions with "?"),
         # also scan the nets dict for this connector's connections
         if len(conn_nets) < 3:
@@ -6126,14 +6144,18 @@ def analyze_assembly_complexity(components: list[dict]) -> dict:
     return result
 
 
-def analyze_usb_compliance(components: list[dict], nets: dict,
-                           signal_analysis: dict, pin_net: dict) -> dict:
+def analyze_usb_compliance(ctx: AnalysisContext,
+                           signal_analysis: dict) -> dict:
     """USB spec compliance checks.
 
     Checks USB-C CC pull-downs, D+/D- series resistors, VBUS protection
     and decoupling, and ESD protection ICs.
     """
-    comp_lookup = {c["reference"]: c for c in components}
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
 
     # Find USB connectors
     usb_connectors = []
@@ -6168,12 +6190,12 @@ def analyze_usb_compliance(components: list[dict], nets: dict,
 
         # Gather connector pin nets
         conn_pin_nets: dict[str, str] = {}  # pin_name -> net_name
-        for pkey, (net_name, _) in pin_net.items():
-            if pkey[0] == ref and net_name:
+        for pin_num, (net_name, _) in ref_pins.get(ref, {}).items():
+            if net_name:
                 # Find pin name
                 if net_name in nets:
                     for p in nets[net_name]["pins"]:
-                        if p["component"] == ref and p["pin_number"] == pkey[1]:
+                        if p["component"] == ref and p["pin_number"] == pin_num:
                             pname = p.get("pin_name", "").upper()
                             conn_pin_nets[pname] = net_name
                             break
@@ -6272,9 +6294,8 @@ def analyze_usb_compliance(components: list[dict], nets: dict,
             combined_lower = (comp_c.get("value", "") + " " + comp_c.get("lib_id", "")).lower()
             if any(k in combined_lower for k in esd_keywords):
                 # Check if it's connected to a USB data net
-                for pkey, (net_name, _) in pin_net.items():
-                    if pkey[0] == comp_c["reference"]:
-                        if net_name in (dp_net, dm_net, vbus_net):
+                for pnum, (net_name, _) in ref_pins.get(comp_c["reference"], {}).items():
+                    if net_name in (dp_net, dm_net, vbus_net):
                             esd_ic_found = True
                             break
                 if esd_ic_found:
@@ -6307,14 +6328,18 @@ def analyze_usb_compliance(components: list[dict], nets: dict,
     return result
 
 
-def analyze_inrush_current(components: list[dict], nets: dict,
-                           signal_analysis: dict, pin_net: dict) -> dict:
+def analyze_inrush_current(ctx: AnalysisContext,
+                           signal_analysis: dict) -> dict:
     """Inrush current estimation.
 
     For each regulator, finds total output capacitance and estimates inrush
     current. Flags rails where output capacitance may cause startup issues.
     """
-    comp_lookup = {c["reference"]: c for c in components}
+    components = ctx.components
+    nets = ctx.nets
+    pin_net = ctx.pin_net
+    comp_lookup = ctx.comp_lookup
+    ref_pins = ctx.ref_pins
     regulators = signal_analysis.get("power_regulators", [])
     if not regulators:
         return {}
@@ -6585,17 +6610,17 @@ def analyze_schematic(path: str) -> dict:
     generic_sym_warnings = check_generic_transistor_symbols(all_components, str(path))
 
     # ---- Tier 3: High-level design analyses ----
-    pdn_analysis = analyze_pdn_impedance(all_components, nets, pin_net)
-    sleep_current = analyze_sleep_current(all_components, nets, pin_net, signal_analysis)
+    pdn_analysis = analyze_pdn_impedance(ctx)
+    sleep_current = analyze_sleep_current(ctx, signal_analysis)
     voltage_derating = analyze_voltage_derating(all_components, nets, signal_analysis, pin_net,
                                                  project_dir=str(Path(path).parent))
-    power_budget = analyze_power_budget(all_components, nets, signal_analysis, pin_net)
-    power_sequencing = analyze_power_sequencing(all_components, nets, signal_analysis, pin_net)
+    power_budget = analyze_power_budget(ctx, signal_analysis)
+    power_sequencing = analyze_power_sequencing(ctx, signal_analysis)
     bom_optimization = analyze_bom_optimization(all_components)
-    test_coverage = analyze_test_coverage(all_components, nets, pin_net)
+    test_coverage = analyze_test_coverage(ctx)
     assembly_complexity = analyze_assembly_complexity(all_components)
-    usb_compliance = analyze_usb_compliance(all_components, nets, signal_analysis, pin_net)
-    inrush_analysis = analyze_inrush_current(all_components, nets, signal_analysis, pin_net)
+    usb_compliance = analyze_usb_compliance(ctx, signal_analysis)
+    inrush_analysis = analyze_inrush_current(ctx, signal_analysis)
     protocol_compliance = analyze_protocol_compliance(all_components, nets, design_analysis, signal_analysis, pin_net)
 
     # Add parsed numeric values to all passive components and category field

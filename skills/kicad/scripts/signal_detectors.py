@@ -1217,17 +1217,14 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             continue
 
         ic_pins = {}  # pin_name -> (net_name, pin_number)
-        for pkey, (net_name, _) in ctx.pin_net.items():
-            if pkey[0] == ref:
-                # Find pin name from net info
-                pin_num = pkey[1]
-                pin_name = ""
-                if net_name in ctx.nets:
-                    for p in ctx.nets[net_name]["pins"]:
-                        if p["component"] == ref and p["pin_number"] == pin_num:
-                            pin_name = p.get("pin_name", "").upper()
-                            break
-                ic_pins[pin_name] = (net_name, pin_num)
+        for pin_num, (net_name, _) in ctx.ref_pins.get(ref, {}).items():
+            pin_name = ""
+            if net_name and net_name in ctx.nets:
+                for p in ctx.nets[net_name]["pins"]:
+                    if p["component"] == ref and p["pin_number"] == pin_num:
+                        pin_name = p.get("pin_name", "").upper()
+                        break
+            ic_pins[pin_name] = (net_name, pin_num)
 
         # Look for regulator pin patterns
         fb_pin = None
@@ -1677,8 +1674,8 @@ def detect_integrated_ldos(ctx: AnalysisContext, power_regulators: list[dict]) -
         lib_val_lower = (ic.get("lib_id", "") + " " + ic.get("value", "")).lower()
         if any(k in lib_val_lower for k in _non_reg_ic_keywords):
             continue
-        for (pref, pnum), (net_name, _) in ctx.pin_net.items():
-            if pref != ref or not net_name:
+        for pnum, (net_name, _) in ctx.ref_pins.get(ref, {}).items():
+            if not net_name:
                 continue
             # Get pin name
             pin_name = ""
@@ -1796,10 +1793,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
             # all pin_net entries (Eagle imports use P$1/P$2/P$3 pin names)
             d_n1, d_n2 = ctx.get_two_pin_nets(comp["reference"])
             if not d_n1 or not d_n2:
-                comp_nets = set()
-                for (pref, _pnum), (net, _) in ctx.pin_net.items():
-                    if pref == comp["reference"] and net:
-                        comp_nets.add(net)
+                comp_nets = {net for net, _ in ctx.ref_pins.get(comp["reference"], {}).values() if net}
                 comp_nets = [n for n in comp_nets
                              if not ctx.is_ground(n) or len(comp_nets) <= 2]
                 if len(comp_nets) >= 2:
@@ -1919,8 +1913,8 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
         pos_in = None
         neg_in = None
         out_pin = None
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != ref or not net:
+        for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+            if not net:
                 continue
             if unit_pin_nums is not None and pnum not in unit_pin_nums:
                 continue
@@ -2115,7 +2109,7 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             for p in pos_net_info.get("pins", []):
                 if p["component"] == ref:
                     continue
-                neighbor = next((c for c in ctx.components if c["reference"] == p["component"]), None)
+                neighbor = ctx.comp_lookup.get(p["component"])
                 if not neighbor:
                     continue
                 if neighbor["type"] == "resistor":
@@ -2138,7 +2132,7 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             for p in out_net_info.get("pins", []):
                 if p["component"] == ref:
                     continue
-                neighbor = next((c for c in ctx.components if c["reference"] == p["component"]), None)
+                neighbor = ctx.comp_lookup.get(p["component"])
                 if not neighbor or neighbor["type"] != "capacitor":
                     continue
                 cap_val = neighbor.get("parsed_value") or parse_value(neighbor.get("value", ""))
@@ -2219,11 +2213,9 @@ def detect_bridge_circuits(ctx: AnalysisContext) -> tuple[list[dict], set, dict]
     for t in transistors:
         ref = t["reference"]
         pins = {}
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != ref:
-                continue
+        for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
             # Find pin name
-            if net in ctx.nets:
+            if net and net in ctx.nets:
                 for p in ctx.nets[net]["pins"]:
                     if p["component"] == ref and p["pin_number"] == pnum:
                         pn = p.get("pin_name", "").upper()
@@ -2328,10 +2320,8 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
         if ref in fet_pins:
             continue  # Already mapped as FET
         pins = {}
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != ref:
-                continue
-            if net in ctx.nets:
+        for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+            if net and net in ctx.nets:
                 for p in ctx.nets[net]["pins"]:
                     if p["component"] == ref and p["pin_number"] == pnum:
                         pn = p.get("pin_name", "").upper()
@@ -3204,17 +3194,11 @@ def detect_memory_interfaces(ctx: AnalysisContext) -> list[dict]:
                     seen_proc_refs.add(c["reference"])
 
     for mem in memory_ics:
-        mem_nets = set()
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref == mem["reference"]:
-                mem_nets.add(net)
+        mem_nets = {net for net, _ in ctx.ref_pins.get(mem["reference"], {}).values() if net}
 
         connected_processors = []
         for proc in processor_ics:
-            proc_nets = set()
-            for (pref, pnum), (net, _) in ctx.pin_net.items():
-                if pref == proc["reference"]:
-                    proc_nets.add(net)
+            proc_nets = {net for net, _ in ctx.ref_pins.get(proc["reference"], {}).values() if net}
             shared = mem_nets & proc_nets
             signal_shared = [n for n in shared if not ctx.is_power_net(n) and not ctx.is_ground(n)]
             if signal_shared:
@@ -3378,10 +3362,8 @@ def detect_rf_chains(ctx: AnalysisContext) -> list[dict]:
         all_rf_refs = seen_rf_refs.copy()
         rf_nets_map = {}
         for ref in all_rf_refs:
-            ref_nets = set()
-            for (pref, pnum), (net, _) in ctx.pin_net.items():
-                if pref == ref and net and not ctx.is_power_net(net) and not ctx.is_ground(net):
-                    ref_nets.add(net)
+            ref_nets = {net for net, _ in ctx.ref_pins.get(ref, {}).values()
+                        if net and not ctx.is_power_net(net) and not ctx.is_ground(net)}
             rf_nets_map[ref] = ref_nets
 
         connections = []
@@ -3720,9 +3702,7 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
 
         cell_pins = []
         bms_nets = set()
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != ref:
-                continue
+        for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
             bms_nets.add(net)
             if not net:
                 continue
@@ -3862,12 +3842,8 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
     # 1. IC power pin decoupling status
     for ic in unique_ics:
         ref = ic["reference"]
-        ic_power_nets = set()
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != ref:
-                continue
-            if net and ctx.is_power_net(net) and not ctx.is_ground(net):
-                ic_power_nets.add(net)
+        ic_power_nets = {net for net, _ in ctx.ref_pins.get(ref, {}).values()
+                         if net and ctx.is_power_net(net) and not ctx.is_ground(net)}
         undecoupled = [r for r in ic_power_nets if r not in decoupled_rails]
         if undecoupled:
             design_observations.append({
@@ -3974,8 +3950,8 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
     # 5. Reset pin configuration
     for ic in unique_ics:
         ref = ic["reference"]
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != ref or not net or net.startswith("__unnamed_"):
+        for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+            if not net or net.startswith("__unnamed_"):
                 continue
             pin_name = ""
             if net in ctx.nets:
@@ -4144,8 +4120,8 @@ def detect_addressable_leds(ctx: AnalysisContext) -> list[dict]:
     dout_names = {"DOUT", "DO", "SDO", "DATAOUT", "DATA_OUT", "OUT"}
 
     for led_ref, led_comp in addr_leds.items():
-        for (pref, pnum), (net, _) in ctx.pin_net.items():
-            if pref != led_ref or not net:
+        for pnum, (net, _) in ctx.ref_pins.get(led_ref, {}).items():
+            if not net:
                 continue
             pin_name = ""
             if net in ctx.nets:
