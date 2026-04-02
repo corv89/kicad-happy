@@ -77,7 +77,9 @@ def run_ngspice(cir_file, timeout=5):
 
 
 def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
-                         parasitics=None, simulator_backend=None):
+                         parasitics=None, simulator_backend=None,
+                         monte_carlo_n=0, mc_distribution="gaussian",
+                         mc_seed=42):
     """Run SPICE simulations for all simulatable subcircuits in the analysis.
 
     Args:
@@ -85,6 +87,11 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
         workdir: Directory for .cir and output files (default: temp dir)
         timeout: Seconds per simulation (default: 5)
         types: List of detector types to simulate, or None for all supported
+        parasitics: PCB parasitic data from extract_parasitics.py
+        simulator_backend: SimulatorBackend instance (auto-detected if None)
+        monte_carlo_n: Number of Monte Carlo tolerance trials per subcircuit (0=disabled)
+        mc_distribution: "gaussian" (3sigma=tolerance) or "uniform"
+        mc_seed: Random seed for reproducible Monte Carlo runs
 
     Returns:
         Report dict with simulation results
@@ -114,82 +121,147 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
     results = []
     total_time = 0
 
+    # Monte Carlo setup (lazy import only when needed)
+    mc_rng = None
+    if monte_carlo_n > 0:
+        import random as _random
+        mc_rng = _random.Random(mc_seed)
+
+    def _run_single_sim(det_run, det_type, generator, evaluator,
+                        cir_file, out_file, log_file):
+        """Run one simulation: generate -> run -> parse -> evaluate.
+
+        Returns (result_dict, elapsed) or (None, 0) on failure/skip.
+        """
+        nonlocal total_time
+        out_file_spice = out_file.replace("\\", "/")
+
+        try:
+            cir_content = generator(det_run, out_file_spice,
+                                    context=analysis_json,
+                                    parasitics=parasitics)
+        except (KeyError, TypeError, ValueError):
+            return None, 0
+
+        if cir_content is None:
+            return None, 0
+
+        if isinstance(cir_content, SpiceTestbench):
+            cir_content = cir_content.render(simulator_backend, out_file_spice)
+
+        with open(cir_file, "w") as f:
+            f.write(cir_content)
+
+        t0 = time.monotonic()
+        if simulator_backend:
+            success, stdout, stderr = simulator_backend.run(cir_file, timeout=timeout)
+        else:
+            success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
+        elapsed = time.monotonic() - t0
+        total_time += elapsed
+
+        with open(log_file, "w") as f:
+            f.write(f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}\n")
+
+        if not success:
+            return None, elapsed
+
+        if simulator_backend and hasattr(simulator_backend, 'parse_results'):
+            sim_data = simulator_backend.parse_results(out_file, stdout, stderr)
+        else:
+            sim_data = parse_output_file(out_file)
+
+        if evaluator:
+            det_run["_context"] = analysis_json
+            result = evaluator(det_run, sim_data)
+            det_run.pop("_context", None)
+        else:
+            result = {
+                "subcircuit_type": _singular_type(det_type),
+                "components": _get_components(det_run),
+                "status": "pass",
+                "simulated": sim_data,
+            }
+
+        return result, elapsed
+
     def _run_detection_batch(det_type, detections, generator, evaluator):
         """Simulate a batch of detections — shared by signal_analysis and top-level loops."""
-        nonlocal total_time
         for i, det in enumerate(detections):
             label = _make_label(det_type, det, i)
             cir_file = os.path.join(workdir, f"{label}.cir")
             out_file = os.path.join(workdir, f"{label}.out")
             log_file = os.path.join(workdir, f"{label}.log")
-            out_file_spice = out_file.replace("\\", "/")
 
-            try:
-                cir_content = generator(det, out_file_spice,
-                                        context=analysis_json,
-                                        parasitics=parasitics)
-            except (KeyError, TypeError, ValueError) as e:
-                results.append({
-                    "subcircuit_type": _singular_type(det_type),
-                    "components": _get_components(det),
-                    "status": "skip",
-                    "note": f"Testbench generation failed: {e}",
-                })
+            # Nominal simulation
+            result, elapsed = _run_single_sim(
+                det, det_type, generator, evaluator,
+                cir_file, out_file, log_file)
+
+            if result is None:
+                if elapsed > 0:
+                    results.append({
+                        "subcircuit_type": _singular_type(det_type),
+                        "components": _get_components(det),
+                        "status": "skip",
+                        "note": "Simulation failed",
+                        "cir_file": cir_file,
+                        "log_file": log_file,
+                        "elapsed_s": round(elapsed, 3),
+                    })
                 continue
-
-            if cir_content is None:
-                continue
-
-            if isinstance(cir_content, SpiceTestbench):
-                cir_content = cir_content.render(simulator_backend, out_file_spice)
-
-            with open(cir_file, "w") as f:
-                f.write(cir_content)
-
-            t0 = time.monotonic()
-            if simulator_backend:
-                success, stdout, stderr = simulator_backend.run(cir_file, timeout=timeout)
-            else:
-                success, stdout, stderr = run_ngspice(cir_file, timeout=timeout)
-            elapsed = time.monotonic() - t0
-            total_time += elapsed
-
-            with open(log_file, "w") as f:
-                f.write(f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}\n")
-
-            if not success:
-                results.append({
-                    "subcircuit_type": _singular_type(det_type),
-                    "components": _get_components(det),
-                    "status": "skip",
-                    "note": f"Simulation failed: {stderr[:200]}",
-                    "cir_file": cir_file,
-                    "log_file": log_file,
-                    "elapsed_s": round(elapsed, 3),
-                })
-                continue
-
-            if simulator_backend and hasattr(simulator_backend, 'parse_results'):
-                sim_data = simulator_backend.parse_results(out_file, stdout, stderr)
-            else:
-                sim_data = parse_output_file(out_file)
-
-            if evaluator:
-                # Pass context for evaluators that need it (e.g., feedback_network cross-ref)
-                det["_context"] = analysis_json
-                result = evaluator(det, sim_data)
-                det.pop("_context", None)
-            else:
-                result = {
-                    "subcircuit_type": _singular_type(det_type),
-                    "components": _get_components(det),
-                    "status": "pass",
-                    "simulated": sim_data,
-                }
 
             result["cir_file"] = cir_file
             result["log_file"] = log_file
             result["elapsed_s"] = round(elapsed, 3)
+
+            # Monte Carlo tolerance analysis
+            if monte_carlo_n > 0 and result.get("status") != "skip":
+                from spice_tolerance import (
+                    find_toleranceable_components, sample_detection,
+                    aggregate_mc_results,
+                )
+                components = find_toleranceable_components(det)
+                if components:
+                    mc_results_list = []
+                    sampled_values_list = []
+                    mc_cir = os.path.join(workdir, f"{label}_mc.cir")
+                    mc_out = os.path.join(workdir, f"{label}_mc.out")
+                    mc_log = os.path.join(workdir, f"{label}_mc.log")
+
+                    for _trial in range(monte_carlo_n):
+                        sampled_det = sample_detection(
+                            det, components, mc_rng, mc_distribution)
+                        mc_result, _mc_elapsed = _run_single_sim(
+                            sampled_det, det_type, generator, evaluator,
+                            mc_cir, mc_out, mc_log)
+                        if mc_result is not None:
+                            mc_results_list.append(mc_result)
+                            # Store sampled values for sensitivity analysis
+                            sv = {}
+                            for idx, (kp, _ct, _nom, _tol) in enumerate(components):
+                                try:
+                                    from spice_tolerance import _get_nested
+                                    sv[idx] = _get_nested(sampled_det, kp)
+                                except (KeyError, TypeError, IndexError):
+                                    pass
+                            sampled_values_list.append(sv)
+
+                    # Store original det for component ref lookup
+                    result["_det"] = det
+                    result["tolerance_analysis"] = aggregate_mc_results(
+                        result, mc_results_list, components,
+                        sampled_values_list,
+                        _singular_type(det_type),
+                        monte_carlo_n, mc_distribution, mc_seed,
+                    )
+                    result.pop("_det", None)
+
+                    # Clean up MC temp files
+                    for f in (mc_cir, mc_out, mc_log):
+                        if os.path.exists(f):
+                            os.remove(f)
+
             results.append(result)
 
     # Process signal_analysis detections
@@ -343,6 +415,27 @@ def main():
         default="auto",
         help="SPICE simulator to use (default: auto-detect)",
     )
+    parser.add_argument(
+        "--monte-carlo",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Run N Monte Carlo tolerance simulations per subcircuit "
+             "(e.g., --monte-carlo 100)",
+    )
+    parser.add_argument(
+        "--mc-distribution",
+        choices=["gaussian", "uniform"],
+        default="gaussian",
+        help="Distribution for tolerance sampling (default: gaussian, "
+             "3-sigma = tolerance band)",
+    )
+    parser.add_argument(
+        "--mc-seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible Monte Carlo runs (default: 42)",
+    )
 
     args = parser.parse_args()
 
@@ -396,6 +489,9 @@ def main():
         types=types,
         parasitics=parasitics_data,
         simulator_backend=simulator_backend,
+        monte_carlo_n=args.monte_carlo,
+        mc_distribution=args.mc_distribution,
+        mc_seed=args.mc_seed,
     )
 
     # Clean up file paths if compact mode
