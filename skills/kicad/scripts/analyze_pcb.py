@@ -224,7 +224,7 @@ def extract_layers(root: list) -> list[dict]:
                 "number": int(item[0]) if str(item[0]).isdigit() else item[0],
                 "name": item[1],
                 "type": item[2],
-                "alias": item[3] if len(item) > 3 else None,
+                "alias": item[3] if len(item) > 3 and isinstance(item[3], str) else None,
             })
     return layers
 
@@ -842,6 +842,10 @@ def extract_zones(root: list) -> tuple[list[dict], ZoneFills]:
             thermal_bridge = float(tb) if tb else None
             # "yes" in fill node means the zone has been filled
             is_filled = "yes" in fill
+            if not is_filled:
+                fill_type = get_value(fill, "type")
+                if fill_type in ("solid", "hatch"):
+                    is_filled = True
 
         # Zone outline area and bounding box
         outline_area = 0.0
@@ -4242,6 +4246,10 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     if return_path:
         result["return_path_continuity"] = return_path
 
+    if include_trace_segments:
+        result["_raw_tracks"] = tracks
+        result["_raw_vias"] = vias
+
     return result
 
 
@@ -4311,12 +4319,13 @@ def main():
                          include_trace_segments=args.full)
 
     if args.full:
-        # Re-parse to get full track/via data
-        root = parse_file(args.pcb)
-        track_data = extract_tracks(root)
-        result["tracks"]["segments"] = track_data["segments"]
-        result["tracks"]["arcs"] = track_data["arcs"]
-        result["vias"]["vias"] = extract_vias(root)["vias"]
+        raw_tracks = result.pop("_raw_tracks", None)
+        raw_vias = result.pop("_raw_vias", None)
+        if raw_tracks:
+            result["tracks"]["segments"] = raw_tracks.get("segments", [])
+            result["tracks"]["arcs"] = raw_tracks.get("arcs", [])
+        if raw_vias:
+            result["vias"]["vias"] = raw_vias.get("vias", [])
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)

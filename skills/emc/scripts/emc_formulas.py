@@ -1238,13 +1238,10 @@ def distributed_pdn_impedance_sweep(
         z_reg = parallel_cap_impedance(f, all_reg) if all_reg else float('inf')
 
         # Trace impedance (series R + jωL)
-        z_trace_r = r_trace
-        z_trace_x = omega * l_trace
-        z_trace_mag = math.sqrt(z_trace_r ** 2 + z_trace_x ** 2)
+        z_trace_complex = complex(r_trace, omega * l_trace)
 
-        # Remote impedance seen from IC = Z_reg + Z_trace
-        # Approximation: add magnitudes (conservative — actual is complex addition)
-        z_remote = z_reg + z_trace_mag
+        # Remote impedance: Z_reg (cap network magnitude, modeled as real) + Z_trace (complex)
+        z_remote = abs(z_reg + z_trace_complex)
 
         # Local IC decoupling impedance
         if ic_caps:
