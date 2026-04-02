@@ -12,8 +12,6 @@ from kicad_utils import (
     _LOAD_TYPE_KEYWORDS,
     _REGULATOR_VREF,
     format_frequency as _format_frequency,
-    is_ground_name as _is_ground_name,
-    is_power_net_name as _is_power_net_name,
     lookup_regulator_vref as _lookup_regulator_vref,
     parse_value,
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
@@ -1421,9 +1419,9 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             reg_info["inverting"] = True
 
         # KH-104: Sanity check — power rails should never be GND
-        if reg_info.get("input_rail") and _is_ground_name(reg_info["input_rail"]):
+        if reg_info.get("input_rail") and ctx.is_ground(reg_info["input_rail"]):
             reg_info["input_rail"] = None
-        if reg_info.get("output_rail") and _is_ground_name(reg_info["output_rail"]):
+        if reg_info.get("output_rail") and ctx.is_ground(reg_info["output_rail"]):
             reg_info["output_rail"] = None
 
         # KH-087: Trace output rail through inductor (retry after sanitization)
@@ -1432,7 +1430,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             ind_n1, ind_n2 = ctx.get_two_pin_nets(ind_ref)
             sw_net_2 = sw_pin[1] if sw_pin else None
             out_rail = ind_n2 if ind_n1 == sw_net_2 else ind_n1
-            if out_rail and not _is_ground_name(out_rail):
+            if out_rail and not ctx.is_ground(out_rail):
                 reg_info["output_rail"] = out_rail
 
         # KH-087: Trace input rail through ferrite bead
@@ -1445,7 +1443,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                             and p["component"] != reg_info.get("inductor")):
                         fb_n1, fb_n2 = ctx.get_two_pin_nets(p["component"])
                         other = fb_n2 if fb_n1 == vin_net else fb_n1
-                        if other and _is_power_net_name(other) and not _is_ground_name(other):
+                        if other and ctx.is_power_net(other) and not ctx.is_ground(other):
                             reg_info["input_rail"] = other
                             break
 
