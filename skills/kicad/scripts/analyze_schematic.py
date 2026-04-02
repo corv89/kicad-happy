@@ -35,16 +35,12 @@ from sexp_parser import (
 )
 from kicad_utils import (
     COORD_EPSILON,
-    _LOAD_TYPE_KEYWORDS,
     _MIL_MM,
     _OUTPUT_DRIVE_KEYWORDS,
-    _REGULATOR_VREF,
     classify_component,
     format_frequency as _format_frequency,
-    get_two_pin_nets as _get_two_pin_nets_standalone,
     is_ground_name as _is_ground_name,
     is_power_net_name as _is_power_net_name,
-    lookup_regulator_vref as _lookup_regulator_vref,
     parse_value,
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
     snap_to_mil_grid as _snap_mil,
@@ -4841,11 +4837,7 @@ def analyze_sleep_current(ctx: AnalysisContext,
     comp_lookup = ctx.comp_lookup
     ref_pins = ctx.ref_pins
     rail_currents: dict[str, list[dict]] = {}
-
-    def _get_two_pin_nets(ref: str) -> tuple[str | None, str | None]:
-        n1, _ = pin_net.get((ref, "1"), (None, None))
-        n2, _ = pin_net.get((ref, "2"), (None, None))
-        return n1, n2
+    _get_two_pin_nets = ctx.get_two_pin_nets
 
     # --- Resistors between power and ground ---
     for comp in components:

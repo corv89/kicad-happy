@@ -1110,12 +1110,19 @@ def check_crystal_guard_ring(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
         # Check if any ground zone covers the crystal area (within 5mm)
         has_ground_pour = False
         for gz in gnd_zones:
-            bbox = gz.get('outline_bbox', gz.get('filled_bbox', {}))
+            bbox = gz.get('filled_bbox') or gz.get('outline_bbox')
             if not bbox:
                 continue
-            # Expand bbox by 5mm search radius
-            if (bbox.get('min_x', 0) - 5 <= cx <= bbox.get('max_x', 0) + 5 and
-                bbox.get('min_y', 0) - 5 <= cy <= bbox.get('max_y', 0) + 5):
+            # Handle both dict and list bbox formats
+            if isinstance(bbox, dict):
+                bx_min, by_min = bbox.get('min_x', 0), bbox.get('min_y', 0)
+                bx_max, by_max = bbox.get('max_x', 0), bbox.get('max_y', 0)
+            elif isinstance(bbox, list) and len(bbox) >= 4:
+                bx_min, by_min, bx_max, by_max = bbox[0], bbox[1], bbox[2], bbox[3]
+            else:
+                continue
+            if (bx_min - 5 <= cx <= bx_max + 5 and
+                by_min - 5 <= cy <= by_max + 5):
                 has_ground_pour = True
                 break
 
@@ -1172,15 +1179,19 @@ def check_via_stitching(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
     # Count ground stitching vias (prefer detailed list over total count)
     via_list = vias.get('vias', [])
     if via_list:
-        # When detailed via data is available, count only ground-connected vias
+        # Build net ID → name mapping to resolve numeric via net IDs
+        net_id_map = _build_net_id_to_name(pcb)
         gnd_via_count = 0
         for v in via_list:
-            v_net = v.get('net_name', '') or v.get('net', '')
-            if isinstance(v_net, str) and _is_ground_net(v_net):
+            v_net = v.get('net', 0)
+            if isinstance(v_net, str):
+                net_name = v_net
+            elif isinstance(v_net, int) and v_net in net_id_map:
+                net_name = net_id_map[v_net]
+            else:
+                net_name = ''
+            if _is_ground_net(net_name):
                 gnd_via_count += 1
-            elif isinstance(v_net, int):
-                # Numeric net ID — can't determine if ground without mapping
-                pass
         via_count = gnd_via_count if gnd_via_count > 0 else len(via_list)
     else:
         via_count = vias.get('count', stats.get('via_count', 0))
