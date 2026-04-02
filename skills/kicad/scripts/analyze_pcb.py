@@ -248,11 +248,18 @@ def extract_setup(root: list) -> dict:
     stackup = find_first(setup_node, "stackup")
     if stackup:
         stack_layers = []
+        _NUMERIC_STACKUP_KEYS = {"thickness", "epsilon_r", "loss_tangent"}
         for layer in find_all(stackup, "layer"):
             layer_info = {"name": layer[1] if len(layer) > 1 else ""}
             for item in layer[2:]:
                 if isinstance(item, list) and len(item) >= 2:
-                    layer_info[item[0]] = item[1]
+                    key, val = item[0], item[1]
+                    if key in _NUMERIC_STACKUP_KEYS:
+                        try:
+                            val = float(val)
+                        except (ValueError, TypeError):
+                            pass
+                    layer_info[key] = val
             stack_layers.append(layer_info)
         result["stackup"] = stack_layers
 
@@ -1660,22 +1667,22 @@ def _build_layer_heights(stackup):
         if layer.get("type") != "copper":
             continue
         name = layer.get("name", "")
-        cu_t = _safe_num(layer.get("thickness"), 0.035)
+        cu_t = layer.get("thickness", 0.035)
 
         # Look for the nearest dielectric layer (below for top copper, above for bottom)
         # Try below first
         for j in range(i + 1, len(layers)):
             if layers[j].get("type") in ("core", "prepreg"):
-                h = _safe_num(layers[j].get("thickness"), 0.2)
-                er = _safe_num(layers[j].get("epsilon_r"), 4.5)
+                h = layers[j].get("thickness", 0.2)
+                er = layers[j].get("epsilon_r", 4.5)
                 heights[name] = (h, er, cu_t)
                 break
         else:
             # No dielectric below — try above
             for j in range(i - 1, -1, -1):
                 if layers[j].get("type") in ("core", "prepreg"):
-                    h = _safe_num(layers[j].get("thickness"), 0.2)
-                    er = _safe_num(layers[j].get("epsilon_r"), 4.5)
+                    h = layers[j].get("thickness", 0.2)
+                    er = layers[j].get("epsilon_r", 4.5)
                     heights[name] = (h, er, cu_t)
                     break
 
