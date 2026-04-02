@@ -99,6 +99,7 @@ def _get_parasitic_lines(parasitics_data, net_name, node_before, node_after):
         (lines_str, parasitic_note) — SPICE element lines and comment,
         or ("", "") if no parasitics available for this net
     """
+    # EQ-079: R_trace + L_via parasitic element injection
     if not parasitics_data:
         return "", ""
 
@@ -246,6 +247,7 @@ def generate_lc_filter(det, output_file, context=None, parasitics=None):
     Returns:
         Complete .cir file content string
     """
+    # EQ-083: f₀ = 1/(2π√(LC)) testbench (validates EQ-021)
     l_ref = det["inductor"]["ref"]
     l_henries = det["inductor"]["henries"]
     c_ref = det["capacitor"]["ref"]
@@ -365,6 +367,7 @@ def generate_opamp_circuit(det, output_file, context=None, parasitics=None):
         Complete .cir file content string, or None if configuration is
         not simulatable (comparator/open-loop)
     """
+    # EQ-084: G_expected = 1+Rf/Ri or -Rf/Ri (validates EQ-071)
     config = det.get("configuration", "unknown")
     if config in ("comparator_or_open_loop", "unknown"):
         return None
@@ -591,6 +594,7 @@ def generate_crystal_circuit(det, output_file, context=None, parasitics=None):
         Complete .cir file content string, or None if not simulatable
         (active oscillators need no verification)
     """
+    # EQ-080: C_L = 1/(1/C₁+1/C₂) + C_stray (crystal load cap)
     ctype = det.get("type", "passive")
     if ctype == "active_oscillator":
         return None  # Active oscillators are self-contained, nothing to simulate
@@ -1170,6 +1174,7 @@ def generate_decoupling(det, output_file, context=None, parasitics=None):
     Returns:
         Complete .cir file content string, or None if not enough data
     """
+    # EQ-081: |Z| at target freq from ESR+ESL cap model
     caps = det.get("capacitors", [])
     rail = det.get("rail", "?")
 
@@ -1401,6 +1406,7 @@ def generate_inrush(det, output_file, context=None, parasitics=None):
     Returns:
         Complete .cir file content string, or None if insufficient data
     """
+    # EQ-082: I_peak = V/R at t=0 (startup inrush current)
     caps = det.get("output_caps", [])
     v_out = det.get("output_voltage")
     reg_ref = det.get("regulator", "?")
@@ -1600,6 +1606,7 @@ def generate_snubber(det, output_file, context=None, parasitics=None):
     Returns:
         Complete .cir file content string, or None if insufficient data
     """
+    # EQ-085: f_damp = 1/(2πRC) (snubber damping frequency)
     sd = det.get("snubber_data")
     if not sd:
         return None

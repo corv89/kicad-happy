@@ -418,6 +418,7 @@ def evaluate_transistor_circuit(det, sim_results):
     Checks that the transistor turns on at a reasonable threshold and
     the on-state current is within expected bounds.
     """
+    # EQ-078: Vth from DC sweep (transistor threshold detection)
     ref = det["reference"]
     ttype = det.get("type", "unknown")
     value = det.get("value", "")
@@ -764,6 +765,7 @@ def evaluate_bridge_circuit(det, sim_results):
 
     Checks that the low-side FET turns on at a reasonable threshold.
     """
+    # EQ-076: Gate sweep Vgs threshold detection
     hbs = det.get("half_bridges", [])
     hb = hbs[0] if hbs else {}
     hi_ref = hb.get("high_side", "?")
@@ -915,6 +917,7 @@ def evaluate_bms_balance(det, sim_results):
 
 def evaluate_snubber(det, sim_results):
     """Evaluate snubber RC circuit simulation results."""
+    # EQ-077: f_damp from AC impedance minimum detection
     sd = det.get("snubber_data", {}) or {}
     r_ref = sd.get("resistor_ref", "?")
     c_ref = sd.get("capacitor_ref", "?")

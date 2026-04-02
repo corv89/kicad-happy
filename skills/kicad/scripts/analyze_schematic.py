@@ -204,6 +204,7 @@ def extract_lib_symbols(root: list) -> dict:
 
 def apply_rotation(px: float, py: float, angle_deg: float) -> tuple[float, float]:
     """Apply rotation to a pin offset. KiCad uses degrees, CCW positive."""
+    # EQ-065: x'=x·cosθ-y·sinθ, y'=x·sinθ+y·cosθ (2D rotation)
     if angle_deg == 0:
         return px, py
     rad = math.radians(angle_deg)
@@ -4171,6 +4172,7 @@ def analyze_wire_geometry(wires: list[dict]) -> dict:
     Flags non-orthogonal wires (diagonal), very short wires (possible stubs),
     and computes overall wire statistics.
     """
+    # EQ-064: L = √(Δx²+Δy²) (wire segment length)
     if not wires:
         return {"total_wires": 0}
 
@@ -4564,6 +4566,7 @@ def analyze_pdn_impedance(components: list[dict], nets: dict, pin_net: dict) -> 
     computes combined impedance at frequency points (1 kHz to 1 GHz), and flags
     frequency gaps and anti-resonances.
     """
+    # EQ-062: |Z| = √(ESR²+(ωL-1/ωC)²) swept over frequency
     # Package-dependent parasitics
     esl_by_pkg = {
         "0201": 0.2e-9, "0402": 0.3e-9, "0603": 0.5e-9,
@@ -4602,6 +4605,7 @@ def analyze_pdn_impedance(components: list[dict], nets: dict, pin_net: dict) -> 
         return False
 
     def _cap_impedance(f: float, c_farads: float, esr: float, esl: float) -> float:
+        # EQ-061: |Z| = √(ESR²+(2πfL-1/(2πfC))²) at given frequency
         x_c = 1.0 / (2.0 * math.pi * f * c_farads) if c_farads > 0 else 1e12
         x_l = 2.0 * math.pi * f * esl
         return math.sqrt(esr ** 2 + (x_l - x_c) ** 2)
@@ -5267,6 +5271,7 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
                                 design_analysis: dict, signal_analysis: dict,
                                 pin_net: dict) -> dict:
     """Validate electrical characteristics of detected communication buses."""
+    # EQ-063: t_rise = 0.8473 × R × C (I2C rise time estimation)
     buses = design_analysis.get("bus_analysis", {})
     cross_domain = design_analysis.get("cross_domain_signals", [])
     power_domains = design_analysis.get("power_domains", {}).get("ic_power_rails", {})
