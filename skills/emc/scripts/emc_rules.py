@@ -153,6 +153,8 @@ def _suggest_pdn_cap(peak, cap_models, plane_cap_f, z_target, spice_backend,
                      sweep_before=None):
     """Generate a specific cap suggestion for a PDN anti-resonance peak.
 
+    # EQ-093: C_suggest = 1/(4π²f²ESL) then round to E12 (PDN cap selection)
+    # Source: Derived from EQ-089 (inverse SRF) + EQ-090 (E12 rounding)
     Picks a cap whose SRF falls at the peak frequency, optionally verifies
     with SPICE that the peak is resolved.  When sweep_before is provided,
     reuses the existing sweep data instead of re-simulating.
@@ -1298,6 +1300,8 @@ def estimate_switching_emissions(schematic: Dict,
                                  spice_backend=None) -> List[Dict]:
     """Estimate switching regulator emissions relative to limits.
 
+    # EQ-094: V_n = V_peak × 2/(nπ) × sin(nπD) (trapezoidal harmonic envelope)
+    # Source: Ott "EMC Engineering" (Wiley, 2009) Section 7.3
     When spice_backend is available, runs transient FFT to get actual
     harmonic amplitudes and compares against the analytical envelope.
     """
@@ -1377,6 +1381,9 @@ def check_switching_node_area(pcb: Optional[Dict],
                               net_id_map: Optional[Dict] = None) -> List[Dict]:
     """SW-002: Flag large switching node copper area.
 
+    # EQ-095: A_track = Σ(width_mm × length_mm) (switching node copper area)
+    # Source: Engineering heuristic — switching node area directly
+    # correlates with radiated emissions (antenna effect)
     For switching regulators, the SW/PH/LX net should have minimal copper
     area — just enough to connect the IC pin to the inductor pad. Large
     copper on the switching node acts as an antenna for switching noise.
@@ -3141,6 +3148,8 @@ def check_pdn_distributed(pcb: Optional[Dict],
                           spice_backend=None) -> List[Dict]:
     """PD-003/PD-004: Full-board PDN analysis with trace parasitics and cross-rail coupling.
 
+    # EQ-096: I_reflected = P_downstream / V_upstream (reflected transient current)
+    # Source: Smith "Power Distribution Network Design Methodologies" Ch. 6
     PD-003: Distributed rail impedance at IC load point exceeds target.
            The impedance seen by an IC is higher than at the regulator output
            due to trace R+L between them. Local decoupling caps help but may
