@@ -80,6 +80,30 @@ With `--parasitics`, testbenches include trace resistance and via inductance bet
 
 **When to use parasitic simulation:** Consider it when the design has high-impedance feedback networks (>100kΩ), LC filters or RF matching networks, long analog signal traces, or high-frequency circuits where trace inductance matters. For typical digital designs with low-impedance power regulation, the ideal simulation is sufficient.
 
+### Step 2c (optional): Monte Carlo tolerance analysis
+
+Run N simulations per subcircuit with randomized component values within tolerance bands. Reports statistical distributions and sensitivity analysis — which component contributes most to output variation.
+
+```bash
+# Run 100 Monte Carlo trials per subcircuit
+python3 <skill-path>/scripts/simulate_subcircuits.py analysis.json --monte-carlo 100 --output sim_report.json
+
+# Use uniform distribution (conservative worst-case envelope) instead of Gaussian
+python3 <skill-path>/scripts/simulate_subcircuits.py analysis.json --monte-carlo 100 --mc-distribution uniform
+
+# Set random seed for reproducibility (default: 42)
+python3 <skill-path>/scripts/simulate_subcircuits.py analysis.json --monte-carlo 100 --mc-seed 123
+```
+
+**Tolerance sourcing:** Tolerances are extracted from component value strings first (e.g., "680K 1%" → 1%, "22uF/6.3V/20%/X5R" → 20%). When not specified in the value string, defaults are used: resistors 5%, capacitors 10%, inductors 20%.
+
+**Output:** Each simulation result gains a `tolerance_analysis` section with:
+- **statistics**: mean, std, min, max, 3-sigma bounds, spread percentage for the primary output metric (fc, Vout, gain, etc.)
+- **sensitivity**: per-component contribution percentage showing which component dominates variation (e.g., "C3 (10% tol) contributes 68% of fc variation, R5 (5% tol) contributes 32%")
+- **components**: list of toleranceable components with their resolved tolerance values
+
+**When to use Monte Carlo:** Use it for feedback networks (regulator output accuracy), precision voltage dividers, RC/LC filters near spec limits, and any circuit where tolerance stacking could push behavior outside acceptable bounds. For N=100 at ~5-50ms per simulation, expect ~0.5-5s per subcircuit.
+
 ### Step 3: Interpret results and present to user
 
 Read the JSON report and incorporate findings into the design review. See the "Interpreting Results" and "Presenting to Users" sections below.

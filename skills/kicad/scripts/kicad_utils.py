@@ -268,6 +268,40 @@ def parse_value(value_str: str, component_type: str | None = None) -> float | No
         return None
 
 
+def parse_tolerance(value_str: str) -> float | None:
+    """Extract tolerance percentage from a component value string.
+
+    Returns tolerance as a fraction (0.01 for 1%, 0.05 for 5%, etc.),
+    or None if no tolerance is found in the string.
+
+    Examples:
+        "680K 1%"                            -> 0.01
+        "22uF/6.3V/20%/X5R"                 -> 0.20
+        "10K 5%"                             -> 0.05
+        "0.1uF/25V(10%)"                    -> 0.10
+        ".1uF/X7R/+-10%"                    -> 0.10
+        "0.02±1%"                            -> 0.01
+        "02.0001_R0402_0R_1%"               -> 0.01
+        "033uF_0603_Ceramic_Capacitor,_10%"  -> 0.10
+        "100nF"                              -> None
+    """
+    if not value_str:
+        return None
+    # Split on all common delimiters: / space _ , ± and also break on ( boundaries
+    tokens = re.split(r'[/\s_,±]+', value_str)
+    for token in tokens:
+        # Strip parentheses and +- prefixes
+        cleaned = token.strip('()+-')
+        m = re.match(r'^(\d+(?:\.\d+)?)\s*%$', cleaned)
+        if m:
+            return float(m.group(1)) / 100.0
+        # Also try extracting from within parentheses: "25V(10%)" -> "10%"
+        inner = re.search(r'\((\d+(?:\.\d+)?)\s*%\)', token)
+        if inner:
+            return float(inner.group(1)) / 100.0
+    return None
+
+
 def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False, footprint: str = "", in_bom: bool = False) -> str:
     """Classify component type from reference designator and library."""
     # Power symbols: trust the lib_symbol (power) flag unconditionally.

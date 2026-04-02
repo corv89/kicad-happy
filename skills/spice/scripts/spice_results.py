@@ -1064,10 +1064,33 @@ def build_report(simulation_runs):
         status = run.get("status", "skip")
         counts[status] = counts.get(status, 0) + 1
 
-    return {
+    report = {
         "summary": {
             "total": len(simulation_runs),
             **counts,
         },
         "simulation_results": simulation_runs,
     }
+
+    # Monte Carlo summary if any results have tolerance_analysis
+    mc_runs = [r for r in simulation_runs if "tolerance_analysis" in r]
+    if mc_runs:
+        concerns = []
+        for r in mc_runs:
+            ta = r["tolerance_analysis"]
+            for metric, stats in ta.get("statistics", {}).items():
+                if stats.get("spread_pct", 0) > 25:
+                    concerns.append({
+                        "subcircuit_type": r.get("subcircuit_type", ""),
+                        "components": r.get("components", []),
+                        "metric": metric,
+                        "spread_pct": stats["spread_pct"],
+                    })
+        report["monte_carlo_summary"] = {
+            "subcircuits_analyzed": len(mc_runs),
+            "total_simulations": sum(
+                r["tolerance_analysis"]["n_converged"] for r in mc_runs),
+            "concerns": concerns,
+        }
+
+    return report
