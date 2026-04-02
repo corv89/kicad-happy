@@ -173,11 +173,15 @@ The analyzer generates a test plan to help you prepare for lab testing:
 
 ## SPICE-Enhanced Mode
 
-When a SPICE simulator is available (ngspice, LTspice, or Xyce), the `--spice-enhanced` flag improves two check categories:
+When a SPICE simulator is available (ngspice, LTspice, or Xyce), the `--spice-enhanced` flag improves four areas:
 
 **PDN impedance (PD-001, PD-002)** — Instead of the analytical parallel-RLC model, SPICE runs an actual AC sweep of the decoupling network. This captures phase interactions between capacitors that the analytical model misses, particularly at anti-resonance peaks. In testing, SPICE found a 33 ohm anti-resonance peak where the analytical model estimated 3.4 ohm — a 10x difference that could mean the difference between catching a real PDN problem and missing it.
 
+**SPICE-verified cap suggestions** — When PD-001 flags an anti-resonance peak, the tool computes a specific cap value whose SRF fills the gap (rounded to E12 standard values), then re-runs the SPICE sweep with the suggested cap added to verify the peak is resolved. The recommendation includes the exact component value and verification result: "Add 220pF 0603 MLCC (SPICE-verified: peak reduced from 33.5 ohm to 8.9 ohm)."
+
 **EMI filter insertion loss (EF-001, EF-002)** — Instead of just checking cutoff frequency vs switching frequency, SPICE simulates the actual insertion loss including capacitor parasitics. Reports attenuation in dB at the switching frequency and its 3rd harmonic.
+
+**Switching harmonic FFT (EE-002)** — Instead of the analytical trapezoidal envelope approximation, runs a transient SPICE simulation of the switching waveform and extracts actual harmonic amplitudes using the Goertzel algorithm. EE-002 findings show SPICE FFT results alongside the analytical envelope for comparison.
 
 ```bash
 # Enable SPICE-enhanced mode
@@ -186,7 +190,7 @@ python3 analyze_emc.py --schematic sch.json --pcb pcb.json --spice-enhanced
 # The GitHub Action enables this automatically when ngspice is installed
 ```
 
-Findings from SPICE-enhanced checks are annotated "(SPICE-verified)" in the description. Without a simulator, the analytical model runs unchanged and findings are annotated "(analytical)".
+Findings from SPICE-enhanced checks are annotated "(SPICE-verified)" in the description and receive 1.5x weight in per-net scoring. Without a simulator, the analytical model runs unchanged and findings are annotated "(analytical)".
 
 ## Limitations
 

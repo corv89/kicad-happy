@@ -106,8 +106,10 @@ When `--spice-enhanced` is passed and a SPICE simulator is detected (via the `sp
 
 Implementation: `emc_spice.py` imports from the spice skill's `spice_simulator.py` and `spice_templates.py`. Falls back to analytical if import fails or simulation errors.
 
+**Switching harmonic FFT** — When SPICE is available, `run_switching_fft()` generates a PULSE source at the switching frequency, runs transient analysis for 20 cycles, dumps the raw waveform to ASCII, and computes harmonic magnitudes using the Goertzel algorithm (O(N) per frequency, no numpy). Results appear in EE-002 findings as "SPICE FFT: h1=X, h3=Y (envelope: Z)".
+
+**Cap suggestion verification** — When PD-001 flags an anti-resonance peak, `_suggest_pdn_cap()` computes a cap value whose SRF fills the gap (via `cap_value_for_srf()`, rounded to E12), then optionally re-runs the SPICE PDN sweep with the suggested cap added to verify the peak is resolved. The recommendation includes the specific component value and SPICE verification result.
+
 ## Future Enhancements
 
-- **Switching node area estimation** — measure copper area on switch node nets
 - **Trace-level ground plane crossing** — when full zone polygon data becomes available, check per-trace-segment crossing of specific voids
-- **SPICE-based switching harmonic FFT** — transient simulation + FFT for actual harmonic amplitudes instead of trapezoidal envelope approximation
