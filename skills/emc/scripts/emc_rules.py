@@ -29,6 +29,9 @@ from emc_formulas import (
     cap_value_for_srf, round_to_e12,
     diff_pair_skew_ps, diff_pair_cm_voltage, point_to_segment_distance,
     DIFF_PAIR_PROTOCOLS, MARKET_STANDARDS,
+    build_power_tree, enrich_power_tree_with_pcb,
+    distributed_pdn_impedance_sweep, cross_rail_transient_current,
+    parallel_cap_impedance,
 )
 
 
@@ -3133,6 +3136,235 @@ def check_pdn_impedance(pcb: Optional[Dict],
     return findings
 
 
+def check_pdn_distributed(pcb: Optional[Dict],
+                          schematic: Optional[Dict],
+                          spice_backend=None) -> List[Dict]:
+    """PD-003/PD-004: Full-board PDN analysis with trace parasitics and cross-rail coupling.
+
+    PD-003: Distributed rail impedance at IC load point exceeds target.
+           The impedance seen by an IC is higher than at the regulator output
+           due to trace R+L between them. Local decoupling caps help but may
+           introduce new anti-resonances.
+
+    PD-004: Upstream PDN sees reflected transient from downstream switching
+           regulator. A buck converter drawing pulsed current at its switching
+           frequency creates ripple on the input rail that affects all other
+           loads sharing that rail.
+
+    Ref: Bogatin, "Signal and Power Integrity — Simplified" Ch. 10-12;
+         Smith, "Decoupling Capacitor Calculations for ASICs";
+         Basso, "Switch-Mode Power Supplies" (McGraw-Hill).
+    """
+    findings = []
+    if not schematic:
+        return findings
+
+    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    if not regulators:
+        return findings
+
+    power_budget = schematic.get('power_budget', {})
+    decoupling = schematic.get('signal_analysis', {}).get('decoupling_analysis', [])
+
+    # Build and enrich power tree
+    tree = build_power_tree(regulators, power_budget, decoupling)
+    if not tree:
+        return findings
+
+    if pcb:
+        enrich_power_tree_with_pcb(tree, pcb)
+
+    # Interplane capacitance (reuse same logic as check_pdn_impedance)
+    plane_cap_f = 0
+    if pcb:
+        setup = pcb.get('setup', {})
+        stackup = setup.get('stackup', [])
+        if stackup:
+            stats = pcb.get('statistics', {})
+            w = stats.get('board_width_mm', 0)
+            h = stats.get('board_height_mm', 0)
+            board_area_cm2 = (w * h) / 100.0 if w and h else 0
+            # Find tightest power/ground plane pair
+            for i in range(len(stackup) - 1):
+                layer = stackup[i]
+                if not isinstance(layer, dict):
+                    continue
+                if layer.get('type') not in ('core', 'prepreg'):
+                    continue
+                try:
+                    d_mm = float(layer.get('thickness', 0))
+                    er = float(layer.get('epsilon_r', 4.4))
+                except (ValueError, TypeError):
+                    continue
+                if 0 < d_mm < 0.3 and board_area_cm2 > 0:
+                    cpf = interplane_capacitance_pf_per_cm2(d_mm, er)
+                    plane_cap_f = max(plane_cap_f, cpf * board_area_cm2 * 1e-12)
+
+    # --- PD-003: Distributed rail impedance at IC load point ---
+    for rail_name, node in tree.items():
+        if not node.get('load_ics'):
+            continue
+        if not node.get('output_caps'):
+            continue
+
+        r_trace = node.get('trace_r_total_ohm', 0)
+        l_trace = node.get('trace_l_total_h', 0)
+
+        # Only fire PD-003 if we have meaningful trace parasitics
+        # (otherwise PD-001 already covers this rail)
+        if r_trace <= 0.001 and l_trace <= 0.1e-9:
+            continue
+
+        vout = node['voltage']
+        total_load_mA = node['total_load_mA']
+        i_transient = min(total_load_mA / 1000.0 * 2, 5.0)
+        if i_transient <= 0:
+            i_transient = 0.5
+
+        z_target = pdn_target_impedance(vout, ripple_pct=5.0,
+                                        i_transient_a=i_transient)
+
+        # Run distributed sweep
+        sweep_result = distributed_pdn_impedance_sweep(
+            node, plane_cap_f=plane_cap_f)
+
+        ic_sweep = sweep_result.get('sweep_at_worst_ic', [])
+        worst_ic = sweep_result.get('worst_ic_ref', '')
+
+        # Check IC sweep: anti-resonance peaks OR minimum impedance above target
+        peaks = find_anti_resonances(ic_sweep, z_target=z_target)
+        exceeding = [p for p in peaks if p.get('exceeds_target')]
+
+        # Also check if the minimum impedance at IC exceeds target
+        # (covers the case of undersized decoupling where there are no
+        # anti-resonance peaks but the entire curve is above target)
+        z_min_at_ic = min((pt['impedance_ohm'] for pt in ic_sweep),
+                          default=float('inf'))
+        z_min_at_reg = min((pt['impedance_ohm'] for pt in
+                            sweep_result.get('sweep_at_regulator', [])),
+                           default=float('inf'))
+
+        # PD-003 fires if: (a) anti-resonance peaks exceed target, OR
+        # (b) minimum IC impedance exceeds target AND is meaningfully
+        # worse than at the regulator (trace parasitics are the cause)
+        trace_impact = z_min_at_ic > z_min_at_reg * 1.2  # 20% worse
+
+        if exceeding or (z_min_at_ic > z_target and trace_impact):
+            reg_ref = node['regulator']['ref']
+            r_note = f'Trace R={r_trace * 1000:.1f}mΩ'
+            l_note = f'L={l_trace * 1e9:.1f}nH'
+
+            if exceeding:
+                peak_strs = [f'{p["freq_mhz"]:.1f}MHz ({p["impedance_ohm"]:.3f}Ω)'
+                             for p in exceeding[:3]]
+                detail = (
+                    f'Anti-resonance peak(s) exceed target at IC: '
+                    f'{", ".join(peak_strs)}.')
+            else:
+                detail = (
+                    f'Minimum impedance at IC is {z_min_at_ic:.3f}Ω '
+                    f'(vs {z_min_at_reg:.3f}Ω at regulator output) — '
+                    f'trace parasitics degrade the entire impedance profile.')
+
+            findings.append({
+                'category': 'pdn',
+                'severity': 'HIGH',
+                'rule_id': 'PD-003',
+                'title': (f'{rail_name} PDN impedance at {worst_ic or "load IC"} '
+                          f'exceeds target ({r_note}, {l_note} trace)'),
+                'description': (
+                    f'{reg_ref} {rail_name} rail: target impedance '
+                    f'{z_target:.3f}Ω (5% ripple, {i_transient:.1f}A transient). '
+                    f'{detail} '
+                    f'The regulator output caps alone may meet target, but the '
+                    f'IC sees higher impedance due to the interconnect.'
+                ),
+                'components': ([reg_ref] + ([worst_ic] if worst_ic else [])
+                               + [c['ref'] for c in node['output_caps'][:2]]),
+                'nets': [rail_name],
+                'recommendation': (
+                    f'Add local decoupling capacitor(s) near {worst_ic or "load IC"}. '
+                    f'Consider a 100nF MLCC within 2mm of the IC power pins to '
+                    f'reduce impedance at high frequencies, plus bulk cap if '
+                    f'low-frequency impedance is too high.'
+                ),
+            })
+
+    # --- PD-004: Cross-rail coupling from downstream switching ---
+    for rail_name, node in tree.items():
+        downstream_refs = node.get('downstream_regulators', [])
+        if not downstream_refs:
+            continue
+
+        upstream_v = node['voltage']
+        total_reflected = 0.0
+        worst_freq = 0
+        worst_downstream_ref = ''
+
+        for ds_ref in downstream_refs:
+            # Find the downstream node
+            ds_node = None
+            for other_name, other_node in tree.items():
+                if other_node['regulator']['ref'] == ds_ref:
+                    ds_node = other_node
+                    break
+            if not ds_node:
+                continue
+
+            i_trans, f_sw = cross_rail_transient_current(ds_node, upstream_v)
+            if i_trans > 0 and f_sw > 0:
+                total_reflected += i_trans
+                if i_trans > total_reflected - i_trans:  # this one is the worst
+                    worst_freq = f_sw
+                    worst_downstream_ref = ds_ref
+
+        if total_reflected <= 0 or worst_freq <= 0:
+            continue
+
+        # Check if upstream PDN can handle the reflected transient
+        # at the switching frequency
+        existing_load_mA = node['total_load_mA']
+        combined_transient = (existing_load_mA / 1000.0 * 2) + total_reflected
+        z_target_combined = pdn_target_impedance(
+            upstream_v, ripple_pct=5.0, i_transient_a=combined_transient)
+
+        # Get upstream impedance at the switching frequency
+        reg_caps = node.get('output_caps', [])
+        if not reg_caps:
+            continue
+        z_at_sw = parallel_cap_impedance(worst_freq, reg_caps)
+
+        if z_at_sw > z_target_combined and z_at_sw < float('inf'):
+            reg_ref = node['regulator']['ref']
+            findings.append({
+                'category': 'pdn',
+                'severity': 'MEDIUM',
+                'rule_id': 'PD-004',
+                'title': (f'{rail_name} PDN sees {total_reflected:.2f}A '
+                          f'reflected transient from {worst_downstream_ref} '
+                          f'at {worst_freq/1e6:.1f}MHz'),
+                'description': (
+                    f'{worst_downstream_ref} is a switching regulator drawing '
+                    f'pulsed current from the {rail_name} rail at '
+                    f'{worst_freq/1e6:.1f}MHz. The reflected transient '
+                    f'({total_reflected:.2f}A) combined with the rail\'s own '
+                    f'load ({existing_load_mA}mA) pushes the effective '
+                    f'transient to {combined_transient:.2f}A. The upstream '
+                    f'PDN impedance at {worst_freq/1e6:.1f}MHz is '
+                    f'{z_at_sw:.3f}Ω vs target {z_target_combined:.3f}Ω.'
+                ),
+                'components': [reg_ref, worst_downstream_ref],
+                'nets': [rail_name],
+                'recommendation': (
+                    f'Add input decoupling on {worst_downstream_ref}\'s '
+                    f'input (a 10-22µF bulk cap plus 100nF MLCC), or add '
+                    f'bulk capacitance on the {rail_name} rail.'
+                ),
+            })
+
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Category 12: Return Path Enhancement
 # ---------------------------------------------------------------------------
@@ -3674,6 +3906,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_diff_pair_reference_plane(pcb, schematic))
         all_findings.extend(check_diff_pair_layer(pcb, schematic))
         all_findings.extend(check_pdn_impedance(pcb, schematic, spice_backend))
+        all_findings.extend(check_pdn_distributed(pcb, schematic, spice_backend))
         all_findings.extend(check_thermal_emc(pcb, schematic))
         all_findings.extend(check_switching_node_area(pcb, schematic, net_id_map))
         all_findings.extend(check_input_cap_loop_area(pcb, schematic, spice_backend))

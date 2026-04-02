@@ -62,7 +62,7 @@ Read the JSON report and incorporate findings into the design review. Each findi
 
 ## What Gets Checked
 
-40 rule IDs across 17 categories. Each rule has a specific threshold, rationale, and source citation — see `references/pcb-emc-rules.md` for full details.
+42 rule IDs across 17 categories. Each rule has a specific threshold, rationale, and source citation — see `references/pcb-emc-rules.md` for full details.
 
 | Category | Rules | What it detects |
 |----------|-------|-----------------|
@@ -75,7 +75,7 @@ Read the JSON report and incorporate findings into the design review. Each findi
 | **Stackup** | SU-001 to SU-003 | Adjacent signal layers, signal far from reference plane, thin interplane capacitance |
 | **Diff pair** | DP-001 to DP-004 | Intra-pair skew vs protocol limits, CM radiation, reference plane change, outer layer routing |
 | **Board edge** | BE-001 to BE-003 | Signal near edge, incomplete ground pour ring, connector area stitching |
-| **PDN impedance** | PD-001, PD-002 | Anti-resonance peaks exceeding target impedance (analytical or SPICE-verified) |
+| **PDN impedance** | PD-001 to PD-004 | Anti-resonance peaks, distributed rail impedance at IC load points, cross-rail coupling from downstream switching regulators |
 | **Return path** | RP-001 | Layer transition via without nearby ground stitching via |
 | **Crosstalk** | XT-001 | 3H spacing violation, aggressor-victim pairs |
 | **EMI filter** | EF-001, EF-002 | Filter cutoff too close to switching frequency (analytical or SPICE insertion loss) |

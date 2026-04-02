@@ -287,18 +287,25 @@ def parse_tolerance(value_str: str) -> float | None:
     """
     if not value_str:
         return None
-    # Split on all common delimiters: / space _ , ± and also break on ( boundaries
-    tokens = re.split(r'[/\s_,±]+', value_str)
+    # Split on all common delimiters: / space _ , ± - | and break on ( boundaries
+    tokens = re.split(r'[/\s_,±|\-]+', value_str)
     for token in tokens:
         # Strip parentheses and +- prefixes
         cleaned = token.strip('()+-')
-        m = re.match(r'^(\d+(?:\.\d+)?)\s*%$', cleaned)
+        m = re.match(r'^(\d*\.?\d+)\s*%$', cleaned)
         if m:
             return float(m.group(1)) / 100.0
         # Also try extracting from within parentheses: "25V(10%)" -> "10%"
-        inner = re.search(r'\((\d+(?:\.\d+)?)\s*%\)', token)
+        inner = re.search(r'\((\d*\.?\d+)\s*%\)', token)
         if inner:
             return float(inner.group(1)) / 100.0
+    # Fallback: search entire string for number followed by %
+    # Catches "20 %" (space-separated) and "5%T52" (no delimiter after %)
+    m = re.search(r'(\d*\.?\d+)\s*%', value_str)
+    if m:
+        val = float(m.group(1)) / 100.0
+        if 0.001 <= val <= 0.5:
+            return val
     return None
 
 
