@@ -325,6 +325,29 @@ Models each power component (LDO, switching regulator, shunt resistor) as a poin
 | TP-001 | MLCC within 10mm of hot component | LOW |
 | TP-002 | Electrolytic cap within 10mm of hot component | MEDIUM |
 
+### Interactive "What-If" Parameter Sweep
+
+Instantly see the impact of component value changes on circuit behavior without re-running the full analyzer. Use when the user says "what if I change", "what happens if", "try a different value", "swap R5 to 4.7k", "parameter sweep", or wants to explore design trade-offs.
+
+```bash
+# Change one component
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k
+
+# Change multiple components
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k C3=22n
+
+# Include SPICE re-simulation on affected subcircuits
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --spice
+
+# Export patched JSON for further analysis (EMC, thermal, diff)
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --output patched.json
+
+# Human-readable output
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --text
+```
+
+Finds all subcircuit detections referencing the changed component(s), patches values, recalculates derived fields (filter cutoff, divider ratio, opamp gain, etc.), and shows before/after comparison with percentage deltas. The `--spice` flag runs SPICE simulations on both original and patched circuits for dynamic verification. The `--output` flag exports a patched analysis JSON that can be fed to EMC, thermal, or diff analysis.
+
 ## Reference Files
 
 Detailed methodology and format documentation lives in reference files. Read these as needed — they provide deep-dive content beyond what the scripts output automatically.
