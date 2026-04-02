@@ -534,6 +534,8 @@ def cap_self_resonant_freq(capacitance_f: float, esl_h: float) -> float:
 def cap_value_for_srf(target_srf_hz: float, esl_h: float) -> float:
     """Compute capacitance needed for a target self-resonant frequency.
 
+    # EQ-089: C = 1 / (4π² × f_SRF² × ESL) (inverse SRF for cap selection)
+    # Source: Inverse of EQ-012 (cap SRF formula)
     Inverse of cap_self_resonant_freq: C = 1 / (4π² × f_SRF² × ESL)
 
     Args:
@@ -555,6 +557,8 @@ _E12_DECADE = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2]
 def round_to_e12(value: float) -> float:
     """Round a value to the nearest E12 standard value.
 
+    # EQ-090: E12 decade normalization via log10 (standard component value selection)
+    # Source: IEC 60063 E-series standard values
     Works across any decade (pF, nF, µF, etc.).
     """
     if value <= 0:
@@ -946,6 +950,9 @@ def trace_inductance_h(length_mm: float, width_mm: float,
                        height_mm: float = 0.2) -> float:
     """Approximate inductance of a microstrip trace over a reference plane.
 
+    # EQ-091: L_nH ≈ 5 × length × ln(2h/w) (microstrip trace inductance)
+    # Source: Johnson & Graham "High-Speed Signal Propagation" Ch. 5
+    # Source: IPC-2141A Section 4.2.1 (microstrip approximation)
     L ≈ (μ₀ / (2π)) × h × ln(2h/w) per unit length, simplified to:
     L_nH ≈ 5 × length_mm × ln(2 × height / width) for typical PCBs.
 
@@ -1177,6 +1184,9 @@ def distributed_pdn_impedance_sweep(
         points_per_decade: int = 50) -> dict:
     """Compute PDN impedance at regulator output AND at worst-case IC.
 
+    # EQ-092: Z_IC = Z_local || (Z_reg + Z_trace) (distributed PDN impedance)
+    # Z_trace = R_trace + jωL_trace (trace parasitic series impedance)
+    # Source: Smith "Power Distribution Network Design Methodologies" Ch. 4
     The impedance at the IC includes trace R+L in series with the
     regulator-side decoupling, in parallel with local IC decoupling.
 
