@@ -138,7 +138,9 @@ Read the JSON report and incorporate findings into the design review. Each findi
 
 ### Risk Score
 
-`score = 100 - (critical × 15) - (high × 8) - (medium × 3) - (low × 1)`, clamped to [0, 100]. Scores below 50 indicate significant EMC risk.
+Each rule ID contributes at most 3 findings to the score (worst severity first). This prevents per-net rules like GP-001 from saturating the score on 2-layer boards. All findings are still reported — only the score is capped.
+
+`penalty = sum(worst 3 per rule × severity weight)`, `score = max(0, 100 - penalty)`. Scores below 50 indicate significant EMC risk.
 
 ## Interpreting Results
 
