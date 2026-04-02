@@ -29,19 +29,40 @@ from emc_formulas import STANDARDS, MARKET_STANDARDS
 # Shared severity weights — used by both risk score and per-net scoring
 SEVERITY_WEIGHTS = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
 
+# Maximum findings per rule_id that contribute to the risk score.
+# Prevents per-net rules like GP-001 (which fires once per net) from
+# saturating the score to 0 on 2-layer boards with many nets.
+# All findings are still reported — only the score calculation is capped.
+MAX_FINDINGS_PER_RULE = 3
+
 
 def compute_risk_score(findings: list) -> int:
     """Compute overall EMC risk score from 0 (worst) to 100 (best).
 
-    score = 100 - (critical × 15) - (high × 8) - (medium × 3) - (low × 1)
-    """
-    counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'INFO': 0}
-    for f in findings:
-        sev = f.get('severity', 'INFO')
-        counts[sev] = counts.get(sev, 0) + 1
+    Each rule_id contributes at most MAX_FINDINGS_PER_RULE findings
+    to the score, taking the worst (highest severity) ones. This prevents
+    per-net rules from overwhelming the score while still penalizing
+    boards with many different types of issues.
 
-    score = 100 - sum(SEVERITY_WEIGHTS[sev] * cnt for sev, cnt in counts.items())
-    return max(0, min(100, score))
+    All findings are still reported in the output — only the summary
+    score is capped.
+    """
+    # Group findings by rule_id
+    by_rule = {}
+    for f in findings:
+        rule = f.get('rule_id', '')
+        by_rule.setdefault(rule, []).append(f)
+
+    # For each rule, take the worst N findings
+    penalty = 0
+    sev_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'INFO': 4}
+    for rule, rule_findings in by_rule.items():
+        # Sort by severity (worst first)
+        rule_findings.sort(key=lambda f: sev_order.get(f.get('severity', 'INFO'), 4))
+        for f in rule_findings[:MAX_FINDINGS_PER_RULE]:
+            penalty += SEVERITY_WEIGHTS.get(f.get('severity', 'INFO'), 0)
+
+    return max(0, min(100, 100 - penalty))
 
 
 def compute_per_net_scores(findings: list) -> list:

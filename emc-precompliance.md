@@ -136,9 +136,14 @@ The `--market` flag selects all applicable standards for a target market:
 
 ## Risk Scoring
 
+Each rule ID contributes at most 3 findings to the score (taking the worst severity first). This prevents per-net rules like GP-001 — which fires once per net with poor ground plane coverage — from saturating the score to 0 on 2-layer boards with many nets. All findings are still reported in the output; only the summary score is capped.
+
 ```
-score = 100 - (CRITICAL x 15) - (HIGH x 8) - (MEDIUM x 3) - (LOW x 1)
+penalty = sum(worst 3 findings per rule × severity weight)
+score = max(0, 100 - penalty)
 ```
+
+Severity weights: CRITICAL=15, HIGH=8, MEDIUM=3, LOW=1, INFO=0.
 
 | Score | Assessment |
 |-------|-----------|
