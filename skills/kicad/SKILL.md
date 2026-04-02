@@ -274,6 +274,30 @@ When both files exist, cross-reference them. This catches the most expensive bug
 
 The PCB analyzer's `sch_path`, `sch_sheetname`, and `sch_sheetfile` fields in each footprint enable automated cross-referencing.
 
+### Diff-Aware Design Comparison
+
+Compare two analysis JSON outputs to see what changed between design revisions (e.g., base branch vs PR, v1 vs v2). Use when the user says things like "compare designs", "what changed", "diff my schematic", "show changes from main", or "diff base vs head".
+
+```bash
+# Compare two schematic analysis outputs
+python3 <skill-path>/scripts/diff_analysis.py base.json head.json
+
+# Human-readable text output
+python3 <skill-path>/scripts/diff_analysis.py base.json head.json --text
+
+# Write to file, custom threshold (ignore <2% deltas)
+python3 <skill-path>/scripts/diff_analysis.py base.json head.json --output diff.json --threshold 2.0
+```
+
+Auto-detects analyzer type (schematic, PCB, EMC, SPICE). Reports:
+- **Components**: new, removed, value/footprint/MPN changes
+- **Signal analysis**: parameter shifts (divider ratio, filter cutoff, opamp gain, regulator Vout)
+- **EMC findings**: new/resolved findings with severity, risk score delta
+- **SPICE results**: status transitions (pass→fail regressions, fail→pass fixes)
+- **Severity classification**: none, minor, major, breaking
+
+The GitHub Action supports `diff-base: true` to automatically compare PR changes against the base branch.
+
 ## Reference Files
 
 Detailed methodology and format documentation lives in reference files. Read these as needed — they provide deep-dive content beyond what the scripts output automatically.

@@ -35,11 +35,12 @@ def _safe_float(val, fmt=".1f"):
 # ---------------------------------------------------------------------------
 
 def format_report(schematic_path, pcb_path, spice_path, emc_path,
-                  severity, derating_profile, run_url=None):
+                  severity, derating_profile, run_url=None, diff_path=None):
     sch = _load_json(schematic_path)
     pcb = _load_json(pcb_path)
     spice = _load_json(spice_path)
     emc = _load_json(emc_path)
+    diff_data = _load_json(diff_path)
 
     L = []
     findings = []     # (severity, detail, source)
@@ -58,6 +59,55 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
                  f"{stats.get('unique_parts', 0)} unique, "
                  f"{stats.get('total_nets', 0)} nets{rail_str}")
         L.append("")
+
+    # === Changes from Base (diff section) ===
+    if diff_data and diff_data.get("has_changes"):
+        s = diff_data.get("summary", {})
+        L.append("### Changes from Base")
+        L.append("")
+        L.append(f"> {s.get('total_changes', 0)} changes: "
+                 f"+{s.get('added', 0)} added, "
+                 f"-{s.get('removed', 0)} removed, "
+                 f"~{s.get('modified', 0)} modified "
+                 f"({s.get('severity', 'unknown')})")
+        L.append("")
+        diff_detail = diff_data.get("diff", {})
+        rows = []
+        # Component changes
+        for c in diff_detail.get("components", {}).get("added", [])[:5]:
+            rows.append(f"| + {c.get('reference', '?')} | New: {c.get('value', '')} {c.get('footprint', '')} |")
+        for c in diff_detail.get("components", {}).get("removed", [])[:5]:
+            rows.append(f"| - {c.get('reference', '?')} | Removed: {c.get('value', '')} |")
+        for c in diff_detail.get("components", {}).get("modified", [])[:5]:
+            for ch in c.get("changes", []):
+                rows.append(f"| ~ {c.get('reference', '?')} {ch.get('field', '')} | {ch.get('base', '?')} → {ch.get('head', '?')} |")
+        # Signal analysis changes
+        for det_type, det_diff in diff_detail.get("signal_analysis", {}).items():
+            label = det_type.replace("_", " ").title()
+            for m in det_diff.get("modified", [])[:3]:
+                for ch in m.get("changes", []):
+                    base_v = ch.get("base", "?")
+                    head_v = ch.get("head", "?")
+                    pct = ch.get("delta_pct")
+                    pct_str = f" ({pct:+.1f}%)" if pct is not None else ""
+                    rows.append(f"| ~ {label} {m.get('identity', '?')} | {ch.get('field', '')}: {base_v} → {head_v}{pct_str} |")
+        # EMC finding changes
+        for f in diff_detail.get("findings", {}).get("new", [])[:3]:
+            rows.append(f"| NEW {f.get('severity', '?')} | {f.get('rule_id', '?')}: {f.get('title', '')} |")
+        for f in diff_detail.get("findings", {}).get("resolved", [])[:3]:
+            rows.append(f"| RESOLVED | {f.get('rule_id', '?')}: {f.get('title', '')} |")
+        # SPICE status changes
+        for sc in diff_detail.get("status_changes", [])[:3]:
+            comps = ", ".join(sc.get("components", []))
+            rows.append(f"| ~ {sc.get('subcircuit_type', '?')} {comps} | {sc.get('base_status', '?')} → {sc.get('head_status', '?')} |")
+        if rows:
+            L.append("| Change | Detail |")
+            L.append("|--------|--------|")
+            L.extend(rows[:10])
+            remaining = s.get("total_changes", 0) - min(len(rows), 10)
+            if remaining > 0:
+                L.append(f"| | *...and {remaining} more* |")
+            L.append("")
 
     # === Collect all findings ===
     sig = sch.get("signal_analysis", {}) if sch else {}
@@ -891,6 +941,7 @@ def main():
     parser.add_argument("--pcb", help="Path to PCB analysis JSON")
     parser.add_argument("--spice", help="Path to SPICE simulation JSON")
     parser.add_argument("--emc", help="Path to EMC analysis JSON")
+    parser.add_argument("--diff", help="Path to diff analysis JSON (from diff_analysis.py)")
     parser.add_argument("--severity", default="all", help="Filter: all, warning, critical")
     parser.add_argument("--derating-profile", default="commercial")
     parser.add_argument("--run-url", help="GitHub Actions run URL for 'Full report' link")
@@ -903,6 +954,7 @@ def main():
         args.schematic, args.pcb, args.spice, args.emc,
         args.severity, args.derating_profile,
         run_url=args.run_url,
+        diff_path=args.diff,
     )
 
     with open(args.output, "w") as f:
