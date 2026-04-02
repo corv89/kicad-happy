@@ -35,12 +35,14 @@ def _safe_float(val, fmt=".1f"):
 # ---------------------------------------------------------------------------
 
 def format_report(schematic_path, pcb_path, spice_path, emc_path,
-                  severity, derating_profile, run_url=None, diff_path=None):
+                  severity, derating_profile, run_url=None, diff_path=None,
+                  thermal_path=None):
     sch = _load_json(schematic_path)
     pcb = _load_json(pcb_path)
     spice = _load_json(spice_path)
     emc = _load_json(emc_path)
     diff_data = _load_json(diff_path)
+    thermal = _load_json(thermal_path)
 
     L = []
     findings = []     # (severity, detail, source)
@@ -446,6 +448,33 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
                 icon = "\U0001f534" if sev == "CRITICAL" else "\u26a0\ufe0f"
                 L.append(f"- {icon} {rule}: {title}")
         L.append("")
+
+    # === Thermal Analysis ===
+    if thermal:
+        ts = thermal.get("summary", {})
+        th_score = ts.get("thermal_score", 0)
+        th_crit = ts.get("critical", 0)
+        th_high = ts.get("high", 0)
+        th_total = ts.get("total_checks", 0)
+        th_pdiss = ts.get("total_board_dissipation_w", 0)
+
+        if th_total > 0:
+            L.append("### Thermal Analysis")
+            L.append("")
+            L.append(f"Score **{th_score}/100** — {th_total} checks, "
+                     f"total dissipation {th_pdiss:.2f}W")
+
+            for f in thermal.get("findings", []):
+                sev = f.get("severity", "")
+                if sev in ("CRITICAL", "HIGH", "MEDIUM"):
+                    rule = f.get("rule_id", "")
+                    title = f.get("title", "")
+                    icon = "\U0001f534" if sev == "CRITICAL" else "\u26a0\ufe0f" if sev == "HIGH" else "\U0001f7e1"
+                    L.append(f"- {icon} {rule}: {title}")
+            L.append("")
+
+        if th_crit == 0 and th_high == 0 and th_total > 0:
+            verified.append(f"Thermal score {th_score}/100 — no critical/high findings")
 
     # === Verified (collapsible, at bottom) ===
     if verified:
@@ -942,6 +971,7 @@ def main():
     parser.add_argument("--spice", help="Path to SPICE simulation JSON")
     parser.add_argument("--emc", help="Path to EMC analysis JSON")
     parser.add_argument("--diff", help="Path to diff analysis JSON (from diff_analysis.py)")
+    parser.add_argument("--thermal", help="Path to thermal analysis JSON (from analyze_thermal.py)")
     parser.add_argument("--severity", default="all", help="Filter: all, warning, critical")
     parser.add_argument("--derating-profile", default="commercial")
     parser.add_argument("--run-url", help="GitHub Actions run URL for 'Full report' link")
@@ -955,6 +985,7 @@ def main():
         args.severity, args.derating_profile,
         run_url=args.run_url,
         diff_path=args.diff,
+        thermal_path=args.thermal,
     )
 
     with open(args.output, "w") as f:
