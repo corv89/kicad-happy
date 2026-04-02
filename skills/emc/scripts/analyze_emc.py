@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from emc_rules import run_all_checks, generate_test_plan, analyze_regulatory_coverage
 from emc_formulas import STANDARDS, MARKET_STANDARDS
 
+# Shared severity weights — used by both risk score and per-net scoring
+SEVERITY_WEIGHTS = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
+
 
 def compute_risk_score(findings: list) -> int:
     """Compute overall EMC risk score from 0 (worst) to 100 (best).
@@ -37,8 +40,7 @@ def compute_risk_score(findings: list) -> int:
         sev = f.get('severity', 'INFO')
         counts[sev] = counts.get(sev, 0) + 1
 
-    score = 100 - (counts['CRITICAL'] * 15) - (counts['HIGH'] * 8) \
-            - (counts['MEDIUM'] * 3) - (counts['LOW'] * 1)
+    score = 100 - sum(SEVERITY_WEIGHTS[sev] * cnt for sev, cnt in counts.items())
     return max(0, min(100, score))
 
 
@@ -54,13 +56,12 @@ def compute_per_net_scores(findings: list) -> list:
                 net_findings.setdefault(net, []).append(f)
 
     scores = []
-    severity_weights = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
     for net, net_f in net_findings.items():
         penalty = 0
         for f in net_f:
-            w = severity_weights.get(f['severity'], 0)
+            w = SEVERITY_WEIGHTS.get(f['severity'], 0)
             # SPICE-verified findings are more trustworthy — weight 1.5×
-            if 'SPICE-verified' in f.get('description', ''):
+            if f.get('spice_verified'):
                 w = int(w * 1.5)
             penalty += w
         score = max(0, min(100, 100 - penalty))
