@@ -408,8 +408,11 @@ def run_switching_fft(v_peak, duty_cycle, rise_time_s, switching_freq_hz,
             f.write(cir_content)
 
         success, stdout, stderr = backend.run(cir_file, timeout=timeout)
+        # ngspice returns exit code 1 with .control blocks that lack
+        # .print/.plot — check for output file instead of exit code
         if not success:
-            return False, None
+            if not (os.path.exists(raw_file) and os.path.getsize(raw_file) > 0):
+                return False, None
 
         # Parse raw ASCII data: columns are time, v(sw)
         if not os.path.exists(raw_file):
