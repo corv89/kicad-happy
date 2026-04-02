@@ -211,6 +211,64 @@ if [ -n "$SCH_JSON" ] || [ -n "$PCB_JSON" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Diff against base branch (PR only, opt-in)
+# ---------------------------------------------------------------------------
+
+DIFF_JSON=""
+if [ "${INPUT_DIFF_BASE:-false}" = "true" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+    echo "::group::Diff Analysis"
+    # Save HEAD outputs
+    mkdir -p "$OUTDIR/head"
+    [ -n "$SCH_JSON" ] && [ -f "$SCH_JSON" ] && cp "$SCH_JSON" "$OUTDIR/head/schematic.json"
+    [ -n "$PCB_JSON" ] && [ -f "$PCB_JSON" ] && cp "$PCB_JSON" "$OUTDIR/head/pcb.json"
+    [ -n "$EMC_JSON" ] && [ -f "$EMC_JSON" ] && cp "$EMC_JSON" "$OUTDIR/head/emc.json"
+    [ -n "$SPICE_JSON" ] && [ -f "$SPICE_JSON" ] && cp "$SPICE_JSON" "$OUTDIR/head/spice.json"
+
+    # Checkout base branch versions of KiCad files
+    mkdir -p "$OUTDIR/base"
+    BASE_OK=true
+    git fetch origin "$GITHUB_BASE_REF" --depth=1 2>/dev/null || BASE_OK=false
+    if [ "$BASE_OK" = "true" ]; then
+        # Checkout only the KiCad files from base, not full branch switch
+        git checkout FETCH_HEAD -- "$SCHEMATIC" "$PCB" 2>/dev/null || BASE_OK=false
+    fi
+
+    if [ "$BASE_OK" = "true" ]; then
+        # Re-run analyzers on base versions
+        if [ -n "$SCHEMATIC" ] && [ -f "$SCHEMATIC" ]; then
+            python3 "$SCRIPTS/analyze_schematic.py" "$SCHEMATIC" -o "$OUTDIR/base/schematic.json" 2>/dev/null || true
+        fi
+        if [ -n "$PCB" ] && [ -f "$PCB" ]; then
+            python3 "$SCRIPTS/analyze_pcb.py" "$PCB" -o "$OUTDIR/base/pcb.json" 2>/dev/null || true
+        fi
+
+        # Restore HEAD versions
+        git checkout HEAD -- "$SCHEMATIC" "$PCB" 2>/dev/null || true
+
+        # Run diff for each matching pair
+        for dtype in schematic pcb emc spice; do
+            if [ -f "$OUTDIR/base/$dtype.json" ] && [ -f "$OUTDIR/head/$dtype.json" ]; then
+                python3 "$SCRIPTS/diff_analysis.py" \
+                    "$OUTDIR/base/$dtype.json" "$OUTDIR/head/$dtype.json" \
+                    -o "$OUTDIR/diff_$dtype.json" 2>/dev/null || true
+            fi
+        done
+
+        # Use schematic diff as primary (most informative)
+        for dtype in schematic pcb emc spice; do
+            if [ -f "$OUTDIR/diff_$dtype.json" ]; then
+                DIFF_JSON="$OUTDIR/diff_$dtype.json"
+                break
+            fi
+        done
+        echo "Diff analysis complete"
+    else
+        echo "::notice::Could not fetch base branch for diff (non-blocking)"
+    fi
+    echo "::endgroup::"
+fi
+
+# ---------------------------------------------------------------------------
 # Format markdown report
 # ---------------------------------------------------------------------------
 
@@ -224,6 +282,7 @@ ARGS=()
 [ -n "$PCB_JSON" ] && [ -f "$PCB_JSON" ] && ARGS+=(--pcb "$PCB_JSON")
 [ -n "$SPICE_JSON" ] && [ -f "$SPICE_JSON" ] && ARGS+=(--spice "$SPICE_JSON")
 [ -n "$EMC_JSON" ] && [ -f "$EMC_JSON" ] && ARGS+=(--emc "$EMC_JSON")
+[ -n "$DIFF_JSON" ] && [ -f "$DIFF_JSON" ] && ARGS+=(--diff "$DIFF_JSON")
 ARGS+=(--severity "${INPUT_SEVERITY:-all}")
 ARGS+=(--derating-profile "${INPUT_DERATING_PROFILE:-commercial}")
 ARGS+=(--output "$REPORT")

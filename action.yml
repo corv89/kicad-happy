@@ -39,6 +39,10 @@ inputs:
   element14-api-key:
     description: 'element14/Newark/Farnell API key — downloads missing datasheets if provided'
     required: false
+  diff-base:
+    description: 'Compare against base branch and show only changes (PR events only)'
+    required: false
+    default: 'false'
 
 outputs:
   schematic-json:
