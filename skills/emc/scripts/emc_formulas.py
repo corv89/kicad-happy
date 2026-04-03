@@ -1178,7 +1178,7 @@ def distributed_pdn_impedance_sweep(
 
     # EQ-092: Z_IC = Z_local || (Z_reg + Z_trace) (distributed PDN impedance)
     # Z_trace = R_trace + jωL_trace (trace parasitic series impedance)
-    # Source: Smith "Power Distribution Network Design Methodologies" Ch. 4
+    # Source: Novak "Power Distribution Network Design Methodologies" (IPC, 2008) Ch. 4
     The impedance at the IC includes trace R+L in series with the
     regulator-side decoupling, in parallel with local IC decoupling.
 

@@ -3260,7 +3260,7 @@ def check_pdn_distributed(pcb: Optional[Dict],
     """PD-003/PD-004: Full-board PDN analysis with trace parasitics and cross-rail coupling.
 
     # EQ-096: I_reflected = P_downstream / V_upstream (reflected transient current)
-    # Source: Smith "Power Distribution Network Design Methodologies" Ch. 6
+    # Source: Novak "Power Distribution Network Design Methodologies" (IPC, 2008) Ch. 6
     PD-003: Distributed rail impedance at IC load point exceeds target.
            The impedance seen by an IC is higher than at the regulator output
            due to trace R+L between them. Local decoupling caps help but may

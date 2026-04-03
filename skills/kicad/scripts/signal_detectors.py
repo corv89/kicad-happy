@@ -3875,6 +3875,8 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
     for net_name, net_info in ctx.nets.items():
         if net_name.startswith("__unnamed_"):
             continue
+        if net_info.get("no_connect"):
+            continue
         if ctx.is_power_net(net_name) or ctx.is_ground(net_name):
             continue
         if net_name in connector_nets:
@@ -3949,7 +3951,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
     for ic in unique_ics:
         ref = ic["reference"]
         for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
-            if not net or net.startswith("__unnamed_"):
+            if not net or net.startswith("__unnamed_") or (net in ctx.nets and ctx.nets[net].get("no_connect")):
                 continue
             pin_name = ""
             if net in ctx.nets:

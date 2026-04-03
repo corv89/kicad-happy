@@ -8,22 +8,24 @@ These skills turn your AI coding agent into a full-fledged electronics design as
 
 ## 🔬 What it looks like in practice
 
+Point your agent at a KiCad project and it does the rest — parses every schematic and PCB file, traces every net, computes every voltage, and tells you what's wrong before you spend money on boards.
+
 > "Analyze my KiCad project at `hardware/rev2/`"
 
-The agent runs the analysis scripts, reads datasheets, and produces a full design review. Here's a condensed example from a real project — a 6-layer BLDC motor controller (187 components):
+Here's a condensed example from a real 6-layer BLDC motor controller (187 components). The agent found all of this automatically:
 
-**Power tree** — every regulator traced from input to output, feedback dividers identified, output voltage computed:
+**It builds your power tree** — tracing every regulator from input to load, computing output voltages from feedback dividers, and flagging when the math doesn't match:
 
 ```
 V+ (10-54V motor bus, TVS protected)
-├── MAX17760 buck → +12V (feedback: 226k/16.2k, Vref=1.0V → Vout=14.95V)
+├── MAX17760 buck → +12V (feedback: 226k/16.2k, Vref=1.0V → Vout=14.95V) ⚠️
 │   └── TPS629203 → +5V → TPS629203 → +3.3V
 ├── DRV8353 gate driver (PVDD = V+ direct)
 └── 3-Phase Bridge: 6x FDMT80080DC (80V/80A)
     └── 36x 4.7uF 100V bulk caps = 169.2uF
 ```
 
-**Detected subcircuits** — found automatically from the schematic:
+**It identifies every subcircuit** — not just passives, but the functional blocks and how they connect:
 
 | Subcircuit  | Details |
 |-------------|---------|
@@ -32,7 +34,7 @@ V+ (10-54V motor bus, TVS protected)
 | Protection  | TVS on V+ input (51V standoff matches bus spec), ground domain separation with net ties |
 | Sensing     | Battery voltage divider (100k/4.7k → 54V max reads as 2.43V), FET temp NTC |
 
-**PCB cross-reference** — the review covers layout too:
+**It cross-references the PCB** — checking that the layout actually supports what the schematic promises:
 
 ```
 Board: 56.0 x 56.0 mm, 6-layer, 1.55mm stackup
@@ -44,7 +46,7 @@ Thermal pad vias:
   Inductor L2:   4 vias — INSUFFICIENT (recommended: 9)
 ```
 
-**Issues found:**
+**It tells you what needs attention** — and what doesn't:
 
 | Severity   | Issue |
 |------------|-------|
@@ -55,16 +57,48 @@ Thermal pad vias:
 
 **What looks good:** 170µF bus capacitance across 38 caps, proper GND/GNDPWR domain separation, CAN bus termination verified, 100% MPN coverage across all components, zero DFM violations, JLCPCB standard tier compatible.
 
+**It maps your protection coverage** — finds every TVS, ESD suppressor, and fuse, then tells you which interfaces are unprotected:
+
+```
+Protection devices:
+  D1 (PESD5V0S2UT): USB_DP, USB_DM → GND  [dual-channel ESD] ✓
+  D3 (SMBJ51A): V+ motor bus → GND  [TVS, 51V standoff] ✓
+  F1 (1A): V+ input  [fuse] ✓
+  ⚠️ CAN_H / CAN_L — no TVS protection (exposed on connector J3)
+  ⚠️ I2C_SDA / I2C_SCL — no ESD protection (exposed on header J5)
+```
+
+**It estimates your sleep current** — traces every always-on path and totals the quiescent draw per rail:
+
+```
++3.3V sleep current breakdown:
+  U3 (TPS629203) quiescent: ~15 µA
+  R5/R6 feedback divider (226k/16.2k): 13.6 µA
+  R12 pull-up (100k to +3.3V): 33 µA
+  Total estimated: ~62 µA
+```
+
 For a complete example, see the [full design review](example-report.md) of an ESP32-S3 board — 52 components, 2-layer, dual boost converters, USB host, touch sensing. For the end-to-end walkthrough from S-expression parsing through signal detection and datasheet cross-referencing, see [How It Works](how-it-works.md).
 
 ## 🚀 Install
 
-Ask your agent:
+We're excited to release kicad-happy as a **Claude Code plugin** — you can now install it with two commands from the `/plugin` menu. For OpenAI Codex, the manual install and agent prompt methods still work as before.
+
+**Claude Code plugin** (recommended):
+
+```
+/plugin marketplace add aklofas/kicad-happy
+/plugin install kicad-happy@kicad-happy
+```
+
+<details>
+<summary><strong>Other install methods</strong></summary>
+
+**Ask your agent:**
 
 > Clone https://github.com/aklofas/kicad-happy and install all the skills
 
-<details>
-<summary><strong>Claude Code (manual)</strong></summary>
+**Claude Code (manual):**
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
@@ -73,10 +107,8 @@ for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.claude/skills/$skill
 done
 ```
-</details>
 
-<details>
-<summary><strong>OpenAI Codex (manual)</strong></summary>
+**OpenAI Codex (manual):**
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
@@ -85,110 +117,16 @@ for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.codex/skills/$skill
 done
 ```
+
 </details>
 
 The analysis scripts are **pure Python 3.8+** with zero required dependencies. No pip install, no Docker, no KiCad installation needed.
 
 ## ⚙️ GitHub Action
 
-Add automated design review to any KiCad project. No account needed — just add the workflow file:
+Also available as a **GitHub Action** for automated PR reviews. Every push and PR that touches KiCad files gets a commit status check and a structured review comment — power tree, SPICE results, EMC risk, thermal analysis, and more. Optionally chain with Claude for AI-powered natural-language reviews.
 
-```yaml
-# .github/workflows/kicad-review.yml
-name: KiCad Design Review
-on:
-  push:
-    paths: ['**/*.kicad_sch', '**/*.kicad_pcb']
-  pull_request:
-    paths: ['**/*.kicad_sch', '**/*.kicad_pcb']
-
-permissions:
-  contents: read
-  pull-requests: write
-  statuses: write
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: sudo apt-get install -y ngspice poppler-utils
-      - uses: aklofas/kicad-happy@v1
-        id: analysis
-      - uses: thollander/actions-comment-pull-request@v3
-        if: github.event_name == 'pull_request'
-        with:
-          file-path: ${{ steps.analysis.outputs.report-path }}
-          comment-tag: kicad-happy-review
-          mode: upsert
-```
-
-Every push and PR that touches KiCad files gets a **commit status check** (green/red with findings summary). On PRs, a structured review comment is also posted — power tree, protocol compliance, voltage derating, SPICE results, EMC risk analysis, thermal analysis, component health, and PCB stats. The comment updates on re-pushes. A [full report](skills/kicad/references/report-generation.md) is available on the Actions run page.
-
-Enable `diff-base: true` to show only what changed between the PR and the base branch — component additions/removals, signal parameter shifts, new/resolved EMC findings, and SPICE status transitions.
-
-<details>
-<summary><strong>Add AI-powered review (optional — needs Anthropic API key)</strong></summary>
-
-Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) for Claude to read the analysis + datasheets and write a natural-language design review. The cost estimates below apply only when using the Anthropic API (`ANTHROPIC_API_KEY`) for CI — there's no additional cost when reviewing locally with a Claude Code or OpenAI Codex subscription. Two options:
-
-**Quick review** (~$1-3 per PR via API, 5-10 min):
-
-```yaml
-      - uses: anthropics/claude-code-action@v1
-        if: github.event_name == 'pull_request' && env.ANTHROPIC_API_KEY != ''
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          prompt: |
-            The kicad-happy deterministic analysis has already been run.
-            Read the markdown report at ${{ steps.analysis.outputs.report-path }}.
-
-            Do NOT re-run analysis scripts. Review the findings and:
-            1. Verify the top 3-5 IC pinouts against datasheets
-            2. Check WARNING findings for accuracy
-            3. Note anything the analysis may have missed
-
-            Post a concise summary (under 2000 chars) as a PR comment.
-            Focus on actionable findings only.
-          claude_args: '--model claude-sonnet-4-6 --max-turns 25'
-```
-
-**Thorough review** (~$5-15 per PR via API, 10-20 min):
-
-```yaml
-      - uses: anthropics/claude-code-action@v1
-        if: github.event_name == 'pull_request' && env.ANTHROPIC_API_KEY != ''
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          prompt: |
-            The kicad-happy deterministic analysis has already been run.
-            Read the JSON at ${{ steps.analysis.outputs.schematic-json }}
-            and the report at ${{ steps.analysis.outputs.report-path }}.
-
-            Do NOT re-run analysis scripts. Perform a thorough review:
-            1. Read datasheets for every IC and verify pinouts
-            2. Check voltage divider/feedback calculations against datasheets
-            3. Verify application circuit compliance for regulators
-            4. Check power sequencing and enable chain logic
-            5. Review protection device coverage on external interfaces
-            6. Note any design concerns the analysis missed
-
-            Post your review as a PR comment. Include specific datasheet
-            page references for each finding.
-          claude_args: '--model claude-sonnet-4-6 --max-turns 50'
-```
-
-**Setup:** Get an API key from [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys), then add it as a repository secret named `ANTHROPIC_API_KEY` in Settings → Secrets → Actions. Cost depends on design complexity — see [Anthropic pricing](https://www.anthropic.com/pricing).
-
-</details>
-
-See [`action/examples/`](action/examples/) for fork-safe workflows, distributor API keys for datasheet download, and advanced configuration.
+See the **[GitHub Action setup guide](github-action.md)** for workflow examples, diff-based PR reviews, and AI-powered review configuration.
 
 ## 📦 Skills
 
@@ -378,6 +316,23 @@ Or just set up the GitHub Action and get automated reviews on every PR.
 | KiCad 6  | Full                          | Full | Full   |
 | KiCad 5  | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
+## 🎯 v1.1 — EMC Pre-Compliance + Analysis Toolkit
+
+New skill: **EMC pre-compliance risk analysis** — predicts the most common causes of EMC test failures from your KiCad schematic and PCB layout. Plus four new analysis tools for tolerance, diffing, thermal, and what-if exploration.
+
+**What's in v1.1:**
+
+| Category | Capabilities |
+|----------|-------------|
+| **EMC pre-compliance** | 42 rule checks across ground plane integrity, decoupling, I/O filtering, switching harmonics, diff pair skew, PDN impedance, ESD paths, crosstalk, board edge radiation, thermal-EMC, shielding. SPICE-enhanced when ngspice is available. FCC/CISPR/automotive/military. |
+| **Plugin install** | Available as a Claude Code plugin marketplace — `/plugin marketplace add aklofas/kicad-happy`. |
+| **Monte Carlo tolerance** | `--monte-carlo N` runs N simulations with randomized component values within tolerance bands. Reports 3σ bounds and per-component sensitivity analysis. |
+| **Design diff** | Compares two analysis JSONs — component changes, signal parameter shifts, EMC finding deltas. GitHub Action `diff-base: true` for automatic PR comparison. |
+| **Thermal hotspots** | Junction temperature estimation for LDOs, switching regulators, shunt resistors. Package Rθ_JA lookup, thermal via correction, proximity warnings. |
+| **No-connect detection** | Correctly identifies NC markers, library-defined NC pins, and KiCad `unconnected` pin types. Eliminates false floating-pin warnings across 2,253 files. |
+| **Code audit** | 22 bug fixes (trace inductance 25x overestimate, PDN target impedance, regulator voltage suffix parser, inner-layer reference planes, and more). Full AnalysisContext migration for cleaner internals. |
+| **Validation** | 6,853 EMC analyses across 1,035 repos (zero crashes), 96 equations verified against primary sources, 404K+ regression assertions at 100% pass rate. |
+
 ## 🎯 v1.0 — First Stable Release
 
 This is the first stable release of kicad-happy. It marks the point where every piece of the analysis pipeline — schematic parsing, PCB layout review, Gerber verification, SPICE simulation, datasheet cross-referencing, BOM sourcing, and manufacturing prep — has been built, tested against 1,035 real-world KiCad projects, and validated with 294K+ regression assertions. Zero analyzer crashes across the full corpus.
@@ -419,7 +374,7 @@ Everything above was validated against a [corpus of 1,035 open-source KiCad proj
 | SPICE subcircuit simulations | 30,646 across 17 types |
 | SPICE-verified EMC findings | 169 (PDN impedance via ngspice) |
 | Regression assertions | 520K+ at 100% pass rate |
-| Equations tracked & verified | 88 with source citations |
+| Equations tracked & verified | 96 with source citations |
 | Bugfix regression guards | 77 (100% pass — no fixed bugs have returned) |
 | Closed analyzer issues | 191 |
 
