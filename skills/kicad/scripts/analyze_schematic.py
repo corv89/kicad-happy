@@ -1041,7 +1041,7 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
         # library-defined NC pin (pin type "no_connect" in the symbol def).
         has_nc_marker = (
             any(i["source"] == "no_connect" for i in all_info)
-            or any(i.get("pin_type") == "no_connect"
+            or any(i.get("pin_type") in ("no_connect", "unconnected")
                    for i in all_info if i["source"] == "pin")
         )
 
@@ -1485,7 +1485,7 @@ def analyze_ic_pinouts(ctx: AnalysisContext) -> list[dict]:
             has_no_connect = (
                 pin_pos in nc_positions
                 or bool(net_info and net_info.get("no_connect"))
-                or pin.get("type") == "no_connect"
+                or pin.get("type") in ("no_connect", "unconnected")
             )
 
             # Get components sharing this net
@@ -2744,7 +2744,7 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
     # Find single-pin nets (likely unfinished wiring)
     single_pin_nets = []
     for net_name, net_info in nets.items():
-        if len(net_info["pins"]) == 1 and not net_name.startswith("__unnamed_"):
+        if len(net_info["pins"]) == 1 and not net_name.startswith("__unnamed_") and not net_info.get("no_connect"):
             single_pin_nets.append({
                 "net": net_name,
                 "pin": net_info["pins"][0],
