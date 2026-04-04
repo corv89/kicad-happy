@@ -562,3 +562,490 @@ def section_appendix_schematics(sch_cache_dir: str,
         lines.append(f"*Schematic cache directory not found: {sch_cache_dir}*")
     lines.append("")
     return "\n".join(lines)
+
+
+# ======================================================================
+# CE Technical File — specialized sections
+# ======================================================================
+
+def section_ce_product_identification(analysis: dict, config: dict) -> str:
+    """CE Technical File: product identification."""
+    lines = ["## Product Identification"]
+    lines.append("")
+
+    project = config.get('project', {})
+    rows = [
+        ['Product Name', project.get('name', '—')],
+        ['Model / Part Number', project.get('number', '—')],
+        ['Revision', project.get('revision', '—')],
+        ['Manufacturer', project.get('company', '—')],
+        ['Intended Use', ''],
+    ]
+    lines.append(_auto("ce_product_id", markdown_table(['Field', 'Value'], rows)))
+    lines.append("")
+    lines.append(_narrative("ce_intended_use",
+                            "Describe the product's intended use, target environment "
+                            "(indoor/outdoor, industrial/consumer), and user profile."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_ce_essential_requirements(analysis: dict, config: dict) -> str:
+    """CE Technical File: essential requirements mapping."""
+    lines = ["## Essential Requirements"]
+    lines.append("")
+    lines.append("Mapping of EU directive essential requirements to design evidence.")
+    lines.append("")
+
+    # Determine applicable directives based on market
+    rows = [
+        ['LVD 2014/35/EU', 'Electrical safety', 'EN 62368-1', ''],
+        ['EMC 2014/30/EU', 'Electromagnetic compatibility', 'EN 55032, EN 55035', ''],
+        ['RoHS 2011/65/EU', 'Hazardous substance restriction', 'EN IEC 63000', ''],
+    ]
+
+    # Add radio if applicable
+    sa = analysis.get('signal_analysis', {})
+    if sa.get('rf_chains') or sa.get('rf_matching'):
+        rows.append(['RED 2014/53/EU', 'Radio equipment', 'EN 300 328, EN 301 489', ''])
+
+    lines.append(_auto("ce_essential_reqs",
+                       markdown_table(
+                           ['Directive', 'Requirement', 'Harmonized Standard', 'Evidence'],
+                           rows)))
+    lines.append("")
+    lines.append(_narrative("ce_essential_req_notes",
+                            "For each directive, describe how the design meets the "
+                            "essential requirements. Reference test reports and analysis data."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_ce_harmonized_standards(config: dict) -> str:
+    """CE Technical File: harmonized standards list."""
+    lines = ["## Harmonized Standards Applied"]
+    lines.append("")
+
+    # Get standards from config or use defaults for EU market
+    reports = config.get('reports', {})
+    standards = []
+    for doc_def in reports.get('documents', []):
+        if doc_def.get('type') == 'ce_technical_file':
+            standards = doc_def.get('standards', [])
+            break
+
+    if not standards:
+        standards = ['EN 55032', 'EN 55035', 'EN 62368-1', 'EN IEC 63000']
+
+    rows = []
+    standard_descriptions = {
+        'EN 55032': ('EMC emissions', 'Limits for electromagnetic disturbances'),
+        'EN 55035': ('EMC immunity', 'Immunity requirements for multimedia equipment'),
+        'EN 62368-1': ('Safety', 'Audio/video, IT and communication technology equipment'),
+        'EN IEC 63000': ('RoHS', 'Technical documentation for hazardous substance assessment'),
+        'EN 300 328': ('Radio', 'Wideband data transmission (2.4 GHz)'),
+        'EN 301 489': ('Radio EMC', 'EMC standard for radio equipment'),
+        'EN 61000-4-2': ('ESD immunity', 'Electrostatic discharge immunity test'),
+        'EN 61000-4-3': ('Radiated immunity', 'Radiated RF electromagnetic field immunity'),
+    }
+    for std in standards:
+        category, desc = standard_descriptions.get(std, ('', std))
+        rows.append([std, category, desc])
+
+    lines.append(_auto("ce_standards",
+                       markdown_table(['Standard', 'Category', 'Description'], rows)))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_ce_risk_assessment(analysis: dict, emc_data: dict | None,
+                               thermal_data: dict | None) -> str:
+    """CE Technical File: risk assessment."""
+    lines = ["## Risk Assessment"]
+    lines.append("")
+
+    rows = [
+        ['Electrical shock', 'Low voltage (<50V DC)', '', ''],
+        ['Overheating / fire', '', '', ''],
+        ['EMI emissions', '', '', ''],
+        ['ESD susceptibility', '', '', ''],
+        ['Mechanical hazard', '', '', ''],
+    ]
+
+    # Populate from analysis data
+    if thermal_data:
+        summary = thermal_data.get('summary', {})
+        hottest = summary.get('hottest_component', '—')
+        above_85 = summary.get('components_above_85c', 0)
+        rows[1][1] = f"Hottest: {hottest}"
+        rows[1][2] = 'HIGH' if above_85 > 0 else 'LOW'
+        rows[1][3] = f"{above_85} components above 85°C" if above_85 else 'Within limits'
+
+    if emc_data:
+        summary = emc_data.get('summary', {})
+        score = summary.get('emc_risk_score', '—')
+        critical = summary.get('critical', 0)
+        rows[2][1] = f"EMC risk score: {score}/100"
+        rows[2][2] = 'HIGH' if critical > 0 else ('MEDIUM' if score and score > 50 else 'LOW')
+        rows[2][3] = f"{critical} critical findings" if critical else 'Pre-compliance assessment'
+
+    # ESD from analysis
+    esd_audit = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    unprotected = 0
+    for e in esd_audit:
+        if isinstance(e, dict):
+            try:
+                cov = float(e.get('coverage', 1.0))
+                if cov < 1.0:
+                    unprotected += 1
+            except (TypeError, ValueError):
+                pass
+    if unprotected:
+        rows[3][1] = f"{unprotected} connectors with gaps"
+        rows[3][2] = 'MEDIUM'
+        rows[3][3] = 'Partial ESD protection coverage'
+    else:
+        rows[3][1] = 'All connectors protected'
+        rows[3][2] = 'LOW'
+
+    lines.append(_auto("ce_risk_assessment",
+                       markdown_table(['Hazard', 'Details', 'Risk Level', 'Mitigation'], rows)))
+    lines.append("")
+    lines.append(_narrative("ce_risk_notes",
+                            "Describe risk mitigation measures for each identified hazard. "
+                            "Reference specific design features and test results."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_ce_declaration_of_conformity(config: dict) -> str:
+    """CE Technical File: Declaration of Conformity template."""
+    lines = ["## EU Declaration of Conformity"]
+    lines.append("")
+
+    project = config.get('project', {})
+    lines.append(_auto("ce_doc_template", "\n".join([
+        "**EU DECLARATION OF CONFORMITY**",
+        "",
+        f"**Manufacturer:** {project.get('company', '________________')}",
+        f"**Product:** {project.get('name', '________________')}",
+        f"**Model:** {project.get('number', '________________')}",
+        "",
+        "We declare under our sole responsibility that the product described above "
+        "is in conformity with the relevant Union harmonisation legislation:",
+        "",
+        "- Directive 2014/35/EU (Low Voltage Directive)",
+        "- Directive 2014/30/EU (EMC Directive)",
+        "- Directive 2011/65/EU (RoHS Directive)",
+        "",
+        "Harmonized standards applied: *(see Harmonized Standards section)*",
+        "",
+        "Signed: ________________  Date: ________________",
+        "",
+        "Name: ________________  Position: ________________",
+    ])))
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ======================================================================
+# Design Review — specialized sections
+# ======================================================================
+
+def section_review_summary(analysis: dict, emc_data: dict | None,
+                           thermal_data: dict | None,
+                           gate_data: dict | None) -> str:
+    """Design Review: summary of findings across all analyzers."""
+    lines = ["## Review Summary"]
+    lines.append("")
+
+    rows = []
+
+    # Fab gate
+    if gate_data:
+        status = gate_data.get('overall_status', '?')
+        summary = gate_data.get('summary', {})
+        rows.append(['Fab Release Gate', status,
+                     f"{summary.get('pass', 0)} pass, {summary.get('fail', 0)} fail"])
+
+    # EMC
+    if emc_data:
+        summary = emc_data.get('summary', {})
+        score = summary.get('emc_risk_score', '—')
+        rows.append(['EMC Risk Score', f"{score}/100",
+                     f"C:{summary.get('critical', 0)} H:{summary.get('high', 0)} "
+                     f"M:{summary.get('medium', 0)}"])
+
+    # Thermal
+    if thermal_data:
+        summary = thermal_data.get('summary', {})
+        score = summary.get('thermal_score', '—')
+        rows.append(['Thermal Score', f"{score}/100",
+                     f"{summary.get('components_above_85c', 0)} above 85°C"])
+
+    # BOM completeness
+    stats = analysis.get('statistics', {})
+    missing_mpn = stats.get('missing_mpns', 0)
+    total = stats.get('total_components', 0)
+    if total:
+        rows.append(['BOM Completeness',
+                     f"{total - missing_mpn}/{total} MPNs",
+                     f"{missing_mpn} missing" if missing_mpn else 'Complete'])
+
+    if rows:
+        lines.append(_auto("review_summary_table",
+                           markdown_table(['Check', 'Status', 'Details'], rows)))
+    lines.append("")
+    lines.append(_narrative("review_overall_assessment",
+                            "Provide an overall assessment of design readiness. "
+                            "Highlight critical risks and recommend go/no-go."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_review_action_items(config: dict) -> str:
+    """Design Review: action items table."""
+    lines = ["## Action Items"]
+    lines.append("")
+    lines.append(_auto("review_actions",
+                       markdown_table(
+                           ['#', 'Finding', 'Severity', 'Owner', 'Due Date', 'Status'],
+                           [['1', '', '', '', '', 'OPEN']],
+                           ['right', 'left', 'left', 'left', 'left', 'left'])))
+    lines.append("")
+    lines.append(_narrative("review_action_notes",
+                            "List action items from the review. Assign owners and due dates. "
+                            "Track resolution status."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ======================================================================
+# ICD — specialized sections
+# ======================================================================
+
+def section_icd_interface_list(analysis: dict) -> str:
+    """ICD: summary table of all external interfaces."""
+    lines = ["## Interface List"]
+    lines.append("")
+
+    rows = []
+    # Connectors from ESD audit (they enumerate all external connectors)
+    esd = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    for e in esd:
+        if isinstance(e, dict):
+            rows.append([
+                e.get('connector_ref', '?'),
+                e.get('connector_value', ''),
+                e.get('interface_type', ''),
+                str(len(e.get('signal_nets', []))),
+                e.get('risk_level', ''),
+            ])
+
+    if rows:
+        lines.append(_auto("icd_interface_list",
+                           markdown_table(
+                               ['Connector', 'Type', 'Interface', 'Signals', 'ESD Risk'],
+                               rows)))
+    else:
+        lines.append("*No external interfaces detected. Add connector analysis data.*")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_icd_connector_details(analysis: dict, config: dict) -> str:
+    """ICD: per-connector pinout and signal details."""
+    lines = ["## Connector Details"]
+    lines.append("")
+
+    # Get specific connectors from config if specified
+    target_connectors = []
+    for doc_def in config.get('reports', {}).get('documents', []):
+        if doc_def.get('type') == 'icd':
+            target_connectors = doc_def.get('connectors', [])
+
+    esd = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    ic_pins = analysis.get('ic_pin_analysis', {})
+
+    for e in esd:
+        if not isinstance(e, dict):
+            continue
+        ref = e.get('connector_ref', '')
+        if target_connectors and ref not in target_connectors:
+            continue
+
+        lines.append(f"### {ref} — {e.get('connector_value', '')}")
+        lines.append("")
+        lines.append(f"**Interface:** {e.get('interface_type', 'General')}")
+        lines.append("")
+
+        # Signal list
+        signals = e.get('signal_nets', [])
+        protected = set(e.get('protected_nets', []))
+        if signals:
+            rows = []
+            for sig in signals:
+                prot = 'Yes' if sig in protected else 'No'
+                rows.append([sig, '', '', prot])
+            lines.append(_auto(f"icd_connector_{ref}",
+                               markdown_table(
+                                   ['Signal', 'Direction', 'Voltage Level', 'ESD Protected'],
+                                   rows)))
+        lines.append("")
+        lines.append(_narrative(f"icd_connector_{ref}_notes",
+                                f"Describe the {ref} interface: protocol, signal levels, "
+                                f"timing requirements, mating connector specification."))
+        lines.append("")
+
+    if not esd:
+        lines.append("*No connector data available. Run schematic analysis with ESD audit.*")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def section_icd_electrical_characteristics(analysis: dict) -> str:
+    """ICD: electrical characteristics summary."""
+    lines = ["## Electrical Characteristics"]
+    lines.append("")
+
+    # Power domains give voltage levels
+    domains = analysis.get('design_analysis', {}).get('power_domains', {})
+    domain_groups = domains.get('domain_groups', {})
+
+    if domain_groups:
+        rows = []
+        for domain_name in sorted(domain_groups.keys()) if isinstance(domain_groups, dict) else []:
+            rows.append([domain_name, '', '', ''])
+        if rows:
+            lines.append(_auto("icd_voltage_levels",
+                               markdown_table(
+                                   ['Voltage Domain', 'Nominal', 'Min', 'Max'],
+                                   rows, ['left', 'right', 'right', 'right'])))
+    lines.append("")
+    lines.append(_narrative("icd_electrical_notes",
+                            "Specify voltage levels, impedance, current limits, "
+                            "and timing requirements for each interface."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ======================================================================
+# Manufacturing — specialized sections
+# ======================================================================
+
+def section_mfg_assembly_overview(analysis: dict) -> str:
+    """Manufacturing: assembly overview."""
+    lines = ["## Assembly Overview"]
+    lines.append("")
+
+    stats = analysis.get('statistics', {})
+    rows = [
+        ['Total components', str(stats.get('total_components', '?'))],
+        ['SMD components', str(stats.get('smd_count', '?'))],
+        ['THT components', str(stats.get('tht_count', '?'))],
+        ['DNP components', str(stats.get('dnp_count', 0))],
+        ['Unique parts', str(stats.get('unique_parts', '?'))],
+    ]
+    lines.append(_auto("mfg_overview",
+                       markdown_table(['Metric', 'Count'], rows)))
+    lines.append("")
+    lines.append(_narrative("mfg_overview_notes",
+                            "Describe assembly requirements: lead-free/leaded, "
+                            "reflow profile, hand-solder requirements, special handling."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_mfg_pcb_fab_notes(pcb_data: dict | None) -> str:
+    """Manufacturing: PCB fabrication notes."""
+    lines = ["## PCB Fabrication Notes"]
+    lines.append("")
+
+    if not pcb_data:
+        lines.append("*PCB analysis not available.*")
+        lines.append("")
+        return "\n".join(lines)
+
+    stats = pcb_data.get('statistics', {})
+    outline = pcb_data.get('board_outline', {})
+
+    rows = [
+        ['Board dimensions', f"{outline.get('width_mm', '?')}mm × {outline.get('height_mm', '?')}mm"],
+        ['Copper layers', str(stats.get('copper_layers', '?'))],
+        ['Board thickness', '1.6mm'],
+        ['Copper weight', '1 oz'],
+        ['Surface finish', 'HASL / ENIG'],
+        ['Solder mask', 'Green'],
+        ['Silkscreen', 'White'],
+        ['Min trace/space', ''],
+        ['Min drill', ''],
+        ['IPC class', 'Class 2'],
+    ]
+    lines.append(_auto("mfg_fab_notes",
+                       markdown_table(['Parameter', 'Value'], rows)))
+    lines.append("")
+    lines.append(_narrative("mfg_fab_notes_detail",
+                            "Specify impedance control requirements, stackup details, "
+                            "material (FR-4/Rogers), and any special fabrication instructions."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_mfg_assembly_instructions(analysis: dict) -> str:
+    """Manufacturing: assembly instructions."""
+    lines = ["## Assembly Instructions"]
+    lines.append("")
+    lines.append(_narrative("mfg_assembly_instructions",
+                            "Describe the assembly sequence: paste application, component "
+                            "placement, reflow profile, hand-solder steps, conformal coating, "
+                            "cleaning requirements, and special handling for sensitive components."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def section_mfg_test_procedures(analysis: dict) -> str:
+    """Manufacturing: production test procedures."""
+    lines = ["## Production Test Procedures"]
+    lines.append("")
+
+    lines.append(_auto("mfg_test_checklist", "\n".join([
+        "1. Visual inspection (IPC-A-610 Class 2)",
+        "2. Power-on test: verify all voltage rails",
+        "3. Functional test: verify communication interfaces",
+        "4. Programming: flash firmware",
+        "5. Final inspection and labeling",
+    ])))
+    lines.append("")
+    lines.append(_narrative("mfg_test_details",
+                            "Describe pass/fail criteria for each test step. "
+                            "Include expected voltages, test fixture requirements, "
+                            "and failure modes to watch for."))
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ======================================================================
+# Mechanical / Environmental
+# ======================================================================
+
+def section_mechanical_environmental(analysis: dict, pcb_data: dict | None) -> str:
+    """Mechanical and environmental specifications."""
+    lines = ["## 9. Mechanical / Environmental"]
+    lines.append("")
+
+    if pcb_data:
+        outline = pcb_data.get('board_outline', {})
+        if outline:
+            lines.append(_auto("mech_dimensions",
+                               f"**Board Dimensions:** "
+                               f"{outline.get('width_mm', '?')}mm × "
+                               f"{outline.get('height_mm', '?')}mm"))
+            lines.append("")
+
+    lines.append(_narrative("mechanical_notes",
+                            "Describe: mounting method, enclosure constraints, "
+                            "connector accessibility, operating temperature range, "
+                            "humidity, vibration requirements."))
+    lines.append("")
+    return "\n".join(lines)

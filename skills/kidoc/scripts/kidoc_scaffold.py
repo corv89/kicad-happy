@@ -33,7 +33,21 @@ from kidoc_sections import (
     section_signal_interfaces, section_analog_design, section_thermal,
     section_emc, section_pcb_design, section_bom_summary,
     section_test_debug, section_compliance, section_appendix_schematics,
+    section_mechanical_environmental,
+    # CE Technical File
+    section_ce_product_identification, section_ce_essential_requirements,
+    section_ce_harmonized_standards, section_ce_risk_assessment,
+    section_ce_declaration_of_conformity,
+    # Design Review
+    section_review_summary, section_review_action_items,
+    # ICD
+    section_icd_interface_list, section_icd_connector_details,
+    section_icd_electrical_characteristics,
+    # Manufacturing
+    section_mfg_assembly_overview, section_mfg_pcb_fab_notes,
+    section_mfg_assembly_instructions, section_mfg_test_procedures,
 )
+from kidoc_templates import get_section_list, get_document_title
 
 # Try to import project_config for cascading config loading
 try:
@@ -43,35 +57,6 @@ except ImportError:
         return {'version': 1, 'project': {}, 'suppressions': []}
     def load_config_from_path(path):
         return {'version': 1, 'project': {}, 'suppressions': []}
-
-
-# ======================================================================
-# Document type definitions
-# ======================================================================
-
-DOCUMENT_SECTIONS = {
-    'hdd': [
-        'front_matter', 'system_overview', 'power_design',
-        'signal_interfaces', 'analog_design', 'thermal_analysis',
-        'emc_analysis', 'pcb_design', 'bom_summary',
-        'test_debug', 'compliance', 'appendix_schematics',
-    ],
-    'design_review': [
-        'front_matter', 'system_overview', 'power_design',
-        'emc_analysis', 'thermal_analysis', 'bom_summary',
-    ],
-    'ce_technical_file': [
-        'front_matter', 'system_overview', 'emc_analysis',
-        'thermal_analysis', 'compliance', 'bom_summary',
-        'appendix_schematics',
-    ],
-    'icd': [
-        'front_matter', 'system_overview', 'signal_interfaces',
-    ],
-    'manufacturing': [
-        'front_matter', 'pcb_design', 'bom_summary',
-    ],
-}
 
 
 # ======================================================================
@@ -243,20 +228,16 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
         diagrams_rel = diagrams_dir
         sch_cache_rel = sch_cache_dir
 
-    # Get sections for this document type
-    sections = DOCUMENT_SECTIONS.get(doc_type, DOCUMENT_SECTIONS['hdd'])
+    # Get sections for this document type (with config overrides)
+    sections = get_section_list(doc_type, config)
 
-    # Allow config to override sections
-    reports_config = config.get('reports', {})
-    for doc_def in reports_config.get('documents', []):
-        if doc_def.get('type') == doc_type and 'sections' in doc_def:
-            sections = doc_def['sections']
-            break
+    gate_data = analysis_cache.get('gate')
 
     # Build markdown
     parts = []
 
     section_map = {
+        # Core sections (HDD)
         'front_matter': lambda: section_front_matter(config, doc_type),
         'system_overview': lambda: section_system_overview(analysis, diagrams_rel),
         'power_design': lambda: section_power_design(analysis, diagrams_rel),
@@ -265,10 +246,29 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
         'thermal_analysis': lambda: section_thermal(thermal_data),
         'emc_analysis': lambda: section_emc(emc_data),
         'pcb_design': lambda: section_pcb_design(pcb_data),
+        'mechanical_environmental': lambda: section_mechanical_environmental(analysis, pcb_data),
         'bom_summary': lambda: section_bom_summary(analysis),
         'test_debug': lambda: section_test_debug(analysis),
         'compliance': lambda: section_compliance(analysis, emc_data, config),
         'appendix_schematics': lambda: section_appendix_schematics(sch_cache_rel, analysis),
+        # CE Technical File
+        'ce_product_identification': lambda: section_ce_product_identification(analysis, config),
+        'ce_essential_requirements': lambda: section_ce_essential_requirements(analysis, config),
+        'ce_harmonized_standards': lambda: section_ce_harmonized_standards(config),
+        'ce_risk_assessment': lambda: section_ce_risk_assessment(analysis, emc_data, thermal_data),
+        'ce_declaration_of_conformity': lambda: section_ce_declaration_of_conformity(config),
+        # Design Review
+        'review_summary': lambda: section_review_summary(analysis, emc_data, thermal_data, gate_data),
+        'review_action_items': lambda: section_review_action_items(config),
+        # ICD
+        'icd_interface_list': lambda: section_icd_interface_list(analysis),
+        'icd_connector_details': lambda: section_icd_connector_details(analysis, config),
+        'icd_electrical_characteristics': lambda: section_icd_electrical_characteristics(analysis),
+        # Manufacturing
+        'mfg_assembly_overview': lambda: section_mfg_assembly_overview(analysis),
+        'mfg_pcb_fab_notes': lambda: section_mfg_pcb_fab_notes(pcb_data),
+        'mfg_assembly_instructions': lambda: section_mfg_assembly_instructions(analysis),
+        'mfg_test_procedures': lambda: section_mfg_test_procedures(analysis),
     }
 
     for section_name in sections:
@@ -303,7 +303,8 @@ def main():
     parser.add_argument('--project-dir', '-p', default='.',
                         help='Path to KiCad project directory')
     parser.add_argument('--type', '-t', default='hdd',
-                        choices=list(DOCUMENT_SECTIONS.keys()),
+                        choices=['hdd', 'ce_technical_file', 'design_review',
+                                 'icd', 'manufacturing'],
                         help='Document type (default: hdd)')
     parser.add_argument('--output', '-o', required=True,
                         help='Output markdown file path')
