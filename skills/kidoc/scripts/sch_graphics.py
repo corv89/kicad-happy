@@ -137,7 +137,8 @@ def parse_effects(node: list) -> TextEffects:
                 elif item in ('top', 'bottom'):
                     v_justify = item
 
-    hidden = any(isinstance(c, str) and c == 'hide' for c in effects_node)
+    hidden = (any(isinstance(c, str) and c == 'hide' for c in effects_node)
+              or any(isinstance(c, list) and c[0] == 'hide' for c in effects_node))
 
     return TextEffects(
         height=height, width=width, bold=bold, italic=italic,

@@ -606,6 +606,108 @@ def _render_properties(svg: SvgBuilder, comp: dict) -> None:
 
 
 # ======================================================================
+# Drawing sheet (border, grid labels, title block)
+# ======================================================================
+
+def _render_drawing_sheet(svg: SvgBuilder, root: list,
+                          paper_w: float, paper_h: float) -> None:
+    """Render the drawing sheet border, grid labels, and title block."""
+    margin = 5.0
+    inner_x = margin
+    inner_y = margin
+    inner_w = paper_w - 2 * margin
+    inner_h = paper_h - 2 * margin
+
+    # Outer border
+    svg.rect(inner_x, inner_y, inner_w, inner_h,
+             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
+
+    # Grid labels
+    grid_font = 1.5
+    grid_color = DRAWING_SHEET_COLOR
+
+    # Column labels (1, 2, 3, ...) along top and bottom
+    n_cols = max(2, int(inner_w / 50))
+    col_w = inner_w / n_cols
+    for i in range(n_cols):
+        label = str(i + 1)
+        cx = inner_x + col_w * (i + 0.5)
+        # Top
+        svg.text(cx, inner_y - 1.5, label, font_size=grid_font,
+                 fill=grid_color, anchor='middle', dominant_baseline='auto')
+        # Bottom
+        svg.text(cx, inner_y + inner_h + 3.0, label, font_size=grid_font,
+                 fill=grid_color, anchor='middle', dominant_baseline='auto')
+
+    # Row labels (A, B, C, ...) along left and right
+    n_rows = max(2, int(inner_h / 50))
+    row_h = inner_h / n_rows
+    for i in range(n_rows):
+        label = chr(65 + i)  # A, B, C, D...
+        cy = inner_y + row_h * (i + 0.5)
+        # Left
+        svg.text(inner_x - 2.5, cy, label, font_size=grid_font,
+                 fill=grid_color, anchor='middle', dominant_baseline='central')
+        # Right
+        svg.text(inner_x + inner_w + 2.5, cy, label, font_size=grid_font,
+                 fill=grid_color, anchor='middle', dominant_baseline='central')
+
+    # Title block (lower-right corner)
+    tb = find_first(root, 'title_block')
+    title = ''
+    date = ''
+    rev = ''
+    company = ''
+    if tb:
+        title = get_value(tb, 'title') or ''
+        date = get_value(tb, 'date') or ''
+        rev = get_value(tb, 'rev') or ''
+        company = get_value(tb, 'company') or ''
+
+    # Get paper size name
+    paper_node = find_first(root, 'paper')
+    paper_name = paper_node[1] if paper_node and len(paper_node) >= 2 else 'A4'
+
+    # Get schematic filename
+    from pathlib import Path
+    sch_file = ''
+    # Try to find from the generator node or use empty
+    gen_node = find_first(root, 'generator')
+
+    tb_x = inner_x + inner_w - 100
+    tb_y = inner_y + inner_h - 20
+    tb_w = 100
+    tb_h = 20
+    # Clamp to inner border
+    if tb_x < inner_x:
+        tb_x = inner_x
+        tb_w = inner_w
+
+    svg.rect(tb_x, tb_y, tb_w, tb_h,
+             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
+
+    # Title block text
+    tb_font = 1.5
+    tb_small = 1.0
+    col1 = tb_x + 2
+    col2 = tb_x + tb_w * 0.5
+
+    if title:
+        svg.text(col1, tb_y + 4, f"Title: {title}",
+                 font_size=tb_font, fill=DRAWING_SHEET_COLOR, bold=True)
+    if date:
+        svg.text(col1, tb_y + 8, f"Date: {date}",
+                 font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    if rev:
+        svg.text(col1, tb_y + 12, f"Rev: {rev}",
+                 font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    svg.text(col2, tb_y + 8, f"Size: {paper_name}",
+             font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    svg.text(col2, tb_y + 12, f"Id: 1/1",
+             font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+
+
+# ======================================================================
 # Sheet-level rendering
 # ======================================================================
 
@@ -626,10 +728,8 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
     # Background
     svg.rect(0, 0, paper_w, paper_h, fill=BACKGROUND_COLOR, stroke='none')
 
-    # Sheet border
-    margin = 5.0
-    svg.rect(margin, margin, paper_w - 2 * margin, paper_h - 2 * margin,
-             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
+    # Drawing sheet: border, grid labels, title block
+    _render_drawing_sheet(svg, root, paper_w, paper_h)
 
     # Render order (back to front)
     # 1. Bus wires
