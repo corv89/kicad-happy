@@ -987,12 +987,39 @@ def _format_detection_text(det_type: str, det: dict) -> str:
 # Main entry point
 # ======================================================================
 
+def _discover_sub_sheets(root: list, sch_dir: str) -> list[tuple[str, str]]:
+    """Find sub-sheet files referenced from the root schematic.
+
+    Returns list of (sheet_name, file_path) tuples.
+    """
+    sheets = []
+    for child in root:
+        if not isinstance(child, list) or not child or child[0] != 'sheet':
+            continue
+        name = ''
+        filename = ''
+        for prop in child:
+            if isinstance(prop, list) and prop[0] == 'property' and len(prop) >= 3:
+                prop_name = prop[1]
+                if prop_name in ('Sheetname', 'Sheet name'):
+                    name = str(prop[2])
+                elif prop_name in ('Sheetfile', 'Sheet file'):
+                    filename = str(prop[2])
+        if filename:
+            filepath = os.path.join(sch_dir, filename)
+            if os.path.isfile(filepath):
+                sheets.append((name or Path(filename).stem, filepath))
+    return sheets
+
+
 def render_schematic(sch_path: str, output_dir: str,
                      crop_refs: list[str] | None = None,
                      overlay_json: str | None = None,
-                     padding: float = 5.0) -> list[str]:
+                     padding: float = 5.0,
+                     recursive: bool = True) -> list[str]:
     """Render a .kicad_sch file to SVG.
 
+    If *recursive* is True, also renders hierarchical sub-sheets.
     Returns list of output file paths.
     """
     root = parse_file(sch_path)
@@ -1025,12 +1052,43 @@ def render_schematic(sch_path: str, output_dir: str,
         components = _extract_components_for_render(root)
         render_overlays(svg, overlay_data, components)
 
-    # Determine output path
+    # Write root sheet
     os.makedirs(output_dir, exist_ok=True)
     base = Path(sch_path).stem
     out_path = os.path.join(output_dir, f"{base}.svg")
     svg.write(out_path)
     output_files.append(out_path)
+
+    # Render sub-sheets recursively
+    if recursive and not crop_refs:
+        sch_dir = os.path.dirname(os.path.abspath(sch_path))
+        seen = {os.path.abspath(sch_path)}
+        sub_sheets = _discover_sub_sheets(root, sch_dir)
+        for sheet_name, sheet_path in sub_sheets:
+            abs_path = os.path.abspath(sheet_path)
+            if abs_path in seen:
+                continue
+            seen.add(abs_path)
+            try:
+                sub_root = parse_file(sheet_path)
+                sub_pw, sub_ph = _get_paper_size(sub_root)
+                sub_graphics = extract_symbol_graphics(sub_root)
+                sub_svg = SvgBuilder(sub_pw, sub_ph)
+                render_sheet(sub_svg, sub_root, sub_graphics, sub_pw, sub_ph)
+                safe_name = sheet_name.replace(' ', '_').replace('/', '_')
+                sub_path = os.path.join(output_dir, f"{base}-{safe_name}.svg")
+                sub_svg.write(sub_path)
+                output_files.append(sub_path)
+                # Recurse into sub-sheet's own sub-sheets
+                sub_dir = os.path.dirname(abs_path)
+                for sub2_name, sub2_path in _discover_sub_sheets(sub_root, sub_dir):
+                    abs2 = os.path.abspath(sub2_path)
+                    if abs2 not in seen:
+                        seen.add(abs2)
+                        sub_sheets.append((sub2_name, sub2_path))
+            except Exception as exc:
+                print(f"Warning: failed to render sub-sheet {sheet_name}: {exc}",
+                      file=sys.stderr)
 
     return output_files
 
