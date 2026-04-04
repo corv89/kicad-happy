@@ -83,6 +83,21 @@ blockquote {
 .footer { color: #808080; font-size: 11px; margin-top: 40px; border-top: 1px solid #e0e0e0; padding-top: 8px; }
 hr { border: none; border-top: 1px solid #e0e0e0; margin: 24px 0; }
 ul, ol { padding-left: 24px; }
+.toc { background: #f8f8fc; border: 1px solid #e0e0e8; border-radius: 6px;
+       padding: 12px 20px; margin: 16px 0 24px; }
+.toc h3 { margin: 0 0 8px; font-size: 14px; color: #404060; }
+.toc ul { list-style: none; padding: 0; margin: 0; }
+.toc li { padding: 2px 0; }
+.toc a { color: #2060c0; text-decoration: none; font-size: 13px; }
+.toc a:hover { text-decoration: underline; }
+@media print {
+    .toc { break-after: page; }
+    h2 { break-before: page; }
+    table { break-inside: avoid; }
+    .header, .footer { position: fixed; }
+    .header { top: 0; }
+    .footer { bottom: 0; }
+}
 """
 
 
@@ -122,7 +137,9 @@ def _element_to_html(elem: dict, base_dir: str) -> str:
 
     if etype == 'heading':
         level = elem['level']
-        return f'<h{level}>{_escape(elem["text"])}</h{level}>'
+        anchor = elem.get('_anchor', '')
+        anchor_attr = f' id="{anchor}"' if anchor else ''
+        return f'<h{level}{anchor_attr}>{_escape(elem["text"])}</h{level}>'
 
     elif etype == 'paragraph':
         return f'<p>{_runs_to_html(elem["runs"])}</p>'
@@ -242,6 +259,24 @@ def generate_html(markdown_path: str, output_path: str, config: dict) -> str:
         body_parts.append(
             f'<div class="header">{_escape(header_left)}'
             f'<span style="float:right">{_escape(header_right)}</span></div>')
+
+    # Build table of contents from headings
+    toc_entries = []
+    heading_id = 0
+    for elem in elements:
+        if elem['type'] == 'heading' and elem['level'] in (1, 2, 3):
+            heading_id += 1
+            anchor = f'section-{heading_id}'
+            toc_entries.append((elem['level'], elem['text'], anchor))
+            elem['_anchor'] = anchor  # stash for rendering
+
+    if len(toc_entries) > 2:
+        toc_html = '<nav class="toc"><h3>Contents</h3><ul>'
+        for level, text, anchor in toc_entries:
+            indent = 'style="margin-left:16px"' if level == 3 else ''
+            toc_html += f'<li {indent}><a href="#{anchor}">{_escape(text)}</a></li>'
+        toc_html += '</ul></nav>'
+        body_parts.append(toc_html)
 
     # Content
     for elem in elements:

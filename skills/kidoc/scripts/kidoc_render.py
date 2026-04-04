@@ -622,33 +622,35 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
     svg.rect(inner_x, inner_y, inner_w, inner_h,
              stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
 
-    # Grid labels
+    # Grid labels — match KiCad's default grid division
+    # KiCad uses: A4=6 cols/4 rows, A3=8 cols/4 rows, Letter=6 cols/4 rows
     grid_font = 1.5
     grid_color = DRAWING_SHEET_COLOR
 
-    # Column labels (1, 2, 3, ...) along top and bottom
-    n_cols = max(2, int(inner_w / 50))
+    # Standard grid: 6 columns for A4/Letter, more for larger sheets
+    if inner_w > 400:
+        n_cols = 10
+    elif inner_w > 300:
+        n_cols = 8
+    else:
+        n_cols = 6
+    n_rows = 4  # KiCad always uses 4 rows (A-D)
+
     col_w = inner_w / n_cols
     for i in range(n_cols):
         label = str(i + 1)
         cx = inner_x + col_w * (i + 0.5)
-        # Top
         svg.text(cx, inner_y - 1.5, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='auto')
-        # Bottom
         svg.text(cx, inner_y + inner_h + 3.0, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='auto')
 
-    # Row labels (A, B, C, ...) along left and right
-    n_rows = max(2, int(inner_h / 50))
     row_h = inner_h / n_rows
     for i in range(n_rows):
-        label = chr(65 + i)  # A, B, C, D...
+        label = chr(65 + i)  # A, B, C, D
         cy = inner_y + row_h * (i + 0.5)
-        # Left
         svg.text(inner_x - 2.5, cy, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
-        # Right
         svg.text(inner_x + inner_w + 2.5, cy, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
 
@@ -668,43 +670,61 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
     paper_node = find_first(root, 'paper')
     paper_name = paper_node[1] if paper_node and len(paper_node) >= 2 else 'A4'
 
-    # Get schematic filename
-    from pathlib import Path
-    sch_file = ''
-    # Try to find from the generator node or use empty
+    # Get generator info
     gen_node = find_first(root, 'generator')
+    gen_version = find_first(root, 'generator_version')
+    kicad_ver = ''
+    if gen_version and len(gen_version) >= 2:
+        kicad_ver = f"KiCad E.D.A. {gen_version[1]}"
+    elif gen_node and len(gen_node) >= 2:
+        kicad_ver = str(gen_node[1])
 
-    tb_x = inner_x + inner_w - 100
-    tb_y = inner_y + inner_h - 20
-    tb_w = 100
-    tb_h = 20
-    # Clamp to inner border
-    if tb_x < inner_x:
-        tb_x = inner_x
-        tb_w = inner_w
+    # Title block — KiCad standard layout: right-aligned box inside border
+    # KiCad uses a 111mm wide title block at the bottom-right
+    tb_w = min(111, inner_w)
+    tb_h = 24
+    tb_x = inner_x + inner_w - tb_w
+    tb_y = inner_y + inner_h - tb_h
 
     svg.rect(tb_x, tb_y, tb_w, tb_h,
              stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
+    # Horizontal divider
+    svg.line(tb_x, tb_y + 10, tb_x + tb_w, tb_y + 10,
+             stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
+    # Vertical divider
+    mid_x = tb_x + tb_w * 0.55
+    svg.line(mid_x, tb_y + 10, mid_x, tb_y + tb_h,
+             stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
 
     # Title block text
-    tb_font = 1.5
-    tb_small = 1.0
-    col1 = tb_x + 2
-    col2 = tb_x + tb_w * 0.5
+    tb_font = 1.8
+    tb_small = 1.2
 
+    # Top row: title
     if title:
-        svg.text(col1, tb_y + 4, f"Title: {title}",
+        svg.text(tb_x + 2, tb_y + 5.5, f"Title: {title}",
                  font_size=tb_font, fill=DRAWING_SHEET_COLOR, bold=True)
+
+    # Bottom-left: date, rev, file, sheet
+    col1 = tb_x + 2
     if date:
-        svg.text(col1, tb_y + 8, f"Date: {date}",
+        svg.text(col1, tb_y + 14, f"Date: {date}",
                  font_size=tb_small, fill=DRAWING_SHEET_COLOR)
     if rev:
-        svg.text(col1, tb_y + 12, f"Rev: {rev}",
+        svg.text(col1, tb_y + 18, f"Rev: {rev}",
                  font_size=tb_small, fill=DRAWING_SHEET_COLOR)
-    svg.text(col2, tb_y + 8, f"Size: {paper_name}",
+    svg.text(col1, tb_y + 22, "Sheet: /",
              font_size=tb_small, fill=DRAWING_SHEET_COLOR)
-    svg.text(col2, tb_y + 12, f"Id: 1/1",
+
+    # Bottom-right: size, id, kicad version
+    col2 = mid_x + 2
+    svg.text(col2, tb_y + 14, f"Size: {paper_name}",
              font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    svg.text(col2, tb_y + 18, "Id: 1/1",
+             font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    if kicad_ver:
+        svg.text(col2, tb_y + 22, kicad_ver,
+                 font_size=tb_small, fill=DRAWING_SHEET_COLOR)
 
 
 # ======================================================================
