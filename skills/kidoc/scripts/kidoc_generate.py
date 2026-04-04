@@ -44,7 +44,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Map markdown stem → human-readable document type name
 _DOC_TYPE_NAMES = {
-    'hdd': 'Hardware Design Description',
+    'hdd': 'Hardware Design Report',
     'ce_technical_file': 'CE Technical File',
     'design_review': 'Design Review',
     'icd': 'Interface Control Document',
@@ -56,7 +56,7 @@ def _build_filename(stem: str, project_name: str, revision: str) -> str:
     """Build a human-readable filename from project info.
 
     Examples:
-        "SacMap Rev2 - Hardware Design Description Rev 2.0"
+        "SacMap Rev2 - Hardware Design Report Rev 2.0"
         "Widget Board - Design Review Rev 1.1"
         "HDD" (fallback if no project name)
     """
@@ -209,7 +209,7 @@ def generate_documents(project_dir: str, formats: list[str],
         proj_name = project.get('name', '')
 
         # Build human-readable filename a manager can understand
-        # e.g. "SacMap Rev2 - Hardware Design Description Rev 2.0.pdf"
+        # e.g. "SacMap Rev2 - Hardware Design Report Rev 2.0.pdf"
         base_name = _build_filename(stem, proj_name, rev)
 
         if 'html' in formats or 'all' in formats:

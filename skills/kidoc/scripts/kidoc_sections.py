@@ -46,7 +46,7 @@ def section_front_matter(config: dict, doc_type: str) -> str:
     author = project.get('author', '')
 
     doc_titles = {
-        'hdd': 'Hardware Design Description',
+        'hdd': 'Hardware Design Report',
         'ce_technical_file': 'CE Technical File',
         'design_review': 'Design Review Package',
         'icd': 'Interface Control Document',
