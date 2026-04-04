@@ -470,34 +470,42 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     Each detector takes an AnalysisContext and returns its detection results.
     """
     from signal_detectors import (
-        detect_addressable_leds,
-        detect_battery_chargers,
-        detect_bms_systems,
         detect_bridge_circuits,
-        detect_buzzer_speakers,
         detect_crystal_circuits,
         detect_current_sense,
         detect_decoupling,
         detect_design_observations,
-        detect_ethernet_interfaces,
-        detect_hdmi_dvi_interfaces,
         detect_integrated_ldos,
-        detect_isolation_barriers,
-        detect_key_matrices,
         detect_lc_filters,
         detect_led_drivers,
-        detect_memory_interfaces,
-        detect_motor_drivers,
         detect_opamp_circuits,
         detect_power_regulators,
         detect_protection_devices,
         detect_rc_filters,
-        detect_rf_chains,
-        detect_rf_matching,
         detect_transistor_circuits,
         detect_voltage_dividers,
         postfilter_vd_and_dedup,
         _merge_series_dividers,
+    )
+    from domain_detectors import (
+        audit_esd_protection,
+        detect_adc_circuits,
+        detect_addressable_leds,
+        detect_battery_chargers,
+        detect_bms_systems,
+        detect_buzzer_speakers,
+        detect_clock_distribution,
+        detect_debug_interfaces,
+        detect_ethernet_interfaces,
+        detect_hdmi_dvi_interfaces,
+        detect_isolation_barriers,
+        detect_key_matrices,
+        detect_memory_interfaces,
+        detect_motor_drivers,
+        detect_power_path,
+        detect_reset_supervisors,
+        detect_rf_chains,
+        detect_rf_matching,
     )
 
     nets = ctx.nets
@@ -541,6 +549,12 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     battery_chargers = detect_battery_chargers(ctx)
     motor_drivers = detect_motor_drivers(ctx)
     addressable_led_chains = detect_addressable_leds(ctx)
+    debug_interfaces = detect_debug_interfaces(ctx)
+    power_path = detect_power_path(ctx)
+    esd_coverage_audit = audit_esd_protection(ctx, protection_devices)
+    adc_circuits = detect_adc_circuits(ctx, rc_filters, protection_devices)
+    reset_supervisors = detect_reset_supervisors(ctx)
+    clock_distribution = detect_clock_distribution(ctx, crystal_circuits)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -615,6 +629,12 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "battery_chargers": battery_chargers,
         "motor_drivers": motor_drivers,
         "addressable_led_chains": addressable_led_chains,
+        "debug_interfaces": debug_interfaces,
+        "power_path": power_path,
+        "esd_coverage_audit": esd_coverage_audit,
+        "adc_circuits": adc_circuits,
+        "reset_supervisors": reset_supervisors,
+        "clock_distribution": clock_distribution,
     }
 
     results["design_observations"] = detect_design_observations(ctx, results)
@@ -4765,7 +4785,8 @@ def analyze_pdn_impedance(ctx: AnalysisContext, signal_analysis: dict | None = N
             comp = comp_lookup.get(p["component"])
             if not comp or comp["type"] != "capacitor":
                 continue
-            cap_val = parse_value(comp.get("value", ""))
+            # KH-196: Use pre-computed parsed_values (has component_type context)
+            cap_val = ctx.parsed_values.get(comp["reference"])
             if not cap_val or cap_val <= 0:
                 continue
             # Check other pin goes to ground
@@ -6360,31 +6381,148 @@ def analyze_usb_compliance(ctx: AnalysisContext,
 
         # --- CC1/CC2 pull-down check (Type-C only) ---
         if conn["is_type_c"]:
-            cc1_ok = False
-            cc2_ok = False
+            _PD_CONTROLLER_KEYWORDS = (
+                "fusb302", "stusb4500", "cypd3177", "husb238",
+                "tps65987", "tps65988", "ccg3", "ccg6",
+                "max77958", "max20342",
+            )
+
+            cc1_net = None
+            cc2_net = None
+            cc1_resistor = None  # {ref, ohms, to_ground, to_power}
+            cc2_resistor = None
+            pd_controller = None
+
             for pname, net_name in conn_pin_nets.items():
                 if "CC1" not in pname and "CC2" not in pname:
                     continue
                 is_cc1 = "CC1" in pname
-                # Check for 5.1k pull-down to GND on this net
-                if net_name in nets:
+                if is_cc1:
+                    cc1_net = net_name
+                else:
+                    cc2_net = net_name
+
+                if net_name not in nets:
+                    continue
+
+                # Check for PD controller on this CC net
+                if not pd_controller:
                     for p in nets[net_name]["pins"]:
-                        rc = comp_lookup.get(p["component"])
-                        if not rc or rc["type"] != "resistor":
+                        ic = comp_lookup.get(p["component"])
+                        if not ic or ic["type"] != "ic":
                             continue
-                        r_val = parse_value(rc.get("value", ""))
-                        if r_val and 4800 <= r_val <= 5600:
-                            # Check other side goes to GND
-                            rn1, _ = pin_net.get((rc["reference"], "1"), (None, None))
-                            rn2, _ = pin_net.get((rc["reference"], "2"), (None, None))
-                            other = rn2 if rn1 == net_name else rn1
-                            if is_ground(other):
-                                if is_cc1:
-                                    cc1_ok = True
-                                else:
-                                    cc2_ok = True
-            conn_checks["checks"]["cc1_pulldown_5k1"] = "pass" if cc1_ok else "fail"
-            conn_checks["checks"]["cc2_pulldown_5k1"] = "pass" if cc2_ok else "fail"
+                        ic_combined = (ic.get("value", "") + " " + ic.get("lib_id", "")).lower()
+                        if any(kw in ic_combined for kw in _PD_CONTROLLER_KEYWORDS):
+                            pd_controller = p["component"]
+                            break
+
+                # Check for resistors on CC net
+                for p in nets[net_name]["pins"]:
+                    rc = comp_lookup.get(p["component"])
+                    if not rc or rc["type"] != "resistor":
+                        continue
+                    r_val = parse_value(rc.get("value", ""))
+                    if not r_val:
+                        continue
+                    rn1, _ = pin_net.get((rc["reference"], "1"), (None, None))
+                    rn2, _ = pin_net.get((rc["reference"], "2"), (None, None))
+                    other = rn2 if rn1 == net_name else rn1
+                    r_info = {
+                        "ref": rc["reference"],
+                        "ohms": r_val,
+                        "to_ground": is_ground(other),
+                        "to_power": ctx.is_power_net(other) if not is_ground(other) else False,
+                    }
+                    if is_cc1:
+                        cc1_resistor = r_info
+                    else:
+                        cc2_resistor = r_info
+
+            # Determine role and status
+            issues: list[str] = []
+            if pd_controller:
+                role = "pd_controlled"
+            else:
+                # Check for sink (5.1k pull-down) vs source (56k pull-up)
+                cc1_sink = (cc1_resistor and 4800 <= cc1_resistor["ohms"] <= 5600
+                            and cc1_resistor["to_ground"])
+                cc2_sink = (cc2_resistor and 4800 <= cc2_resistor["ohms"] <= 5600
+                            and cc2_resistor["to_ground"])
+                cc1_source = (cc1_resistor and 50000 <= cc1_resistor["ohms"] <= 62000
+                              and cc1_resistor["to_power"])
+                cc2_source = (cc2_resistor and 50000 <= cc2_resistor["ohms"] <= 62000
+                              and cc2_resistor["to_power"])
+
+                if cc1_source or cc2_source:
+                    role = "source"
+                elif cc1_sink or cc2_sink:
+                    role = "sink"
+                else:
+                    role = "unknown"
+
+                # Validate
+                if role == "sink":
+                    if not cc1_sink:
+                        issues.append("missing_cc1_resistor")
+                    if not cc2_sink:
+                        issues.append("missing_cc2_resistor")
+                    if cc1_sink and cc2_sink:
+                        if abs(cc1_resistor["ohms"] - cc2_resistor["ohms"]) > 200:
+                            issues.append("asymmetric_cc")
+                elif role == "source":
+                    if not cc1_source:
+                        issues.append("missing_cc1_resistor")
+                    if not cc2_source:
+                        issues.append("missing_cc2_resistor")
+                    if cc1_source and cc2_source:
+                        if abs(cc1_resistor["ohms"] - cc2_resistor["ohms"]) > 5000:
+                            issues.append("asymmetric_cc")
+                elif role == "unknown":
+                    # Check for partial/wrong values
+                    if cc1_resistor and not cc2_resistor:
+                        issues.append("missing_cc2_resistor")
+                        issues.append("asymmetric_cc")
+                    elif cc2_resistor and not cc1_resistor:
+                        issues.append("missing_cc1_resistor")
+                        issues.append("asymmetric_cc")
+                    elif not cc1_resistor and not cc2_resistor:
+                        issues.append("missing_cc1_resistor")
+                        issues.append("missing_cc2_resistor")
+                    if cc1_resistor and not (4800 <= cc1_resistor["ohms"] <= 5600 or
+                                             50000 <= cc1_resistor["ohms"] <= 62000):
+                        issues.append("wrong_cc_value")
+                    if cc2_resistor and not (4800 <= cc2_resistor["ohms"] <= 5600 or
+                                             50000 <= cc2_resistor["ohms"] <= 62000):
+                        issues.append("wrong_cc_value")
+
+            cc_status = "pass" if not issues else "fail"
+            cc_detail: dict = {
+                "cc1_net": cc1_net,
+                "cc2_net": cc2_net,
+                "cc1_resistor": cc1_resistor,
+                "cc2_resistor": cc2_resistor,
+                "role": role,
+                "pd_controller": pd_controller,
+                "status": cc_status,
+                "issues": issues,
+            }
+            conn_checks["usb_c_cc_status"] = cc_detail
+
+            # Legacy check keys for summary compatibility
+            if pd_controller:
+                conn_checks["checks"]["cc1_pulldown_5k1"] = "pass"
+                conn_checks["checks"]["cc2_pulldown_5k1"] = "pass"
+            elif role == "source":
+                # Source uses pull-ups, not pull-downs — not a failure
+                conn_checks["checks"]["cc1_pulldown_5k1"] = "info"
+                conn_checks["checks"]["cc2_pulldown_5k1"] = "info"
+            else:
+                cc1_ok = (cc1_resistor and 4800 <= cc1_resistor["ohms"] <= 5600
+                          and cc1_resistor["to_ground"])
+                cc2_ok = (cc2_resistor and 4800 <= cc2_resistor["ohms"] <= 5600
+                          and cc2_resistor["to_ground"])
+                conn_checks["checks"]["cc1_pulldown_5k1"] = "pass" if cc1_ok else "fail"
+                conn_checks["checks"]["cc2_pulldown_5k1"] = "pass" if cc2_ok else "fail"
 
         # --- D+/D- series resistors ---
         dp_net = None
@@ -6518,7 +6656,8 @@ def analyze_inrush_current(ctx: AnalysisContext,
             comp = comp_lookup.get(p["component"])
             if not comp or comp["type"] != "capacitor":
                 continue
-            cap_val = parse_value(comp.get("value", ""))
+            # KH-196: Use pre-computed parsed_values (has component_type context)
+            cap_val = ctx.parsed_values.get(comp["reference"])
             if not cap_val or cap_val <= 0:
                 continue
             # Check other pin goes to ground
