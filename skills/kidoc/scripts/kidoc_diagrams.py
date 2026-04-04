@@ -529,10 +529,14 @@ def generate_architecture(analysis: dict, output_path: str) -> str | None:
     if not clusters:
         return None
 
-    # Build labels for each component (no truncation)
+    # Build labels for each component (no truncation, prefer description for connectors)
     def _comp_label(comp: dict) -> str:
         ref = comp.get('reference', '?')
         value = comp.get('value', '')
+        desc = comp.get('description', '')
+        # For connectors, use description if more readable than raw value
+        if comp.get('type') == 'connector' and desc and len(desc) < 30:
+            return f"{ref}: {desc}"
         if value:
             return f"{ref}: {value}"
         return ref

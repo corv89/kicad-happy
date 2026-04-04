@@ -238,16 +238,17 @@ def section_power_design(analysis: dict, diagrams_dir: str) -> str:
             ic_ref = d.get('ic_ref') or d.get('ic') or ''
             if not ic_ref or ic_ref == '?':
                 ic_ref = d.get('rail', '?') + ' rail'
+            total_uf = sum(c.get('farads', 0) for c in refs if isinstance(c, dict)) * 1e6
+            total_str = f"{total_uf:.0f}µF" if total_uf >= 1 else ''
             rows.append([
                 ic_ref,
                 d.get('rail', '?'),
                 cap_refs,
-                d.get('assessment', ''),
+                total_str,
             ])
         lines.append("### Decoupling")
         lines.append("")
-        lines.append(_auto("decoupling_table",
-                           markdown_table(['IC', 'Rail', 'Capacitors', 'Assessment'], rows)))
+        lines.append(markdown_table(['IC', 'Rail', 'Capacitors', 'Total'], rows))
     lines.append("")
     return "\n".join(lines)
 
@@ -268,16 +269,19 @@ def section_signal_interfaces(analysis: dict) -> str:
         buses = bus_analysis.get(bus_type, [])
         if not buses:
             continue
-        any_bus = True
-        lines.append(f"### {bus_type.upper()}")
-        lines.append("")
         for i, bus in enumerate(buses):
-            bus_id = bus.get('bus_id', f'{bus_type}_{i}')
             signals = bus.get('signals', [])
             sig_names = [s.get('name', str(s)) if isinstance(s, dict) else str(s)
                          for s in signals]
-            lines.append(_auto(f"bus_{bus_type}_{i}",
-                               f"**{bus_id}**: {', '.join(sig_names[:10])}"))
+            # Skip buses with no signal names (empty entries look broken)
+            if not sig_names or all(not s for s in sig_names):
+                continue
+            any_bus = True
+            if not any(l.startswith(f"### {bus_type.upper()}") for l in lines):
+                lines.append(f"### {bus_type.upper()}")
+                lines.append("")
+            bus_id = bus.get('bus_id', f'{bus_type}_{i}')
+            lines.append(f"**{bus_id}**: {', '.join(sig_names[:10])}")
             lines.append("")
 
     if not any_bus:
@@ -321,14 +325,34 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
         lines.append("")
         rows = []
         for d in dividers:
+            mid_net = d.get('mid_net', '?')
+            # Replace internal net names with what the divider connects to
+            if mid_net.startswith('__unnamed') or mid_net.startswith('Net-'):
+                # Check if this is a feedback divider for a regulator
+                connections = d.get('mid_point_connections', [])
+                if connections:
+                    # Format as "U3 FB, C12" from the connection dicts
+                    parts = []
+                    for c in connections[:3]:
+                        if isinstance(c, dict):
+                            comp = c.get('component', '')
+                            pin = c.get('pin_name', '')
+                            if comp and pin:
+                                parts.append(f"{comp} {pin}")
+                            elif comp:
+                                parts.append(comp)
+                        else:
+                            parts.append(str(c))
+                    mid_net = ', '.join(parts) if parts else "(internal)"
+                else:
+                    mid_net = "(internal)"
             rows.append([
                 d.get('r_top', {}).get('ref', '?'),
                 d.get('r_bottom', {}).get('ref', '?'),
                 f"{d.get('ratio', 0):.3f}",
-                d.get('mid_net', '?'),
+                mid_net,
             ])
-        lines.append(_auto("voltage_dividers",
-                           markdown_table(['R_top', 'R_bottom', 'Ratio', 'Output Net'], rows)))
+        lines.append(markdown_table(['R_top', 'R_bottom', 'Ratio', 'Output Net'], rows))
         lines.append("")
 
     # Filters
