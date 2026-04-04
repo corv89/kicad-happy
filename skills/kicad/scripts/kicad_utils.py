@@ -550,7 +550,8 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
     if "led" in lib_lower and "diode" in lib_lower:
         return "led"
     # IC detection from KiCad stdlib library prefixes (Analog_ADC, MCU_*, Regulator_*, etc.)
-    _ic_lib_prefixes = ("analog_", "audio", "comparator", "converter_",
+    _ic_lib_prefixes = ("analog_", "audio", "battery_management",
+                        "comparator", "converter_",
                         "driver_", "display_", "fpga_", "interface_",
                         "logic_", "mcu_", "memory_", "motor_",
                         "multiplexer", "power_management", "power_supervisor",

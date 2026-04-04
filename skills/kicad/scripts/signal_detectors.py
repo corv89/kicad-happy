@@ -2922,11 +2922,50 @@ def detect_isolation_barriers(ctx: AnalysisContext) -> list[dict]:
                 or any("ISO" in d.upper() for d in ground_domains if d != "main")
             )
             if has_iso_evidence:
-                isolation_barriers.append({
+                # Shared ground detection: check if any ground net
+                # appears on both sides of an isolation component
+                shared_ground_warnings: list[dict] = []
+                for iso_comp in isolation_components:
+                    iso_ref = iso_comp["reference"]
+                    iso_pins = ctx.ref_pins.get(iso_ref, {})
+                    if len(iso_pins) < 4:
+                        continue
+                    # Split pins into two halves (primary/secondary)
+                    pin_nums = sorted(iso_pins.keys(),
+                                      key=lambda x: int(x) if x.isdigit() else 0)
+                    mid = len(pin_nums) // 2
+                    primary_pins = pin_nums[:mid]
+                    secondary_pins = pin_nums[mid:]
+                    # Collect ground nets reachable from each side (1 hop)
+                    primary_grounds: set[str] = set()
+                    secondary_grounds: set[str] = set()
+                    for pnum in primary_pins:
+                        net, _ = iso_pins.get(pnum, (None, None))
+                        if net and ctx.is_ground(net):
+                            primary_grounds.add(net)
+                    for pnum in secondary_pins:
+                        net, _ = iso_pins.get(pnum, (None, None))
+                        if net and ctx.is_ground(net):
+                            secondary_grounds.add(net)
+                    shared = primary_grounds & secondary_grounds
+                    if shared:
+                        shared_ground_warnings.append({
+                            "isolation_component": iso_ref,
+                            "shared_ground_nets": sorted(shared),
+                        })
+
+                entry = {
                     "ground_domains": {d: gnets for d, gnets in ground_domains.items()},
                     "isolation_components": isolation_components,
                     "isolated_power_rails": isolated_power_rails,
-                })
+                    "pcb_advisory": (
+                        "Isolation barrier detected — verify creepage/clearance "
+                        "on PCB layout (IEC 60664-1)"
+                    ),
+                }
+                if shared_ground_warnings:
+                    entry["shared_ground_warnings"] = shared_ground_warnings
+                isolation_barriers.append(entry)
     return isolation_barriers
 
 
@@ -3497,6 +3536,86 @@ def detect_rf_chains(ctx: AnalysisContext) -> list[dict]:
     return rf_chains
 
 
+# Reference design matching value ranges (conservative to avoid false positives)
+_RF_REFERENCE_DESIGNS: dict[str, dict] = {
+    "esp32": {
+        "keywords": ("esp32", "esp32-s", "esp32-c", "esp32-h"),
+        "frequency_mhz": 2400,
+        "inductor_range": (1.0e-9, 5.6e-9),   # 1.0-5.6 nH
+        "capacitor_range": (0.5e-12, 3.3e-12),  # 0.5-3.3 pF
+    },
+    "cc1101": {
+        "keywords": ("cc1101", "cc110"),
+        "frequency_mhz": 433,
+        "inductor_range": (5.6e-9, 22e-9),     # 5.6-22 nH
+        "capacitor_range": (2.2e-12, 22e-12),   # 2.2-22 pF
+    },
+    "sx127x": {
+        "keywords": ("sx127", "sx126", "rfm9", "ra-01", "ra01"),
+        "frequency_mhz": 868,
+        "inductor_range": (2.7e-9, 15e-9),     # 2.7-15 nH
+        "capacitor_range": (0.8e-12, 10e-12),   # 0.8-10 pF
+    },
+    "nrf24": {
+        "keywords": ("nrf24", "nrf52", "nrf53"),
+        "frequency_mhz": 2400,
+        "inductor_range": (2.2e-9, 8.2e-9),
+        "capacitor_range": (0.8e-12, 4.7e-12),
+    },
+}
+
+
+def _check_rf_reference_values(target_comp: dict,
+                               matching_components: list[dict],
+                               ) -> dict | None:
+    """Check matching component values against known reference designs."""
+    target_check = (target_comp.get("value", "") + " " +
+                    target_comp.get("lib_id", "") + " " +
+                    target_comp.get("description", "")).lower()
+
+    matched_family = None
+    for family, info in _RF_REFERENCE_DESIGNS.items():
+        if any(kw in target_check for kw in info["keywords"]):
+            matched_family = family
+            break
+
+    if not matched_family:
+        return None
+
+    info = _RF_REFERENCE_DESIGNS[matched_family]
+    out_of_range: list[dict] = []
+
+    for mc in matching_components:
+        val = mc.get("henries") or mc.get("farads")
+        if val is None:
+            continue
+        if mc["type"] == "inductor":
+            lo, hi = info["inductor_range"]
+            if val < lo or val > hi:
+                out_of_range.append({
+                    "ref": mc["ref"],
+                    "value": mc.get("value", ""),
+                    "actual": val,
+                    "expected_range": f"{lo*1e9:.1f}-{hi*1e9:.1f} nH",
+                })
+        elif mc["type"] == "capacitor":
+            lo, hi = info["capacitor_range"]
+            if val < lo or val > hi:
+                out_of_range.append({
+                    "ref": mc["ref"],
+                    "value": mc.get("value", ""),
+                    "actual": val,
+                    "expected_range": f"{lo*1e12:.1f}-{hi*1e12:.1f} pF",
+                })
+
+    return {
+        "target_ic_family": matched_family,
+        "frequency_mhz": info["frequency_mhz"],
+        "values_in_range": len(out_of_range) == 0,
+        "out_of_range_components": out_of_range,
+    }
+
+
 def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
     """Detect RF antenna matching networks (pi-match, L-match, T-match)."""
     rf_matching: list[dict] = []
@@ -3666,6 +3785,18 @@ def detect_rf_matching(ctx: AnalysisContext) -> list[dict]:
             entry["target_ic"] = target_ic
             entry["target_value"] = ctx.comp_lookup.get(target_ic, {}).get("value", "")
 
+        # Reference design value validation
+        if target_ic:
+            ref_check = _check_rf_reference_values(
+                ctx.comp_lookup.get(target_ic, {}), matching_components)
+            if ref_check:
+                entry["reference_design_check"] = ref_check
+
+        entry["advisory"] = [
+            "RF ground stitching near antenna cannot be verified from "
+            "schematic — check PCB layout"
+        ]
+
         rf_matching.append(entry)
 
     return rf_matching
@@ -3817,6 +3948,485 @@ def detect_bms_systems(ctx: AnalysisContext) -> list[dict]:
             "ntc_sensors": unique_ntcs,
         })
     return bms_systems
+
+
+# ---------------------------------------------------------------------------
+# Battery charger and cell protection detector
+# ---------------------------------------------------------------------------
+
+# Charge current formulas: I_charge = K / R_prog (mA, R in kohm)
+_CHARGER_PROG_FORMULAS: dict[str, tuple[float, str]] = {
+    "tp4056": (1200.0, "I = 1200 / R_prog"),
+    "tp4057": (1200.0, "I = 1200 / R_prog"),
+    "tp5400": (1200.0, "I = 1200 / R_prog"),
+    "mcp73831": (1000.0, "I = 1000 / R_prog"),
+    "mcp73832": (1000.0, "I = 1000 / R_prog"),
+    "mcp73871": (1000.0, "I = 1000 / R_prog"),
+    "mcp73811": (1000.0, "I = 1000 / R_prog"),
+    "mcp73812": (1000.0, "I = 1000 / R_prog"),
+    "bq24040": (540.0, "I = 540 / R_prog"),
+    "bq24045": (540.0, "I = 540 / R_prog"),
+    "bq24070": (890.0, "I = 890 / R_prog"),
+    "bq24073": (890.0, "I = 890 / R_prog"),
+    "bq24074": (890.0, "I = 890 / R_prog"),
+    "bq24075": (890.0, "I = 890 / R_prog"),
+    "ltc4054": (1000.0, "I = 1000 / R_prog"),
+    "ltc4056": (1000.0, "I = 1000 / R_prog"),
+    "ltc4065": (1000.0, "I = 1000 / R_prog"),
+    "cn3052": (1200.0, "I = 1200 / R_prog"),
+    "cn3058": (1200.0, "I = 1200 / R_prog"),
+    "cn3063": (1200.0, "I = 1200 / R_prog"),
+    "cn3065": (1200.0, "I = 1200 / R_prog"),
+    "cn3791": (1200.0, "I = 1200 / R_prog"),
+    "mp2615": (1000.0, "I = 1000 / R_prog"),
+    "mp2624": (1000.0, "I = 1000 / R_prog"),
+    "mp2639": (1000.0, "I = 1000 / R_prog"),
+}
+
+_CHARGER_IC_KEYWORDS = tuple(_CHARGER_PROG_FORMULAS.keys()) + (
+    "sgm4105", "sgm4154",
+    "max1551", "max1555", "max1811",
+)
+
+_CELL_PROTECTION_KEYWORDS = (
+    "dw01", "fs8205", "s-8261", "s8261", "xb8089",
+    "ap9101", "ht4936", "r5421", "r5426",
+    "bq2970", "bq29700", "bq2980",
+    "cw1054", "cw1084",
+)
+
+_PROG_PIN_NAMES = {"PROG", "RPROG", "IPROG", "ISET", "ICHG", "ITERM"}
+_STATUS_PIN_NAMES = {"STAT", "STAT1", "STAT2", "CHRG", "CHG", "DONE",
+                     "PG", "PGOOD", "nCHG", "nSTAT"}
+_BAT_PIN_NAMES = {"BAT", "VBAT", "BAT+", "BATT", "BATT+"}
+_VIN_PIN_NAMES = {"VIN", "VBUS", "IN", "VCC", "USB"}
+
+
+def detect_battery_chargers(ctx: AnalysisContext) -> list[dict]:
+    """Detect single-cell battery charger ICs and cell protection circuits.
+
+    Complements detect_bms_systems() which handles multi-cell BMS/AFE ICs.
+    This detector covers linear and switching single-cell chargers (TP4056,
+    MCP73831, BQ2404x, etc.) and standalone cell protection ICs (DW01+FS8205).
+    """
+    chargers: list[dict] = []
+    protection_ics: list[dict] = []
+
+    # --- Phase 1: Find charger ICs ---
+    seen_refs: set[str] = set()
+    for c in ctx.components:
+        if c["type"] != "ic" or c["reference"] in seen_refs:
+            continue
+        val_lib = (c.get("value", "") + " " + c.get("lib_id", "")).lower()
+        if any(k in val_lib for k in _CHARGER_IC_KEYWORDS):
+            seen_refs.add(c["reference"])
+            ref = c["reference"]
+
+            # Identify the specific charger family for formula lookup
+            charger_family = None
+            for family_key in _CHARGER_PROG_FORMULAS:
+                if family_key in val_lib:
+                    charger_family = family_key
+                    break
+
+            # Classify charger type
+            charger_type = "single_cell_linear"
+            for sw_kw in ("mp26", "cn3791", "bq2407"):
+                if sw_kw in val_lib:
+                    charger_type = "single_cell_switching"
+                    break
+
+            # Scan pins for PROG, BAT, VIN, STATUS
+            prog_info = None
+            bat_net = None
+            vin_net = None
+            status_pins: list[dict] = []
+
+            for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+                if not net:
+                    continue
+                # Get pin name from net data
+                pin_name = ""
+                if net in ctx.nets:
+                    for p in ctx.nets[net]["pins"]:
+                        if p["component"] == ref and p["pin_number"] == pnum:
+                            pin_name = (p.get("pin_name") or "").upper()
+                            break
+
+                # PROG pin — find connected resistor
+                if pin_name in _PROG_PIN_NAMES:
+                    for p in ctx.nets.get(net, {}).get("pins", []):
+                        comp = ctx.comp_lookup.get(p["component"])
+                        if comp and comp["type"] == "resistor" and p["component"] != ref:
+                            r_ohms = ctx.parsed_values.get(p["component"])
+                            if r_ohms and r_ohms > 0:
+                                r_kohm = r_ohms / 1000.0
+                                current_mA = None
+                                formula = None
+                                if charger_family and charger_family in _CHARGER_PROG_FORMULAS:
+                                    k, formula = _CHARGER_PROG_FORMULAS[charger_family]
+                                    current_mA = k / r_kohm
+                                prog_info = {
+                                    "prog_resistor": p["component"],
+                                    "prog_resistance_ohms": r_ohms,
+                                    "programmed_current_mA": round(current_mA, 1) if current_mA else None,
+                                    "formula": formula,
+                                }
+                            break
+
+                # Battery pin
+                if pin_name in _BAT_PIN_NAMES and not bat_net:
+                    bat_net = net
+
+                # Input pin
+                if pin_name in _VIN_PIN_NAMES and not vin_net:
+                    vin_net = net
+
+                # Status pins
+                if pin_name in _STATUS_PIN_NAMES:
+                    # Check if an LED is connected
+                    has_led = False
+                    for p in ctx.nets.get(net, {}).get("pins", []):
+                        comp = ctx.comp_lookup.get(p["component"])
+                        if comp and comp["type"] in ("led", "diode"):
+                            vl = (comp.get("value", "") + " " + comp.get("lib_id", "")).lower()
+                            if "led" in vl or comp["type"] == "led":
+                                has_led = True
+                                break
+                    status_pins.append({
+                        "pin": pin_name,
+                        "net": net,
+                        "has_led": has_led,
+                    })
+
+            # Fallback: if no pin-name match, try net-name heuristic for bat/vin
+            if not bat_net:
+                for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+                    if net and any(k in net.upper() for k in ("VBAT", "BAT+", "BATT")):
+                        bat_net = net
+                        break
+            if not vin_net:
+                for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+                    if net and any(k in net.upper() for k in ("VBUS", "VIN", "USB")):
+                        vin_net = net
+                        break
+
+            entry: dict = {
+                "charger_reference": ref,
+                "charger_value": c.get("value", ""),
+                "charger_lib_id": c.get("lib_id", ""),
+                "charger_type": charger_type,
+                "input_rail": vin_net,
+                "battery_net": bat_net,
+            }
+            if prog_info:
+                entry["charge_current"] = prog_info
+            if status_pins:
+                entry["status_pins"] = status_pins
+
+            chargers.append(entry)
+
+    # --- Phase 2: Find cell protection ICs ---
+    for c in ctx.components:
+        if c["reference"] in seen_refs:
+            continue
+        val_lib = (c.get("value", "") + " " + c.get("lib_id", "")).lower()
+        if c["type"] == "ic" and any(k in val_lib for k in _CELL_PROTECTION_KEYWORDS):
+            seen_refs.add(c["reference"])
+            prot_ref = c["reference"]
+
+            # Find protection FETs: BFS 2 hops from protection IC pins
+            # looking for transistors (DW01 drives gate of FS8205 dual FET)
+            protection_fets: list[dict] = []
+            seen_fets: set[str] = set()
+            for pnum, (net, _) in ctx.ref_pins.get(prot_ref, {}).items():
+                if not net or net not in ctx.nets:
+                    continue
+                for p in ctx.nets[net]["pins"]:
+                    comp = ctx.comp_lookup.get(p["component"])
+                    if (comp and comp["type"] == "transistor"
+                            and p["component"] not in seen_fets
+                            and p["component"] != prot_ref):
+                        protection_fets.append({
+                            "reference": p["component"],
+                            "value": comp.get("value", ""),
+                        })
+                        seen_fets.add(p["component"])
+
+            prot_entry = {
+                "protection_ic": prot_ref,
+                "protection_value": c.get("value", ""),
+                "protection_lib_id": c.get("lib_id", ""),
+                "protection_fets": protection_fets,
+            }
+            protection_ics.append(prot_entry)
+
+    # --- Phase 3: Associate protection ICs with chargers ---
+    # If a charger and protection IC share the battery net, link them
+    for ch in chargers:
+        ch["cell_protection"] = None
+        if ch.get("battery_net"):
+            for prot in protection_ics:
+                prot_ref = prot["protection_ic"]
+                prot_nets = set()
+                for pnum, (net, _) in ctx.ref_pins.get(prot_ref, {}).items():
+                    if net:
+                        prot_nets.add(net)
+                if ch["battery_net"] in prot_nets:
+                    ch["cell_protection"] = prot
+                    break
+
+    # Add unlinked protection ICs as standalone entries
+    linked_prots = {ch["cell_protection"]["protection_ic"]
+                    for ch in chargers if ch.get("cell_protection")}
+    for prot in protection_ics:
+        if prot["protection_ic"] not in linked_prots:
+            chargers.append({
+                "charger_reference": None,
+                "charger_value": None,
+                "charger_lib_id": None,
+                "charger_type": "standalone_protection",
+                "input_rail": None,
+                "battery_net": None,
+                "cell_protection": prot,
+            })
+
+    return chargers
+
+
+# ---------------------------------------------------------------------------
+# Motor driver detector
+# ---------------------------------------------------------------------------
+
+_MOTOR_DRIVER_KEYWORDS = (
+    "drv8833", "drv8835", "drv8837", "drv8838", "drv8840",
+    "drv8841", "drv8842", "drv8843", "drv8844",
+    "drv8870", "drv8871", "drv8872", "drv8874",
+    "drv8301", "drv8302", "drv8303", "drv8305",
+    "l298", "l293", "l9110", "l6201", "l6202",
+    "tb6612", "tb67h", "tb67s",
+    "a4950", "a4988", "a4983",
+    "tmc2100", "tmc2130", "tmc2208", "tmc2209", "tmc5160",
+    "uln2003", "uln2803",
+    "bd6211", "bd6220", "bd6231",
+    "mp6513", "mp6515", "mp6522", "mp6530",
+)
+
+_GATE_DRIVER_KEYWORDS = (
+    "ir2110", "ir2113", "ir2184", "ir2186", "ir2101", "ir2104",
+    "ucc2152", "ucc2752", "ucc2150",
+    "hip4086", "irs2186",
+    "fan7388", "fan7390",
+    "l6384", "l6387", "l6388",
+    "ncp5106", "ncp5108",
+    "fd6288",
+)
+
+_STEPPER_PIN_NAMES = {"STEP", "DIR", "MS1", "MS2", "MS3", "ENABLE",
+                      "nENABLE", "nSLEEP", "nRESET", "SPREAD", "INDEX"}
+
+_MOTOR_OUTPUT_PIN_NAMES = {"OUT1", "OUT2", "OUT3", "OUT4",
+                           "OUT1A", "OUT1B", "OUT2A", "OUT2B",
+                           "OUTA", "OUTB", "OUTC",
+                           "AO", "BO", "CO",
+                           "AOUT", "BOUT", "COUT",
+                           "PHASE_A", "PHASE_B", "PHASE_C",
+                           "MOT_A", "MOT_B",
+                           "OUT_A+", "OUT_A-", "OUT_B+", "OUT_B-"}
+
+_GATE_OUTPUT_PIN_NAMES = {"HO", "LO", "HO1", "LO1", "HO2", "LO2",
+                          "HO3", "LO3", "HIN", "LIN",
+                          "OUTA", "OUTB"}
+
+_BOOTSTRAP_PIN_NAMES = {"VB", "VB1", "VB2", "VB3", "VBOOT",
+                        "VS", "VS1", "VS2", "VS3"}
+
+_INDUCTIVE_LOAD_KEYWORDS = ("MOTOR", "FAN", "PUMP", "SOLENOID", "VALVE",
+                            "COIL", "RELAY", "STEPPER", "ACTUATOR")
+
+
+def detect_motor_drivers(ctx: AnalysisContext) -> list[dict]:
+    """Detect motor driver ICs (H-bridge, stepper, BLDC) and gate drivers.
+
+    Identifies integrated motor drivers and discrete gate driver + FET
+    topologies. Checks for bootstrap capacitors, freewheeling diodes,
+    and flags missing protection on inductive load nets.
+    """
+    drivers: list[dict] = []
+    seen_refs: set[str] = set()
+
+    for c in ctx.components:
+        if c["type"] != "ic" or c["reference"] in seen_refs:
+            continue
+        val_lib = (c.get("value", "") + " " + c.get("lib_id", "")).lower()
+
+        is_motor_driver = any(k in val_lib for k in _MOTOR_DRIVER_KEYWORDS)
+        is_gate_driver = any(k in val_lib for k in _GATE_DRIVER_KEYWORDS)
+        if not is_motor_driver and not is_gate_driver:
+            continue
+
+        seen_refs.add(c["reference"])
+        ref = c["reference"]
+
+        # Collect pin info
+        motor_outputs: list[dict] = []
+        gate_outputs: list[dict] = []
+        control_inputs: list[dict] = []
+        bootstrap_pins: dict[str, str] = {}  # pin_name → net
+        power_supply = None
+        has_stepper_pins = False
+
+        for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+            if not net:
+                continue
+            pin_name = ""
+            if net in ctx.nets:
+                for p in ctx.nets[net]["pins"]:
+                    if p["component"] == ref and p["pin_number"] == pnum:
+                        pin_name = (p.get("pin_name") or "").upper()
+                        break
+
+            if pin_name in _MOTOR_OUTPUT_PIN_NAMES:
+                motor_outputs.append({"pin": pin_name, "net": net})
+            elif pin_name in _GATE_OUTPUT_PIN_NAMES:
+                gate_outputs.append({"pin": pin_name, "net": net})
+            elif pin_name in _STEPPER_PIN_NAMES:
+                has_stepper_pins = True
+                control_inputs.append({"pin": pin_name, "net": net})
+            elif pin_name in _BOOTSTRAP_PIN_NAMES:
+                bootstrap_pins[pin_name] = net
+            elif pin_name in ("VM", "VCC", "VS", "VMOT", "VIN") and not power_supply:
+                if ctx.is_power_net(net) and not ctx.is_ground(net):
+                    power_supply = net
+
+        # Classify driver type
+        if is_gate_driver:
+            driver_type = "gate_driver"
+        elif has_stepper_pins:
+            driver_type = "stepper"
+        elif len(motor_outputs) >= 6 or any("PHASE" in o["pin"] or o["pin"].endswith("C") for o in motor_outputs):
+            driver_type = "brushless_3phase"
+        else:
+            driver_type = "dc_brushed_h_bridge"
+
+        # --- Gate driver: find external FETs connected to gate outputs ---
+        external_fets: list[dict] = []
+        if is_gate_driver:
+            seen_fets: set[str] = set()
+            for go in gate_outputs:
+                go_net = go["net"]
+                if go_net not in ctx.nets:
+                    continue
+                # BFS up to 4 hops from gate output to find FETs
+                visited_nets = {go_net}
+                frontier = [go_net]
+                for _hop in range(4):
+                    next_frontier = []
+                    for fn in frontier:
+                        if fn not in ctx.nets:
+                            continue
+                        for p in ctx.nets[fn]["pins"]:
+                            comp = ctx.comp_lookup.get(p["component"])
+                            if not comp or p["component"] == ref:
+                                continue
+                            if (comp["type"] == "transistor"
+                                    and p["component"] not in seen_fets):
+                                external_fets.append({
+                                    "reference": p["component"],
+                                    "value": comp.get("value", ""),
+                                    "gate_net": go_net,
+                                })
+                                seen_fets.add(p["component"])
+                            # Continue BFS through passives (gate resistors, etc.)
+                            if comp["type"] in ("resistor", "ferrite_bead"):
+                                for pn2, (n2, _) in ctx.ref_pins.get(p["component"], {}).items():
+                                    if n2 and n2 not in visited_nets:
+                                        visited_nets.add(n2)
+                                        next_frontier.append(n2)
+                    frontier = next_frontier
+
+        # --- Bootstrap capacitor detection ---
+        bootstrap_caps: list[dict] = []
+        vb_nets = {name: net for name, net in bootstrap_pins.items()
+                   if name.startswith("VB")}
+        vs_nets = {name: net for name, net in bootstrap_pins.items()
+                   if name.startswith("VS")}
+        for vb_name, vb_net in vb_nets.items():
+            # Find matching VS pin (VB1↔VS1, VB↔VS)
+            suffix = vb_name[2:]  # "" or "1" or "2"
+            vs_net = vs_nets.get("VS" + suffix)
+            if not vs_net or vb_net not in ctx.nets:
+                continue
+            # Find cap connected between VB and VS nets
+            for p in ctx.nets[vb_net]["pins"]:
+                comp = ctx.comp_lookup.get(p["component"])
+                if comp and comp["type"] == "capacitor" and p["component"] != ref:
+                    # Check if other pin connects to VS net
+                    n1, n2 = ctx.get_two_pin_nets(p["component"])
+                    other = n2 if n1 == vb_net else n1
+                    if other == vs_net:
+                        bootstrap_caps.append({
+                            "reference": p["component"],
+                            "value": comp.get("value", ""),
+                            "between": [vb_name, "VS" + suffix],
+                        })
+
+        # --- Freewheeling diode detection on motor output nets ---
+        output_nets = [o["net"] for o in motor_outputs]
+        if is_gate_driver and external_fets:
+            # For gate drivers, check FET drain/source nets instead
+            for fet in external_fets:
+                for pnum, (net, _) in ctx.ref_pins.get(fet["reference"], {}).items():
+                    if net and net not in output_nets and not ctx.is_ground(net):
+                        if not ctx.is_power_net(net):
+                            output_nets.append(net)
+
+        freewheeling_diodes: list[dict] = []
+        missing_freewheeling: list[str] = []
+        seen_diode_nets: set[str] = set()
+
+        for out_net in output_nets:
+            if out_net not in ctx.nets or out_net in seen_diode_nets:
+                continue
+            seen_diode_nets.add(out_net)
+
+            # Check if any diode is on this net
+            has_diode = False
+            for p in ctx.nets[out_net]["pins"]:
+                comp = ctx.comp_lookup.get(p["component"])
+                if comp and comp["type"] == "diode" and p["component"] != ref:
+                    freewheeling_diodes.append({
+                        "reference": p["component"],
+                        "value": comp.get("value", ""),
+                        "net": out_net,
+                    })
+                    has_diode = True
+
+            # Flag missing diode if net name suggests inductive load
+            if not has_diode:
+                net_upper = out_net.upper()
+                if any(kw in net_upper for kw in _INDUCTIVE_LOAD_KEYWORDS):
+                    missing_freewheeling.append(out_net)
+
+        entry: dict = {
+            "driver_reference": ref,
+            "driver_value": c.get("value", ""),
+            "driver_lib_id": c.get("lib_id", ""),
+            "driver_type": driver_type,
+            "motor_outputs": motor_outputs if not is_gate_driver else [],
+            "gate_outputs": gate_outputs if is_gate_driver else [],
+            "control_inputs": control_inputs,
+            "power_supply": power_supply,
+            "bootstrap_caps": bootstrap_caps,
+            "freewheeling_diodes": freewheeling_diodes,
+            "external_fets": external_fets,
+        }
+        if missing_freewheeling:
+            entry["missing_freewheeling"] = missing_freewheeling
+
+        drivers.append(entry)
+
+    return drivers
 
 
 def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict]:

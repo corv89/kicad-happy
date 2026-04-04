@@ -471,6 +471,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     """
     from signal_detectors import (
         detect_addressable_leds,
+        detect_battery_chargers,
         detect_bms_systems,
         detect_bridge_circuits,
         detect_buzzer_speakers,
@@ -486,6 +487,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         detect_lc_filters,
         detect_led_drivers,
         detect_memory_interfaces,
+        detect_motor_drivers,
         detect_opamp_circuits,
         detect_power_regulators,
         detect_protection_devices,
@@ -536,6 +538,8 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     rf_chains = detect_rf_chains(ctx)
     rf_matching = detect_rf_matching(ctx)
     bms_systems = detect_bms_systems(ctx)
+    battery_chargers = detect_battery_chargers(ctx)
+    motor_drivers = detect_motor_drivers(ctx)
     addressable_led_chains = detect_addressable_leds(ctx)
 
     # Remove R/C components that appear in crystal circuits from RC filter
@@ -608,6 +612,8 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "rf_chains": rf_chains,
         "rf_matching": rf_matching,
         "bms_systems": bms_systems,
+        "battery_chargers": battery_chargers,
+        "motor_drivers": motor_drivers,
         "addressable_led_chains": addressable_led_chains,
     }
 
@@ -6954,6 +6960,8 @@ def _get_schema():
             "rf_chains": "[{components_in_chain}]",
             "rf_matching": "[{antenna, antenna_value, topology: pi_match|L_match|T_match|matching_network, components: [{ref, type, value}], target_ic, target_value}]",
             "bms_systems": "[{ic_ref, cell_count}]",
+            "battery_chargers": "[{charger_reference, charger_type, charge_current: {prog_resistor, programmed_current_mA, formula}, cell_protection}]",
+            "motor_drivers": "[{driver_reference, driver_type: dc_brushed_h_bridge|stepper|brushless_3phase|gate_driver, motor_outputs, bootstrap_caps, freewheeling_diodes, external_fets}]",
         },
         "design_analysis": {
             "buses": "{i2c|spi|uart|can|sdio|differential_pairs: [bus_instances]}",
