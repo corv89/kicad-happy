@@ -55,6 +55,23 @@ def _find_markdown_files(project_dir: str) -> list[str]:
     )
 
 
+def _generate_html(md_path: str, output_path: str,
+                    config: dict) -> bool:
+    """Generate HTML — zero-dep, runs with system Python."""
+    cmd = [
+        sys.executable,
+        os.path.join(SCRIPTS_DIR, 'kidoc_html.py'),
+        '--input', md_path,
+        '--output', output_path,
+        '--config', json.dumps(config),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"HTML generation failed: {result.stderr}", file=sys.stderr)
+        return False
+    return True
+
+
 def _generate_pdf(venv_py: str, md_path: str, output_path: str,
                    config: dict) -> bool:
     """Dispatch PDF generation to the venv."""
@@ -133,9 +150,12 @@ def generate_documents(project_dir: str, formats: list[str],
               file=sys.stderr)
         return []
 
-    # Ensure venv for PDF/DOCX generation
-    print("Checking report generation environment...", file=sys.stderr)
-    venv_py = ensure_venv(project_dir)
+    # Ensure venv for PDF/DOCX/ODT (not needed for HTML)
+    needs_venv = any(f in formats for f in ('pdf', 'docx', 'odt', 'all'))
+    venv_py = None
+    if needs_venv:
+        print("Checking report generation environment...", file=sys.stderr)
+        venv_py = ensure_venv(project_dir)
 
     output_dir = os.path.join(project_dir, 'reports', 'output')
     os.makedirs(output_dir, exist_ok=True)
@@ -148,6 +168,13 @@ def generate_documents(project_dir: str, formats: list[str],
 
         # Build output filename
         base_name = f"{stem}-{rev}" if rev else stem
+
+        if 'html' in formats or 'all' in formats:
+            html_path = os.path.join(output_dir, f"{base_name}.html")
+            print(f"Generating HTML: {html_path}", file=sys.stderr)
+            if _generate_html(md_path, html_path, config):
+                outputs.append(html_path)
+                print(f"  -> {html_path}", file=sys.stderr)
 
         if 'pdf' in formats or 'all' in formats:
             pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
@@ -178,9 +205,9 @@ def main():
         description='Generate PDF/DOCX from kidoc markdown scaffolds')
     parser.add_argument('--project-dir', '-p', default='.',
                         help='Path to KiCad project directory')
-    parser.add_argument('--format', '-f', default='all',
-                        choices=['pdf', 'docx', 'odt', 'all'],
-                        help='Output format (default: all)')
+    parser.add_argument('--format', '-f', default='pdf',
+                        choices=['pdf', 'html', 'docx', 'odt', 'all'],
+                        help='Output format (default: pdf)')
     parser.add_argument('--doc', default=None,
                         help='Specific markdown file to process')
     parser.add_argument('--config', default=None,
@@ -192,7 +219,7 @@ def main():
     else:
         config = load_config(args.project_dir)
 
-    formats = [args.format] if args.format != 'all' else ['pdf', 'docx', 'odt']
+    formats = [args.format] if args.format != 'all' else ['html', 'pdf', 'docx', 'odt']
 
     outputs = generate_documents(
         project_dir=args.project_dir,

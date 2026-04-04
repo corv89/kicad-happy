@@ -89,7 +89,7 @@ Claude or the user fills `<!-- NARRATIVE: section_name -->` placeholders in the 
 python3 skills/kidoc/scripts/kidoc_generate.py --project-dir . --format all
 ```
 
-Creates `reports/.venv/` automatically on first run. Formats: `pdf`, `docx`, `odt`, `all`.
+Creates `reports/.venv/` automatically on first run (not needed for HTML). Formats: `pdf` (default), `html`, `docx`, `odt`, `all`.
 
 ## Output Formats
 
@@ -97,6 +97,7 @@ Creates `reports/.venv/` automatically on first run. Formats: `pdf`, `docx`, `od
 |--------|---------|-------------|------|
 | **SVG** | stdlib xml.etree | Native vector | Zero-dep |
 | **Markdown** | stdlib | Image references | Zero-dep |
+| **HTML** | stdlib | Inlined as vector (best quality) | Zero-dep |
 | **PDF** | ReportLab | Rasterized to 300 DPI PNG via Pillow | Venv |
 | **DOCX** | python-docx | Rasterized to 300 DPI PNG via Pillow | Venv |
 | **ODT** | odfpy | Rasterized to 300 DPI PNG via Pillow | Venv |

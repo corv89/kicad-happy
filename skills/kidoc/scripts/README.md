@@ -9,8 +9,9 @@ Engineering documentation generation scripts.
 | `kidoc_scaffold.py` | analysis JSON + config | Markdown scaffold with AUTO markers and NARRATIVE placeholders | zero-dep |
 | `kidoc_generate.py` | markdown | Orchestrator — dispatches to venv for PDF/DOCX | zero-dep |
 | `kidoc_pdf.py` | markdown | PDF via ReportLab + svglib (vector SVG embedding) | venv |
-| `kidoc_docx.py` | markdown | DOCX via python-docx + rl-renderPM | venv |
-| `kidoc_odt.py` | markdown | ODT via odfpy + rl-renderPM | venv |
+| `kidoc_html.py` | markdown | Self-contained HTML with inline SVGs | zero-dep |
+| `kidoc_docx.py` | markdown | DOCX via python-docx + Pillow | venv |
+| `kidoc_odt.py` | markdown | ODT via odfpy + Pillow | venv |
 | `kidoc_md_parser.py` | — | Shared markdown to element list parser | zero-dep |
 | `kidoc_sections.py` | — | Section content generators for scaffold | zero-dep |
 | `kidoc_tables.py` | — | Markdown table formatting + unit formatters | zero-dep |
