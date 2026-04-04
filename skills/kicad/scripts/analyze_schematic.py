@@ -489,23 +489,32 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     )
     from domain_detectors import (
         audit_esd_protection,
+        audit_led_circuits,
         detect_adc_circuits,
         detect_addressable_leds,
+        detect_audio_circuits,
         detect_battery_chargers,
         detect_bms_systems,
         detect_buzzer_speakers,
         detect_clock_distribution,
         detect_debug_interfaces,
+        detect_display_interfaces,
         detect_ethernet_interfaces,
         detect_hdmi_dvi_interfaces,
         detect_isolation_barriers,
         detect_key_matrices,
+        detect_led_driver_ics,
+        detect_level_shifters,
         detect_memory_interfaces,
         detect_motor_drivers,
         detect_power_path,
         detect_reset_supervisors,
         detect_rf_chains,
         detect_rf_matching,
+        detect_rtc_circuits,
+        detect_sensor_interfaces,
+        detect_thermocouple_rtd,
+        validate_power_sequencing,
     )
 
     nets = ctx.nets
@@ -555,6 +564,16 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     adc_circuits = detect_adc_circuits(ctx, rc_filters, protection_devices)
     reset_supervisors = detect_reset_supervisors(ctx)
     clock_distribution = detect_clock_distribution(ctx, crystal_circuits)
+    display_interfaces = detect_display_interfaces(ctx)
+    sensor_interfaces = detect_sensor_interfaces(ctx)
+    level_shifters = detect_level_shifters(ctx)
+    audio_circuits = detect_audio_circuits(ctx)
+    led_driver_ics = detect_led_driver_ics(ctx)
+    rtc_circuits = detect_rtc_circuits(ctx, crystal_circuits)
+    led_audit = audit_led_circuits(ctx, transistor_circuits)
+    thermocouple_rtd = detect_thermocouple_rtd(ctx)
+    power_sequencing_validation = validate_power_sequencing(
+        ctx, power_regulators, power_path, reset_supervisors)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -635,6 +654,15 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "adc_circuits": adc_circuits,
         "reset_supervisors": reset_supervisors,
         "clock_distribution": clock_distribution,
+        "display_interfaces": display_interfaces,
+        "sensor_interfaces": sensor_interfaces,
+        "level_shifters": level_shifters,
+        "audio_circuits": audio_circuits,
+        "led_driver_ics": led_driver_ics,
+        "rtc_circuits": rtc_circuits,
+        "led_audit": led_audit,
+        "thermocouple_rtd": thermocouple_rtd,
+        "power_sequencing_validation": power_sequencing_validation,
     }
 
     results["design_observations"] = detect_design_observations(ctx, results)

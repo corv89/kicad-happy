@@ -34,7 +34,7 @@ Follow this sequence for a thorough schematic review. Each step builds on the pr
 Run `analyze_schematic.py` on the schematic file (see SKILL.md for the command). The JSON output provides:
 - Component inventory grouped by type, with values, footprints, MPNs
 - Full net connectivity map with pin-to-net mapping
-- **Automated subcircuit detection** (`signal_analysis` section): power regulators, voltage dividers, RC/LC filters, op-amp circuits, transistor circuits, bridge circuits, protection devices, current sense, crystal circuits, feedback networks, decoupling analysis, plus domain-specific detections (RF chains, BMS, Ethernet, memory interfaces, key matrices, isolation barriers)
+- **Automated subcircuit detection** (`signal_analysis` section): power regulators, voltage dividers, RC/LC filters, op-amp circuits, transistor circuits, bridge circuits, protection devices, current sense, crystal circuits, feedback networks, decoupling analysis, plus domain-specific detections (RF chains/matching, BMS, Ethernet, HDMI/DVI, memory interfaces, key matrices, isolation barriers, addressable LEDs, battery chargers, motor drivers, ESD protection audit, debug interfaces, power path/load switches, ADC signal conditioning, reset/supervisor circuits, clock distribution, display/touch interfaces, sensor fusion, level shifters, audio circuits, LED driver ICs, RTC circuits, LED lighting audit, thermocouple/RTD, power sequencing validation)
 - Design observations (decoupling coverage, I2C pull-ups, crystal load caps, etc.)
 
 Use this structured data as the starting point — it replaces manual component extraction and most subcircuit identification.

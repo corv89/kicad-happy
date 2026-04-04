@@ -402,6 +402,23 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `signal_analysis.memory_interfaces` | Memory | bus width |
 | `signal_analysis.key_matrices` | Key Matrices | row/col count |
 | `signal_analysis.isolation_barriers` | Isolation | isolation type |
+| `signal_analysis.battery_chargers` | Battery Chargers | charger_type, charge_current |
+| `signal_analysis.motor_drivers` | Motor Drivers | driver_type (stepper/dc_brushed) |
+| `signal_analysis.esd_coverage_audit` | ESD Coverage | per-connector coverage, risk_level |
+| `signal_analysis.debug_interfaces` | Debug Interfaces | SWD/JTAG, target_ic |
+| `signal_analysis.power_path` | Power Path | load switches, ideal diodes, USB PD |
+| `signal_analysis.adc_circuits` | ADC Circuits | external ADCs, voltage references |
+| `signal_analysis.reset_supervisors` | Reset/Supervisor | supervisors, watchdogs, RC reset |
+| `signal_analysis.clock_distribution` | Clock Distribution | generators, PLLs, oscillator outputs |
+| `signal_analysis.display_interfaces` | Display/Touch | display type, touch controller |
+| `signal_analysis.sensor_interfaces` | Sensor Fusion | motion/environmental/magnetic, interrupt pins |
+| `signal_analysis.level_shifters` | Level Shifters | IC + discrete, supply domains |
+| `signal_analysis.audio_circuits` | Audio Circuits | amplifiers, codecs, I2S |
+| `signal_analysis.led_driver_ics` | LED Driver ICs | PWM/matrix/constant-current |
+| `signal_analysis.rtc_circuits` | RTC Circuits | battery backup, crystal pairing |
+| `signal_analysis.led_audit` | LED Audit | current limiting validation |
+| `signal_analysis.thermocouple_rtd` | Thermocouple/RTD | amplifiers, RTD interfaces |
+| `signal_analysis.power_sequencing_validation` | Power Sequencing | power tree, enable chains, issues |
 | `signal_analysis.design_observations` | Design Observations | automated findings |
 | `design_analysis.net_classification` | Net Classification | per-net class (power/data/analog/output_drive/etc.) |
 | `design_analysis.power_domains` | Power Domains | per-IC rail mapping with IO rails |

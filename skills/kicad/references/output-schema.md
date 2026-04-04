@@ -77,6 +77,23 @@ Keyed by net name:
 | `memory_interfaces` | `[{type, bus_signals}]` |
 | `rf_chains` | `[{components_in_chain}]` |
 | `bms_systems` | `[{ic_ref, cell_count}]` |
+| `battery_chargers` | `[{ref, value, charger_type, charge_current}]` |
+| `motor_drivers` | `[{ref, value, driver_type: stepper\|dc_brushed_h_bridge}]` |
+| `esd_coverage_audit` | `[{connector_ref, interface_type, risk_level, coverage: full\|partial\|none, unprotected_nets}]` |
+| `debug_interfaces` | `[{connector_ref, interface_type: swd\|jtag, pins_found, target_ic, status}]` |
+| `power_path` | `[{ref, type: load_switch\|ideal_diode\|power_mux\|usb_pd_controller, input_rail, output_rail, enable_net}]` |
+| `adc_circuits` | `[{ref, type: external_adc\|voltage_reference, resolution_bits, interface, input_channels, vref_source}]` |
+| `reset_supervisors` | `[{ref, type: voltage_supervisor\|watchdog\|rc_reset, monitored_rail, threshold_voltage, target_ic}]` |
+| `clock_distribution` | `[{ref, type: clock_generator\|pll\|oscillator_output, outputs, consumers, series_termination}]` |
+| `display_interfaces` | `[{ref, type: display\|touch_controller, display_type, interface, backlight}]` |
+| `sensor_interfaces` | `[{ref, type: motion\|environmental\|magnetic, interface, interrupt_pins, bus_peers}]` |
+| `level_shifters` | `[{ref, type: level_shifter_ic\|discrete_level_shifter, side_a, side_b, shifted_nets}]` |
+| `audio_circuits` | `[{ref, type: audio_amplifier\|audio_codec, amplifier_class, interface, output_nets}]` |
+| `led_driver_ics` | `[{ref, type: pwm_led_driver\|matrix_led_driver\|constant_current_led_driver, channels, current_set}]` |
+| `rtc_circuits` | `[{ref, type: rtc, interface, has_internal_oscillator, external_crystal, battery_backup}]` |
+| `led_audit` | `[{ref, drive_method: resistor_limited\|direct_drive\|ic_direct, series_resistor, estimated_current_mA}]` |
+| `thermocouple_rtd` | `[{ref, type: thermocouple_amplifier\|rtd_interface, interface, reference_resistor}]` |
+| `power_sequencing_validation` | `{power_tree, enable_chains, issues}` |
 
 ### design_analysis
 
