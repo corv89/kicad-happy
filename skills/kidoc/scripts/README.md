@@ -2,12 +2,22 @@
 
 Engineering documentation generation scripts.
 
-| Script | Input | Purpose |
-|--------|-------|---------|
-| `kidoc_render.py` | `.kicad_sch` | Schematic SVG renderer — full sheets, subsystem crops, analysis overlays |
-| `sch_graphics.py` | — | Symbol body graphics extraction (rects, circles, arcs, polylines, pins) |
-| `svg_builder.py` | — | SVG element builder using xml.etree.ElementTree |
-| `color_theme.py` | — | KiCad default schematic color constants |
+| Script | Input | Purpose | Deps |
+|--------|-------|---------|------|
+| `kidoc_render.py` | `.kicad_sch` | Schematic SVG renderer — full sheets, subsystem crops, overlays | zero-dep |
+| `kidoc_diagrams.py` | analysis JSON | Block diagrams — power tree, bus topology, architecture | zero-dep |
+| `kidoc_scaffold.py` | analysis JSON + config | Markdown scaffold with AUTO markers and NARRATIVE placeholders | zero-dep |
+| `kidoc_generate.py` | markdown | Orchestrator — dispatches to venv for PDF/DOCX | zero-dep |
+| `kidoc_pdf.py` | markdown | PDF via ReportLab + svglib (vector SVG embedding) | venv |
+| `kidoc_docx.py` | markdown | DOCX via python-docx + rl-renderPM | venv |
+| `kidoc_md_parser.py` | — | Shared markdown to element list parser | zero-dep |
+| `kidoc_sections.py` | — | Section content generators for scaffold | zero-dep |
+| `kidoc_tables.py` | — | Markdown table formatting + unit formatters | zero-dep |
+| `kidoc_venv.py` | — | Project-local venv bootstrap | zero-dep |
+| `sch_graphics.py` | — | Symbol body graphics extraction | zero-dep |
+| `svg_builder.py` | — | SVG element builder (xml.etree.ElementTree) | zero-dep |
+| `color_theme.py` | — | KiCad default schematic color constants | zero-dep |
+| `requirements.txt` | — | Pinned deps for reports/.venv/ | — |
 
 ## kidoc_render.py
 
