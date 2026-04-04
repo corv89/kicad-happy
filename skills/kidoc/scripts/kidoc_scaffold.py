@@ -28,7 +28,8 @@ if os.path.isdir(_kicad_scripts):
     sys.path.insert(0, os.path.abspath(_kicad_scripts))
 
 from kidoc_sections import (
-    section_front_matter, section_system_overview, section_power_design,
+    section_front_matter, section_executive_summary,
+    section_system_overview, section_power_design,
     section_signal_interfaces, section_analog_design, section_thermal,
     section_emc, section_pcb_design, section_bom_summary,
     section_test_debug, section_compliance, section_appendix_schematics,
@@ -196,6 +197,7 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
     section_map = {
         # Core sections (HDD)
         'front_matter': lambda: section_front_matter(config, doc_type),
+        'executive_summary': lambda: section_executive_summary(analysis, emc_data, thermal_data, pcb_data),
         'system_overview': lambda: section_system_overview(analysis, diagrams_rel),
         'power_design': lambda: section_power_design(analysis, diagrams_rel),
         'signal_interfaces': lambda: section_signal_interfaces(analysis),

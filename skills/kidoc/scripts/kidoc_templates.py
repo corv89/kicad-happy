@@ -14,7 +14,7 @@ DOCUMENT_TEMPLATES = {
     "hdd": {
         "name": "Hardware Design Description",
         "sections": [
-            "front_matter", "system_overview", "power_design",
+            "front_matter", "executive_summary", "system_overview", "power_design",
             "signal_interfaces", "analog_design", "thermal_analysis",
             "emc_analysis", "pcb_design", "mechanical_environmental",
             "bom_summary", "test_debug", "compliance",
@@ -37,7 +37,7 @@ DOCUMENT_TEMPLATES = {
     "design_review": {
         "name": "Design Review Package",
         "sections": [
-            "front_matter", "review_summary",
+            "front_matter", "executive_summary", "review_summary",
             "system_overview", "power_design",
             "emc_analysis", "thermal_analysis",
             "bom_summary", "review_action_items",

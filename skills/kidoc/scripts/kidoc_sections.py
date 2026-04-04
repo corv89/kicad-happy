@@ -79,6 +79,73 @@ def section_front_matter(config: dict, doc_type: str) -> str:
 
 
 # ======================================================================
+# Executive summary
+# ======================================================================
+
+def section_executive_summary(analysis: dict, emc_data: dict | None,
+                              thermal_data: dict | None,
+                              pcb_data: dict | None) -> str:
+    """Auto-generated one-paragraph project overview."""
+    lines = ["## Executive Summary"]
+    lines.append("")
+
+    stats = analysis.get('statistics', {})
+    total = stats.get('total_components', 0)
+    unique = stats.get('unique_parts', 0)
+    nets = stats.get('total_nets', 0)
+    sheets = stats.get('sheets', 1)
+
+    # Identify key ICs
+    regulators = analysis.get('signal_analysis', {}).get('power_regulators', [])
+    mcus = [c for c in analysis.get('components', [])
+            if c.get('type') == 'ic' and any(k in c.get('lib_id', '').lower()
+            for k in ('mcu', 'stm32', 'esp32', 'rp2040', 'atmega', 'nrf',
+                       'samd', 'wroom', 'wrover', 'microcontroller'))]
+
+    parts = []
+    parts.append(f"This design contains **{total} components** ({unique} unique parts) "
+                 f"across **{nets} nets**"
+                 + (f" on {sheets} schematic sheets" if sheets > 1 else "")
+                 + ".")
+
+    if mcus:
+        mcu_list = ', '.join(c.get('value', c.get('reference', '?')) for c in mcus[:3])
+        parts.append(f"The primary processor is **{mcu_list}**.")
+
+    if regulators:
+        rails = [f"{r.get('output_rail', '?')} ({r.get('estimated_vout', '?')}V)"
+                 for r in regulators if r.get('estimated_vout')]
+        if rails:
+            parts.append(f"Power rails: {', '.join(rails)}.")
+
+    # PCB info
+    if pcb_data:
+        pcb_stats = pcb_data.get('statistics', {})
+        layers = pcb_stats.get('copper_layers', '')
+        outline = pcb_data.get('board_outline', {})
+        dims = ''
+        if outline:
+            w = outline.get('width_mm')
+            h = outline.get('height_mm')
+            if w and h:
+                dims = f" ({w}×{h}mm)"
+        if layers:
+            parts.append(f"{layers}-layer PCB{dims}, "
+                         f"{pcb_stats.get('routing_completion', '?')}% routed.")
+
+    # EMC summary
+    if emc_data:
+        emc_sum = emc_data.get('summary', {})
+        score = emc_sum.get('emc_risk_score')
+        if score is not None:
+            parts.append(f"EMC risk score: {score}/100.")
+
+    lines.append(' '.join(parts))
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ======================================================================
 # System overview
 # ======================================================================
 
@@ -88,25 +155,36 @@ def section_system_overview(analysis: dict, diagrams_dir: str) -> str:
     lines.append("")
 
     # Architecture diagram
-    lines.append(_auto("architecture_diagram",
-                       f"![System Architecture]({diagrams_dir}/architecture.svg)"))
+    lines.append(f"![System Architecture]({diagrams_dir}/architecture.svg)")
     lines.append("")
     lines.append(_narrative("system_overview_description",
                             "Describe the system's purpose, key functions, and "
                             "high-level architecture. Reference the block diagram above."))
     lines.append("")
 
-    # Statistics table
+    # Statistics table — include PCB data if available from analysis
     stats = analysis.get('statistics', {})
     if stats:
         rows = [
             ['Total components', str(stats.get('total_components', 0))],
             ['Unique parts', str(stats.get('unique_parts', 0))],
             ['Nets', str(stats.get('total_nets', 0))],
-            ['Sheets', str(stats.get('sheets', 1))],
+            ['Schematic sheets', str(stats.get('sheets', 1))],
         ]
-        lines.append(_auto("statistics_table",
-                           markdown_table(['Metric', 'Value'], rows)))
+        # Add SMD/THT if available
+        smd = stats.get('smd_count')
+        tht = stats.get('tht_count')
+        if smd is not None or tht is not None:
+            rows.append(['SMD / THT', f"{smd or 0} / {tht or 0}"])
+        # Add DNP if any
+        dnp = stats.get('dnp_count', 0)
+        if dnp:
+            rows.append(['Do Not Populate', str(dnp)])
+        # Missing MPNs
+        missing = stats.get('missing_mpns', 0)
+        if missing:
+            rows.append(['Missing MPNs', str(missing)])
+        lines.append(markdown_table(['Metric', 'Value'], rows))
     lines.append("")
     return "\n".join(lines)
 
@@ -156,8 +234,12 @@ def section_power_design(analysis: dict, diagrams_dir: str) -> str:
         for d in decoupling:
             refs = d.get('capacitors', [])
             cap_refs = ', '.join(c.get('ref', '') for c in refs) if isinstance(refs, list) else ''
+            # IC ref — use ic_ref, fall back to rail name
+            ic_ref = d.get('ic_ref') or d.get('ic') or ''
+            if not ic_ref or ic_ref == '?':
+                ic_ref = d.get('rail', '?') + ' rail'
             rows.append([
-                d.get('ic_ref', '?'),
+                ic_ref,
                 d.get('rail', '?'),
                 cap_refs,
                 d.get('assessment', ''),
@@ -372,25 +454,50 @@ def section_emc(emc_data: dict | None) -> str:
     lines.append("")
 
     findings = emc_data.get('findings', [])
-    if findings:
-        # Group by severity
-        rows = []
-        for f in sorted(findings, key=lambda x: {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2,
-                                                    'LOW': 3, 'INFO': 4}.get(x.get('severity', 'INFO'), 5)):
-            if f.get('suppressed'):
-                continue
-            rows.append([
-                f.get('severity', '?'),
-                f.get('rule_id', '?'),
-                f.get('title', '')[:60],
-                f.get('category', ''),
+    active = [f for f in findings if not f.get('suppressed')]
+    if active:
+        # Group by category, then show summary + details
+        from collections import OrderedDict
+        by_category: dict[str, list] = OrderedDict()
+        sev_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'INFO': 4}
+        for f in sorted(active, key=lambda x: sev_order.get(x.get('severity', 'INFO'), 5)):
+            cat = f.get('category', 'other')
+            by_category.setdefault(cat, []).append(f)
+
+        # Category summary table
+        cat_rows = []
+        for cat, cat_findings in by_category.items():
+            sev_counts = {}
+            for f in cat_findings:
+                s = f.get('severity', 'INFO')
+                sev_counts[s] = sev_counts.get(s, 0) + 1
+            sev_str = ', '.join(f"{c}×{s}" for s, c in
+                                sorted(sev_counts.items(),
+                                       key=lambda x: sev_order.get(x[0], 5)))
+            cat_rows.append([
+                cat.replace('_', ' ').title(),
+                str(len(cat_findings)),
+                sev_str,
             ])
-        if rows:
-            lines.append(_auto("emc_findings",
-                               markdown_table(['Severity', 'Rule', 'Finding', 'Category'],
-                                              rows[:30])))  # limit to 30
-            if len(rows) > 30:
-                lines.append(f"*... and {len(rows) - 30} more findings.*")
+        lines.append("### Findings by Category")
+        lines.append("")
+        lines.append(markdown_table(['Category', 'Count', 'Severity Breakdown'], cat_rows))
+        lines.append("")
+
+        # Top findings detail (limit to most severe)
+        top = [f for f in active if f.get('severity') in ('CRITICAL', 'HIGH')][:15]
+        if top:
+            lines.append("### Critical and High Findings")
+            lines.append("")
+            detail_rows = []
+            for f in top:
+                detail_rows.append([
+                    f.get('severity', '?'),
+                    f.get('rule_id', '?'),
+                    f.get('title', ''),
+                ])
+            lines.append(markdown_table(['Severity', 'Rule', 'Finding'], detail_rows))
+        lines.append("")
     lines.append("")
     lines.append(_narrative("emc_notes",
                             "Describe EMC design strategy: shielding, filtering, "
