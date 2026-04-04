@@ -74,6 +74,7 @@ python3 skills/kidoc/scripts/kidoc_generate.py --project-dir . --format pdf
 - **Markdown** — source of truth, human-editable, version-controllable
 - **PDF** — via ReportLab + svglib (vector SVG embedding)
 - **DOCX** — via python-docx (SVGs rasterized to 300 DPI PNG)
+- **ODT** — via odfpy (OpenDocument, for LibreOffice/OpenOffice)
 
 ## Document Types
 

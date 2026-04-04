@@ -48,7 +48,7 @@ def is_venv_ready(project_dir: str) -> bool:
     # Quick check: try importing the key packages
     try:
         result = subprocess.run(
-            [py, '-c', 'import reportlab; import docx; import svglib'],
+            [py, '-c', 'import reportlab; import docx; import svglib; import odf'],
             capture_output=True, timeout=10)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):

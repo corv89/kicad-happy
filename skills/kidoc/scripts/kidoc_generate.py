@@ -91,6 +91,24 @@ def _generate_docx(venv_py: str, md_path: str, output_path: str,
     return True
 
 
+def _generate_odt(venv_py: str, md_path: str, output_path: str,
+                   config: dict) -> bool:
+    """Dispatch ODT generation to the venv."""
+    config_json = json.dumps(config)
+    cmd = [
+        venv_py,
+        os.path.join(SCRIPTS_DIR, 'kidoc_odt.py'),
+        '--input', md_path,
+        '--output', output_path,
+        '--config', config_json,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"ODT generation failed: {result.stderr}", file=sys.stderr)
+        return False
+    return True
+
+
 def generate_documents(project_dir: str, formats: list[str],
                        doc_name: str | None = None,
                        config: dict | None = None) -> list[str]:
@@ -145,6 +163,13 @@ def generate_documents(project_dir: str, formats: list[str],
                 outputs.append(docx_path)
                 print(f"  -> {docx_path}", file=sys.stderr)
 
+        if 'odt' in formats or 'all' in formats:
+            odt_path = os.path.join(output_dir, f"{base_name}.odt")
+            print(f"Generating ODT: {odt_path}", file=sys.stderr)
+            if _generate_odt(venv_py, md_path, odt_path, config):
+                outputs.append(odt_path)
+                print(f"  -> {odt_path}", file=sys.stderr)
+
     return outputs
 
 
@@ -154,7 +179,7 @@ def main():
     parser.add_argument('--project-dir', '-p', default='.',
                         help='Path to KiCad project directory')
     parser.add_argument('--format', '-f', default='all',
-                        choices=['pdf', 'docx', 'all'],
+                        choices=['pdf', 'docx', 'odt', 'all'],
                         help='Output format (default: all)')
     parser.add_argument('--doc', default=None,
                         help='Specific markdown file to process')
@@ -167,7 +192,7 @@ def main():
     else:
         config = load_config(args.project_dir)
 
-    formats = [args.format] if args.format != 'all' else ['pdf', 'docx']
+    formats = [args.format] if args.format != 'all' else ['pdf', 'docx', 'odt']
 
     outputs = generate_documents(
         project_dir=args.project_dir,
