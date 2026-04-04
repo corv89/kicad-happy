@@ -114,20 +114,42 @@ def _draw_bus_line(svg: SvgBuilder, x1: float, y1: float,
 # Power Tree Diagram
 # ======================================================================
 
+def _format_cap_summary(caps: list[dict]) -> str:
+    """Format a capacitor list into a compact summary string."""
+    if not caps:
+        return ''
+    # Group by value
+    by_value: dict[str, list[str]] = {}
+    for c in caps:
+        val = c.get('value', '?')
+        ref = c.get('ref', '')
+        # Skip compensation/feedforward caps (tiny values)
+        farads = c.get('farads', 0)
+        if farads and farads < 1e-9:
+            continue
+        by_value.setdefault(val, []).append(ref)
+    parts = []
+    for val, refs in sorted(by_value.items(), key=lambda x: -len(x[1])):
+        if len(refs) == 1:
+            parts.append(f"{refs[0]}={val}")
+        else:
+            parts.append(f"{len(refs)}×{val}")
+    return ', '.join(parts)
+
+
 def generate_power_tree(analysis: dict, output_path: str) -> str | None:
     """Generate a power tree SVG from schematic analysis JSON.
 
-    Reads signal_analysis.power_regulators and design_analysis.power_domains
-    to build a DAG of power rails and regulators.
+    Shows regulators with topology, Vout, inductor value, and output
+    capacitor summary.  Rail boxes show the rail name and voltage.
     """
     regulators = analysis.get('signal_analysis', {}).get('power_regulators', [])
     if not regulators:
         return None
 
-    # Build a graph: input_rail -> regulator -> output_rail
-    # Nodes are rails (strings), edges are regulators
+    # Build graph
     rails = set()
-    edges = []  # (input_rail, output_rail, regulator_info)
+    edges = []
     for reg in regulators:
         in_rail = reg.get('input_rail', '?')
         out_rail = reg.get('output_rail', '?')
@@ -135,15 +157,13 @@ def generate_power_tree(analysis: dict, output_path: str) -> str | None:
         rails.add(out_rail)
         edges.append((in_rail, out_rail, reg))
 
-    # Topological sort for left-to-right layout
-    # Find root rails (no regulator outputs to them, or they're input-only)
+    # Topological sort
     output_rails = {e[1] for e in edges}
     input_rails = {e[0] for e in edges}
     root_rails = input_rails - output_rails
     if not root_rails:
-        root_rails = input_rails  # fallback: all inputs are roots
+        root_rails = input_rails
 
-    # BFS to assign depth (rank) to each rail
     depth = {}
     queue = list(root_rails)
     for r in queue:
@@ -156,83 +176,113 @@ def generate_power_tree(analysis: dict, output_path: str) -> str | None:
                 depth[out_r] = depth[rail] + 1
                 visited.add(out_r)
                 queue.append(out_r)
-
-    # Assign any unvisited rails
     for r in rails:
         if r not in depth:
             depth[r] = 0
 
-    # Group rails by depth
     max_depth = max(depth.values()) if depth else 0
     ranks: dict[int, list[str]] = {}
     for rail, d in depth.items():
         ranks.setdefault(d, []).append(rail)
 
-    # Layout
-    box_w = 35.0
-    box_h = 14.0
-    reg_w = 30.0
-    reg_h = 10.0
-    h_spacing = 55.0
-    v_spacing = 25.0
-    margin = 15.0
+    # Layout — wider spacing for richer regulator boxes
+    rail_w = 30.0
+    rail_h = 12.0
+    reg_w = 42.0
+    reg_h = 20.0
+    h_spacing = 60.0
+    v_spacing = 35.0
+    margin = 12.0
+    cap_font = 1.4
+    detail_font = 1.5
 
-    # Compute positions for rail boxes
+    # Rail positions
     rail_pos: dict[str, tuple[float, float]] = {}
     for d in range(max_depth + 1):
         rank_rails = sorted(ranks.get(d, []))
         for i, rail in enumerate(rank_rails):
             x = margin + d * h_spacing
-            y = margin + i * v_spacing
+            y = margin + 8 + i * v_spacing
             rail_pos[rail] = (x, y)
 
-    # Compute SVG size
-    max_x = max((p[0] for p in rail_pos.values()), default=0) + box_w + margin
-    max_y = max((p[1] for p in rail_pos.values()), default=0) + box_h + margin
-    # Add space for regulators between rails
-    total_w = max(max_x + margin, 200)
-    total_h = max(max_y + margin, 80)
+    max_x = max((p[0] for p in rail_pos.values()), default=0) + rail_w + margin
+    max_y = max((p[1] for p in rail_pos.values()), default=0) + rail_h + margin
+    total_w = max(max_x + h_spacing, 180)
+    total_h = max(max_y + 20, 70)
 
     svg = SvgBuilder(total_w, total_h)
     svg.rect(0, 0, total_w, total_h, fill=BG_COLOR, stroke='none')
-
-    # Title
-    svg.text(total_w / 2, 6, "Power Tree",
-             font_size=4, fill='#202020', anchor='middle', bold=True)
+    svg.text(total_w / 2, 5, "Power Tree",
+             font_size=3.5, fill='#202020', anchor='middle', bold=True)
 
     # Draw rail boxes
     for rail, (x, y) in rail_pos.items():
-        _draw_box(svg, x, y, box_w, box_h, rail, fill=POWER_FILL,
-                  stroke=POWER_STROKE, font_color=POWER_FONT)
+        svg.rect(x, y, rail_w, rail_h, stroke=POWER_STROKE, fill=POWER_FILL,
+                 stroke_width=0.3, rx=BOX_CORNER_RADIUS)
+        svg.text(x + rail_w / 2, y + rail_h / 2, rail,
+                 font_size=FONT_SIZE, fill=POWER_FONT,
+                 anchor='middle', dominant_baseline='central', bold=True)
 
-    # Draw regulator boxes and arrows
+    # Draw regulator boxes with detail annotations
     for in_rail, out_rail, reg in edges:
         if in_rail not in rail_pos or out_rail not in rail_pos:
             continue
         in_x, in_y = rail_pos[in_rail]
         out_x, out_y = rail_pos[out_rail]
 
-        # Regulator box positioned between the two rails
-        reg_x = (in_x + box_w + out_x) / 2 - reg_w / 2
-        reg_y = (in_y + out_y) / 2 + (box_h - reg_h) / 2
+        # Regulator box centered between rails
+        reg_x = (in_x + rail_w + out_x) / 2 - reg_w / 2
+        reg_y = (in_y + out_y) / 2 + (rail_h - reg_h) / 2
 
         ref = reg.get('ref', '?')
         value = reg.get('value', '')
         topology = reg.get('topology', '')
         vout = reg.get('estimated_vout')
-        sublabel = topology
+        inductor = reg.get('inductor', '')
+
+        # Regulator box
+        svg.rect(reg_x, reg_y, reg_w, reg_h, stroke=BOX_STROKE, fill=BOX_FILL,
+                 stroke_width=0.3, rx=BOX_CORNER_RADIUS)
+
+        # Line 1: ref + value
+        svg.text(reg_x + reg_w / 2, reg_y + 4, f"{ref}: {value}",
+                 font_size=detail_font, fill=BOX_FONT,
+                 anchor='middle', dominant_baseline='central', bold=True)
+
+        # Line 2: topology + Vout
+        line2 = topology.upper()
         if vout:
-            sublabel = f"{topology} → {vout:.2f}V"
+            line2 += f"  →  {vout:.2f}V"
+        svg.text(reg_x + reg_w / 2, reg_y + 8.5,
+                 line2, font_size=detail_font, fill=BOX_FONT,
+                 anchor='middle', dominant_baseline='central')
 
-        _draw_box(svg, reg_x, reg_y, reg_w, reg_h, f"{ref}",
-                  sublabel=sublabel, fill=BOX_FILL, stroke=BOX_STROKE)
+        # Line 3: inductor
+        if inductor:
+            # Find inductor value from components
+            ind_value = ''
+            for comp in analysis.get('components', []):
+                if comp.get('reference') == inductor:
+                    ind_value = comp.get('value', '')
+                    break
+            ind_text = f"L: {inductor}" + (f" ({ind_value})" if ind_value else "")
+            svg.text(reg_x + reg_w / 2, reg_y + 12.5,
+                     ind_text, font_size=cap_font, fill='#606060',
+                     anchor='middle', dominant_baseline='central')
 
-        # Arrow from input rail to regulator
-        _draw_arrow(svg, in_x + box_w, in_y + box_h / 2,
+        # Line 4: output caps summary
+        out_caps = reg.get('output_capacitors', [])
+        cap_summary = _format_cap_summary(out_caps)
+        if cap_summary:
+            svg.text(reg_x + reg_w / 2, reg_y + 16,
+                     f"Cout: {cap_summary}", font_size=cap_font, fill='#606060',
+                     anchor='middle', dominant_baseline='central')
+
+        # Arrows
+        _draw_arrow(svg, in_x + rail_w, in_y + rail_h / 2,
                     reg_x, reg_y + reg_h / 2)
-        # Arrow from regulator to output rail
         _draw_arrow(svg, reg_x + reg_w, reg_y + reg_h / 2,
-                    out_x, out_y + box_h / 2)
+                    out_x, out_y + rail_h / 2)
 
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     svg.write(output_path)
