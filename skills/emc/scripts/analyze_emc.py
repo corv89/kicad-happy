@@ -20,8 +20,12 @@ import os
 import sys
 import time
 
-# Add this script's directory to path for sibling imports
+# Add this script's directory and kicad scripts to path for sibling imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              '..', '..', 'kicad', 'scripts')
+if os.path.isdir(_kicad_scripts):
+    sys.path.insert(0, os.path.abspath(_kicad_scripts))
 
 from emc_rules import run_all_checks, generate_test_plan, analyze_regulatory_coverage
 from emc_formulas import STANDARDS, MARKET_STANDARDS
@@ -303,6 +307,8 @@ def main():
                         help='Target market — sets applicable standards (us, eu, automotive, medical, military)')
     parser.add_argument('--spice-enhanced', action='store_true',
                         help='Use SPICE simulation for improved PDN/filter analysis (requires ngspice/LTspice/Xyce)')
+    parser.add_argument('--config', default=None,
+                        help='Path to .kicad-happy.json project config file')
 
     args = parser.parse_args()
 
@@ -339,6 +345,28 @@ def main():
             print('Warning: SPICE skill not available for enhanced analysis',
                   file=sys.stderr)
 
+    # Load project config (for suppressions and defaults)
+    try:
+        from project_config import load_config_from_path, load_config, apply_suppressions
+        if args.config:
+            config = load_config_from_path(args.config)
+        elif args.schematic:
+            # Auto-discover from schematic's directory
+            sch_data_file = schematic.get('file', '') if schematic else ''
+            search = os.path.dirname(sch_data_file) if sch_data_file else '.'
+            config = load_config(search)
+        else:
+            config = load_config('.')
+    except ImportError:
+        config = {'version': 1, 'project': {}, 'suppressions': []}
+
+    # Apply config defaults to CLI args
+    project = config.get('project', {})
+    if args.standard == 'fcc-class-b' and project.get('emc_standard'):
+        args.standard = project['emc_standard']
+    if args.market is None and project.get('compliance_market'):
+        args.market = project['compliance_market']
+
     # Run analysis
     t0 = time.time()
     findings = run_all_checks(schematic, pcb,
@@ -347,11 +375,20 @@ def main():
                               spice_backend=spice_backend)
     elapsed = time.time() - t0
 
+    # Apply suppressions
+    apply_suppressions(findings, config.get('suppressions', []))
+
     # Build summary
     counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'INFO': 0}
+    active_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'INFO': 0}
+    suppressed_count = 0
     for f in findings:
         sev = f.get('severity', 'INFO')
         counts[sev] = counts.get(sev, 0) + 1
+        if f.get('suppressed'):
+            suppressed_count += 1
+        else:
+            active_counts[sev] = active_counts.get(sev, 0) + 1
 
     risk_score = compute_risk_score(findings)
 
@@ -365,6 +402,8 @@ def main():
     result = {
         'summary': {
             'total_checks': len(findings),
+            'active': len(findings) - suppressed_count,
+            'suppressed': suppressed_count,
             'critical': counts['CRITICAL'],
             'high': counts['HIGH'],
             'medium': counts['MEDIUM'],

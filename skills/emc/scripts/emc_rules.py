@@ -278,6 +278,7 @@ def check_return_path_coverage(pcb: Dict, severity_threshold: str = 'all') -> Li
             'category': 'ground_plane',
             'severity': severity,
             'rule_id': 'GP-001',
+            'confidence': 'deterministic',
             'title': title,
             'description': (
                 f'Net {net_name} has {coverage:.0f}% reference plane coverage '
@@ -313,6 +314,7 @@ def check_ground_zone_coverage(pcb: Dict) -> List[Dict]:
             'category': 'ground_plane',
             'severity': 'CRITICAL',
             'rule_id': 'GP-002',
+            'confidence': 'deterministic',
             'title': 'No ground plane zones detected',
             'description': (
                 f'Board has {len(copper_layers)} copper layers but no ground '
@@ -336,6 +338,7 @@ def check_ground_zone_coverage(pcb: Dict) -> List[Dict]:
                 'category': 'ground_plane',
                 'severity': 'HIGH',
                 'rule_id': 'GP-003',
+                'confidence': 'deterministic',
                 'title': 'Fragmented ground plane',
                 'description': (
                     f'Ground zone on {layer} has {islands} disconnected islands. '
@@ -356,6 +359,7 @@ def check_ground_zone_coverage(pcb: Dict) -> List[Dict]:
                 'category': 'ground_plane',
                 'severity': 'MEDIUM',
                 'rule_id': 'GP-004',
+                'confidence': 'deterministic',
                 'title': 'Low ground plane fill ratio',
                 'description': (
                     f'Ground zone on {layer} has {fill_ratio*100:.0f}% fill ratio. '
@@ -384,6 +388,7 @@ def check_ground_domains(pcb: Dict) -> List[Dict]:
             'category': 'ground_plane',
             'severity': 'MEDIUM',
             'rule_id': 'GP-005',
+            'confidence': 'deterministic',
             'title': f'{domain_count} ground domains detected',
             'description': (
                 f'Board has {domain_count} separate ground domains: '
@@ -425,6 +430,7 @@ def check_decoupling_distance(pcb: Dict) -> List[Dict]:
                 'category': 'decoupling',
                 'severity': 'HIGH',
                 'rule_id': 'DC-001',
+                'confidence': 'deterministic',
                 'title': f'Decoupling cap too far from {ic_ref}',
                 'description': (
                     f'Nearest decoupling cap to {ic_ref} ({entry.get("value", "")}) '
@@ -441,6 +447,7 @@ def check_decoupling_distance(pcb: Dict) -> List[Dict]:
                 'category': 'decoupling',
                 'severity': 'MEDIUM',
                 'rule_id': 'DC-001',
+                'confidence': 'deterministic',
                 'title': f'Decoupling cap moderately far from {ic_ref}',
                 'description': (
                     f'Nearest decoupling cap to {ic_ref} ({entry.get("value", "")}) '
@@ -479,6 +486,7 @@ def check_missing_decoupling(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
                 'category': 'decoupling',
                 'severity': 'HIGH',
                 'rule_id': 'DC-002',
+                'confidence': 'heuristic',
                 'title': f'No decoupling cap found near {ref}',
                 'description': (
                     f'{ref} ({fp.get("value", "?")}) has no capacitor within '
@@ -551,6 +559,7 @@ def check_decoupling_via_distance(pcb: Dict) -> List[Dict]:
                     'category': 'decoupling',
                     'severity': 'MEDIUM',
                     'rule_id': 'DC-003',
+                    'confidence': 'deterministic',
                     'title': f'Decoupling cap {cap_ref} far from via',
                     'description': (
                         f'{cap_ref} is {min_via_dist:.1f}mm from the nearest '
@@ -661,6 +670,7 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
                 'category': 'io_filtering',
                 'severity': severity,
                 'rule_id': 'IO-001',
+                'confidence': 'heuristic',
                 'title': f'No EMC filtering near {conn_ref}',
                 'description': (
                     f'Connector {conn_ref} ({conn_val}) has no ferrite bead, '
@@ -729,6 +739,7 @@ def check_connector_ground_pins(pcb: Dict,
                 'category': 'io_filtering',
                 'severity': severity,
                 'rule_id': 'IO-002',
+                'confidence': 'heuristic',
                 'title': f'Insufficient ground pins on {conn_ref}',
                 'description': (
                     f'{conn_ref} ({conn_val}) has {gnd_count} ground pin(s) '
@@ -814,6 +825,7 @@ def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') ->
                     'category': 'switching_emc',
                     'severity': severity,
                     'rule_id': 'SW-001',
+                    'confidence': 'heuristic',
                     'title': f'{ref} harmonics in {band_name} band',
                     'description': (
                         f'{ref} ({val}) switching at {sw_freq/1e6:.1f} MHz has '
@@ -968,6 +980,7 @@ def check_clock_routing(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
                 'category': 'clock_routing',
                 'severity': 'MEDIUM',
                 'rule_id': 'CK-001',
+                'confidence': 'deterministic',
                 'title': f'Clock {net_name} on outer layer',
                 'description': (
                     f'Clock net {net_name} is {outer_ratio*100:.0f}% routed on '
@@ -985,6 +998,7 @@ def check_clock_routing(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
                 'category': 'clock_routing',
                 'severity': 'MEDIUM',
                 'rule_id': 'CK-002',
+                'confidence': 'heuristic',
                 'title': f'Long clock trace: {net_name}',
                 'description': (
                     f'Clock net {net_name} is {length_mm:.0f}mm long. '
@@ -1056,6 +1070,7 @@ def check_clock_near_connector(pcb: Dict,
                     'category': 'clock_routing',
                     'severity': 'MEDIUM',
                     'rule_id': 'CK-003',
+                    'confidence': 'deterministic',
                     'title': f'Clock {net_name} routed near connector {conn_ref}',
                     'description': (
                         f'Clock net {net_name} passes within {dist:.1f}mm of '
@@ -1133,6 +1148,7 @@ def check_crystal_guard_ring(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
                 'category': 'clock_routing',
                 'severity': 'MEDIUM',
                 'rule_id': 'CK-004',
+                'confidence': 'heuristic',
                 'title': f'No ground pour near crystal {ref}',
                 'description': (
                     f'Crystal {ref} ({freq_str}) has no ground zone within 5mm. '
@@ -1216,6 +1232,7 @@ def check_via_stitching(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
             'category': 'via_stitching',
             'severity': 'MEDIUM',
             'rule_id': 'VS-001',
+            'confidence': 'deterministic',
             'title': 'Via stitching may be insufficient',
             'description': (
                 f'Board has {via_count} vias across {board_area:.0f} mm² '
@@ -1277,6 +1294,7 @@ def check_stackup(pcb: Dict) -> List[Dict]:
                 'category': 'stackup',
                 'severity': 'HIGH',
                 'rule_id': 'SU-001',
+                'confidence': 'deterministic',
                 'title': f'Adjacent signal layers: {l1["name"]}, {l2["name"]}',
                 'description': (
                     f'Signal layers {l1["name"]} and {l2["name"]} are adjacent '
@@ -1320,6 +1338,7 @@ def check_stackup(pcb: Dict) -> List[Dict]:
                 'category': 'stackup',
                 'severity': 'LOW',
                 'rule_id': 'SU-002',
+                'confidence': 'deterministic',
                 'title': f'Signal layer {cl["name"]} far from reference plane',
                 'description': (
                     f'Signal layer {cl["name"]} is {min_dielectric:.2f}mm from '
@@ -1357,6 +1376,7 @@ def check_stackup(pcb: Dict) -> List[Dict]:
                         'category': 'stackup',
                         'severity': 'LOW',
                         'rule_id': 'SU-003',
+                        'confidence': 'deterministic',
                         'title': 'Power/ground planes spaced for low interplane capacitance',
                         'description': (
                             f'Power/ground plane pair ({l1["name"]}/{l2["name"]}) '
@@ -1413,6 +1433,7 @@ def estimate_cavity_resonances(pcb: Dict) -> List[Dict]:
             'category': 'emission_estimate',
             'severity': 'INFO',
             'rule_id': 'EE-001',
+            'confidence': 'heuristic',
             'title': 'Board cavity resonance frequencies',
             'description': (
                 f'Board ({board_w:.0f}×{board_h:.0f}mm, εr={epsilon_r:.1f}) '
@@ -1491,6 +1512,7 @@ def estimate_switching_emissions(schematic: Dict,
             'category': 'emission_estimate',
             'severity': 'INFO',
             'rule_id': 'EE-002',
+            'confidence': 'heuristic',
             'title': f'{ref} harmonic envelope',
             'description': (
                 f'{ref} ({val}) switching at {sw_freq/1e6:.2f} MHz, '
@@ -1592,6 +1614,7 @@ def check_switching_node_area(pcb: Optional[Dict],
             'category': 'switching_emc',
             'severity': severity,
             'rule_id': 'SW-002',
+            'confidence': 'heuristic',
             'title': f'Large switching node area for {ref}',
             'description': (
                 f'{ref} ({val}) switching node net {sw_net} has '
@@ -1706,6 +1729,7 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
             'category': 'switching_emc',
             'severity': severity,
             'rule_id': 'SW-003',
+            'confidence': 'heuristic',
             'title': f'Large hot loop for {ref}',
             'description': desc + spice_note,
             'components': [ref, inductor_ref, cap_ref],
@@ -1847,6 +1871,7 @@ def check_diff_pair_skew(pcb: Optional[Dict],
             'category': 'diff_pair',
             'severity': severity,
             'rule_id': 'DP-001',
+            'confidence': 'deterministic',
             'title': title,
             'description': (
                 f'Differential pair {pos_net}/{neg_net} has {delta_mm:.1f}mm '
@@ -1931,6 +1956,7 @@ def check_diff_pair_cm_radiation(pcb: Optional[Dict],
                 'category': 'diff_pair',
                 'severity': severity,
                 'rule_id': 'DP-002',
+                'confidence': 'datasheet-backed',
                 'title': f'{protocol} skew-induced CM radiation risk',
                 'description': (
                     f'{pos_net}/{neg_net}: {skew:.1f}ps skew generates '
@@ -1993,6 +2019,7 @@ def check_diff_pair_reference_plane(pcb: Optional[Dict],
                 'category': 'diff_pair',
                 'severity': 'HIGH',
                 'rule_id': 'DP-003',
+                'confidence': 'deterministic',
                 'title': f'{protocol} diff pair changes layers',
                 'description': (
                     f'Net {net_name} (part of {protocol} diff pair) transitions '
@@ -2058,6 +2085,7 @@ def check_diff_pair_layer(pcb: Optional[Dict],
                     'category': 'diff_pair',
                     'severity': 'MEDIUM',
                     'rule_id': 'DP-004',
+                    'confidence': 'deterministic',
                     'title': f'{protocol} diff pair on outer layer',
                     'description': (
                         f'Net {net_name} ({protocol} diff pair) is '
@@ -2162,6 +2190,7 @@ def check_trace_near_board_edge(pcb: Dict,
                     'category': 'board_edge',
                     'severity': 'MEDIUM',
                     'rule_id': 'BE-001',
+                    'confidence': 'deterministic',
                     'title': f'{len(flagged_nets)} signals routed near board edge',
                     'description': (
                         f'{len(flagged_nets)} signal nets are within {h:.2f}mm '
@@ -2179,6 +2208,7 @@ def check_trace_near_board_edge(pcb: Dict,
                 'category': 'board_edge',
                 'severity': severity,
                 'rule_id': 'BE-001',
+                'confidence': 'deterministic',
                 'title': f'Signal near board edge: {net_name}',
                 'description': (
                     f'Net {net_name} on {layer} is {dist:.2f}mm from the '
@@ -2261,6 +2291,7 @@ def check_ground_pour_ring(pcb: Dict) -> List[Dict]:
                 'category': 'board_edge',
                 'severity': 'MEDIUM',
                 'rule_id': 'BE-002',
+                'confidence': 'deterministic',
                 'title': 'Incomplete ground pour at board edges',
                 'description': (
                     f'Ground pour covers ~{coverage_pct:.0f}% of the board '
@@ -2357,6 +2388,7 @@ def check_connector_area_stitching(pcb: Dict,
                 'category': 'board_edge',
                 'severity': severity,
                 'rule_id': 'BE-003',
+                'confidence': 'deterministic',
                 'title': f'Insufficient via stitching near {conn_ref}',
                 'description': (
                     f'{conn_ref} ({conn_val}) area has {nearby_vias} vias '
@@ -2462,6 +2494,7 @@ def check_crosstalk_3h_rule(pcb: Dict,
             'category': 'crosstalk',
             'severity': severity,
             'rule_id': 'XT-001',
+            'confidence': 'deterministic',
             'title': f'Close trace spacing: {net_a} / {net_b}',
             'description': (
                 f'Nets {net_a} and {net_b} run parallel for ~{coupling_mm:.0f}mm '
@@ -2483,6 +2516,7 @@ def check_crosstalk_3h_rule(pcb: Dict,
                 'category': 'crosstalk',
                 'severity': 'MEDIUM',
                 'rule_id': 'XT-001',
+                'confidence': 'deterministic',
                 'title': f'{len(flagged)}+ trace pairs with close spacing (truncated)',
                 'description': 'Multiple net pairs violate the 3H spacing rule. Review trace spacing board-wide.',
                 'components': [],
@@ -2562,7 +2596,7 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
         ratio = sw_freq / filter_fc if filter_fc and filter_fc > 0 else 0
 
         if ratio < 5:
-            findings.append({
+            finding = {
                 'category': 'emi_filter',
                 'severity': 'MEDIUM',
                 'rule_id': 'EF-001',
@@ -2580,9 +2614,11 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
                     f'Increase filter inductance or capacitance to lower '
                     f'cutoff to ≤{sw_freq/5/1e6:.2f} MHz.'
                 ),
-            })
+            }
+            finding['confidence'] = 'datasheet-backed' if finding.get('spice_verified') else 'heuristic'
+            findings.append(finding)
         elif ratio >= 5:
-            findings.append({
+            finding = {
                 'category': 'emi_filter',
                 'severity': 'INFO',
                 'rule_id': 'EF-002',
@@ -2596,7 +2632,9 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
                 'components': [ref],
                 'nets': [input_rail] if input_rail else [],
                 'recommendation': 'Input EMI filter appears adequate.',
-            })
+            }
+            finding['confidence'] = 'datasheet-backed' if finding.get('spice_verified') else 'heuristic'
+            findings.append(finding)
 
     return findings
 
@@ -2689,6 +2727,7 @@ def check_esd_protection_path(pcb: Dict,
                 'category': 'esd_path',
                 'severity': 'MEDIUM',
                 'rule_id': 'ES-001',
+                'confidence': 'heuristic',
                 'title': f'ESD device {ref} far from connector {nearest_conn}',
                 'description': (
                     f'{ref} ({ptype}) is {min_conn_dist:.1f}mm from {nearest_conn}. '
@@ -2722,6 +2761,7 @@ def check_esd_protection_path(pcb: Dict,
                     'category': 'esd_path',
                     'severity': 'HIGH',
                     'rule_id': 'ES-002',
+                    'confidence': 'heuristic',
                     'title': f'No ground via near ESD device {ref}',
                     'description': (
                         f'{ref} ({ptype}) has no ground stitching via within 3mm. '
@@ -2741,6 +2781,7 @@ def check_esd_protection_path(pcb: Dict,
                     'category': 'esd_path',
                     'severity': 'LOW',
                     'rule_id': 'ES-002',
+                    'confidence': 'heuristic',
                     'title': f'Single ground via near ESD device {ref}',
                     'description': (
                         f'{ref} ({ptype}) has {gnd_vias_near} ground via within 3mm. '
@@ -2897,6 +2938,7 @@ def check_thermal_emc(pcb: Optional[Dict],
                     'category': 'thermal_emc',
                     'severity': 'MEDIUM',
                     'rule_id': 'TH-001',
+                    'confidence': 'datasheet-backed',
                     'title': f'{cap_ref} may have significant DC bias derating',
                     'description': (
                         f'{cap_ref} ({nominal_uf:.1f}µF {dielectric} {package}) on '
@@ -2953,6 +2995,7 @@ def check_thermal_emc(pcb: Optional[Dict],
                         'category': 'thermal_emc',
                         'severity': 'LOW',
                         'rule_id': 'TH-002',
+                        'confidence': 'datasheet-backed',
                         'title': f'Ferrite {ref} near switching regulator {reg_pos["ref"]}',
                         'description': (
                             f'{ref} ({fp.get("value","")}) is {dist:.1f}mm from '
@@ -3062,6 +3105,7 @@ def check_shielding_advisory(pcb: Dict,
                 'category': 'shielding',
                 'severity': 'MEDIUM',
                 'rule_id': 'SH-001',
+                'confidence': 'heuristic',
                 'title': f'{conn_ref} aperture resonates near emission source',
                 'description': (
                     f'{conn_ref} ({conn_val}) has ~{aperture_mm}mm aperture → '
@@ -3210,7 +3254,7 @@ def check_pdn_impedance(pcb: Optional[Dict],
         if exceeding:
             peak_strs = [f'{p["freq_mhz"]:.1f} MHz ({p["impedance_ohm"]:.2f}Ω)'
                          for p in exceeding[:3]]
-            findings.append({
+            finding = {
                 'category': 'pdn',
                 'severity': 'HIGH',
                 'rule_id': 'PD-001',
@@ -3230,15 +3274,18 @@ def check_pdn_impedance(pcb: Optional[Dict],
                 'recommendation': _suggest_pdn_cap(
                     exceeding[0], cap_models, plane_cap_f, z_target,
                     spice_backend, sweep_before=sweep),
-            })
+            }
+            finding['confidence'] = 'datasheet-backed' if finding.get('spice_verified') else 'heuristic'
+            findings.append(finding)
         elif peaks:
             # Peaks exist but don't exceed target — INFO
             peak_strs = [f'{p["freq_mhz"]:.1f} MHz ({p["impedance_ohm"]:.3f}Ω)'
                          for p in peaks[:3]]
-            findings.append({
+            finding = {
                 'category': 'pdn',
                 'severity': 'INFO',
                 'rule_id': 'PD-002',
+                'spice_verified': spice_verified,
                 'title': f'{output_rail or ref} PDN anti-resonances within target',
                 'description': (
                     f'{ref} ({val}) {output_rail} rail: target impedance '
@@ -3249,7 +3296,9 @@ def check_pdn_impedance(pcb: Optional[Dict],
                 'components': [ref],
                 'nets': [output_rail] if output_rail else [],
                 'recommendation': 'PDN impedance is within target. No action needed.',
-            })
+            }
+            finding['confidence'] = 'datasheet-backed' if finding.get('spice_verified') else 'heuristic'
+            findings.append(finding)
 
     return findings
 
@@ -3390,6 +3439,7 @@ def check_pdn_distributed(pcb: Optional[Dict],
                 'category': 'pdn',
                 'severity': 'HIGH',
                 'rule_id': 'PD-003',
+                'confidence': 'deterministic',
                 'title': (f'{rail_name} PDN impedance at {worst_ic or "load IC"} '
                           f'exceeds target ({r_note}, {l_note} trace)'),
                 'description': (
@@ -3460,6 +3510,7 @@ def check_pdn_distributed(pcb: Optional[Dict],
                 'category': 'pdn',
                 'severity': 'MEDIUM',
                 'rule_id': 'PD-004',
+                'confidence': 'deterministic',
                 'title': (f'{rail_name} PDN sees {total_reflected:.2f}A '
                           f'reflected transient from {worst_downstream_ref} '
                           f'at {worst_freq/1e6:.1f}MHz'),
@@ -3621,6 +3672,7 @@ def check_layer_transition_stitching(pcb: Dict,
             'category': 'return_path',
             'severity': severity,
             'rule_id': 'RP-001',
+            'confidence': 'deterministic',
             'title': f'Missing stitching via at layer transition: {net_name}',
             'description': (
                 f'Net {net_name} has {total_transitions} layer transition(s) '
@@ -3644,6 +3696,7 @@ def check_layer_transition_stitching(pcb: Dict,
                 'category': 'return_path',
                 'severity': 'MEDIUM',
                 'rule_id': 'RP-001',
+                'confidence': 'deterministic',
                 'title': f'{len(flagged_nets)}+ nets missing stitching vias (truncated)',
                 'description': (
                     'More than 20 nets have layer transitions without nearby '

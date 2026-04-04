@@ -12,6 +12,12 @@ import os
 import sys
 from pathlib import Path
 
+# Add kicad scripts to path for project_config
+_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              '..', 'skills', 'kicad', 'scripts')
+if os.path.isdir(_kicad_scripts):
+    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+
 
 def _load_json(path):
     if not path or not os.path.isfile(path):
@@ -28,6 +34,114 @@ def _safe_float(val, fmt=".1f"):
     if isinstance(val, (int, float)):
         return f"{val:{fmt}}"
     return str(val) if val else "—"
+
+
+# ---------------------------------------------------------------------------
+# Top-Risk Summary
+# ---------------------------------------------------------------------------
+
+def _render_top_risks(emc, thermal):
+    """Render top-risk summary from EMC and thermal findings."""
+    try:
+        from project_config import compute_top_risks
+    except ImportError:
+        return []
+
+    all_findings = []
+    if emc:
+        for f in emc.get("findings", []):
+            f.setdefault("source", "EMC")
+            all_findings.append(f)
+    if thermal:
+        for f in thermal.get("findings", []):
+            f.setdefault("source", "Thermal")
+            all_findings.append(f)
+
+    if not all_findings:
+        return []
+
+    risks = compute_top_risks(all_findings)
+    L = []
+
+    bucket_labels = {
+        "respin": ("PCB Respin Risks", "Issues that may require a board re-order"),
+        "bringup": ("Bring-Up Blockers", "Issues that may cause failure on first power-up"),
+        "manufacturing": ("Manufacturing Risks", "Issues that may delay production"),
+    }
+
+    has_content = False
+    for bucket in ("respin", "bringup", "manufacturing"):
+        items = risks.get(bucket, [])
+        if not items:
+            continue
+        if not has_content:
+            L.append("### Top Risks")
+            L.append("")
+            has_content = True
+        label, desc = bucket_labels[bucket]
+        L.append(f"**{label}** — {desc}")
+        L.append("")
+        for f in items:
+            sev = f.get("severity", "?")
+            icon = "\U0001f534" if sev == "CRITICAL" else "\u26a0\ufe0f" if sev == "HIGH" else "\U0001f7e1"
+            conf = f.get("confidence", "")
+            conf_badge = f" `{conf}`" if conf else ""
+            source = f.get("source", "")
+            L.append(f"- {icon} **{f.get('rule_id', '')}**: "
+                     f"{f.get('title', '')}{conf_badge} ({source})")
+        L.append("")
+
+    return L
+
+
+# ---------------------------------------------------------------------------
+# Missing Information Section
+# ---------------------------------------------------------------------------
+
+def _render_missing_info(sch, thermal):
+    """Render missing information section from analyzer outputs."""
+    items = []
+
+    if sch:
+        mi = sch.get("missing_info", {})
+        mpn = mi.get("missing_mpn", [])
+        if mpn:
+            items.append(f"**Missing MPNs** ({len(mpn)}): {', '.join(mpn[:8])}"
+                         + (f" +{len(mpn)-8} more" if len(mpn) > 8 else ""))
+        ds = mi.get("missing_datasheet", [])
+        if ds:
+            items.append(f"**Missing datasheets** ({len(ds)}): {', '.join(ds[:8])}"
+                         + (f" +{len(ds)-8} more" if len(ds) > 8 else ""))
+        fp = mi.get("missing_footprint", [])
+        if fp:
+            items.append(f"**Missing footprints** ({len(fp)}): {', '.join(fp[:8])}"
+                         + (f" +{len(fp)-8} more" if len(fp) > 8 else ""))
+        vref = mi.get("heuristic_vref", [])
+        if vref:
+            items.append(f"**Heuristic Vref** ({len(vref)}): {', '.join(vref)} "
+                         "— output voltage estimated from part number, not datasheet")
+
+    if thermal:
+        mi = thermal.get("missing_info", {})
+        rtheta = mi.get("default_rtheta_ja", [])
+        if rtheta:
+            items.append(f"**Default thermal resistance** ({len(rtheta)}): "
+                         f"{', '.join(rtheta[:6])}"
+                         + (f" +{len(rtheta)-6} more" if len(rtheta) > 6 else "")
+                         + " — using conservative fallback, not datasheet value")
+
+    if not items:
+        return []
+
+    L = []
+    L.append(f"<details><summary>Missing Information ({len(items)} gaps)</summary>")
+    L.append("")
+    for item in items:
+        L.append(f"- {item}")
+    L.append("")
+    L.append("</details>")
+    L.append("")
+    return L
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +224,11 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
             if remaining > 0:
                 L.append(f"| | *...and {remaining} more* |")
             L.append("")
+
+    # === Top-Risk Summary ===
+    risk_lines = _render_top_risks(emc, thermal)
+    if risk_lines:
+        L.extend(risk_lines)
 
     # === Collect all findings ===
     sig = sch.get("signal_analysis", {}) if sch else {}
@@ -437,10 +556,14 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
 
         L.append("### EMC")
         L.append("")
+        emc_suppressed = emc_s.get("suppressed", 0)
+        sup_str = f", {emc_suppressed} suppressed" if emc_suppressed else ""
         L.append(f"Risk score **{emc_score}/100** — {emc_total} checks: "
-                 f"{emc_crit} critical, {emc_high} high")
+                 f"{emc_crit} critical, {emc_high} high{sup_str}")
 
         for f in emc.get("findings", []):
+            if f.get("suppressed"):
+                continue
             sev = f.get("severity", "")
             if sev in ("CRITICAL", "HIGH"):
                 rule = f.get("rule_id", "")
@@ -461,10 +584,14 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
         if th_total > 0:
             L.append("### Thermal Analysis")
             L.append("")
+            th_suppressed = ts.get("suppressed", 0)
+            th_sup_str = f", {th_suppressed} suppressed" if th_suppressed else ""
             L.append(f"Score **{th_score}/100** — {th_total} checks, "
-                     f"total dissipation {th_pdiss:.2f}W")
+                     f"total dissipation {th_pdiss:.2f}W{th_sup_str}")
 
             for f in thermal.get("findings", []):
+                if f.get("suppressed"):
+                    continue
                 sev = f.get("severity", "")
                 if sev in ("CRITICAL", "HIGH", "MEDIUM"):
                     rule = f.get("rule_id", "")
@@ -475,6 +602,11 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
 
         if th_crit == 0 and th_high == 0 and th_total > 0:
             verified.append(f"Thermal score {th_score}/100 — no critical/high findings")
+
+    # === Missing Information ===
+    mi_lines = _render_missing_info(sch, thermal)
+    if mi_lines:
+        L.extend(mi_lines)
 
     # === Verified (collapsible, at bottom) ===
     if verified:

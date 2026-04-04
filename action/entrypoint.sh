@@ -29,6 +29,32 @@ fi
 echo "::group::File Detection"
 echo "Schematic: ${SCHEMATIC:-not found}"
 echo "PCB: ${PCB:-not found}"
+
+# Discover project config (.kicad-happy.json)
+CONFIG_PATH=""
+if [ -n "$SCHEMATIC" ]; then
+    SEARCH_DIR=$(dirname "$SCHEMATIC")
+elif [ -n "$PCB" ]; then
+    SEARCH_DIR=$(dirname "$PCB")
+else
+    SEARCH_DIR="."
+fi
+# Walk upward to find .kicad-happy.json
+_D="$SEARCH_DIR"
+for _ in $(seq 1 10); do
+    if [ -f "$_D/.kicad-happy.json" ]; then
+        CONFIG_PATH="$_D/.kicad-happy.json"
+        break
+    fi
+    _PARENT=$(dirname "$_D")
+    [ "$_PARENT" = "$_D" ] && break
+    _D="$_PARENT"
+done
+if [ -n "$CONFIG_PATH" ]; then
+    echo "Config: $CONFIG_PATH"
+else
+    echo "Config: none found (using defaults)"
+fi
 echo "::endgroup::"
 
 if [ -z "$SCHEMATIC" ] && [ -z "$PCB" ]; then
@@ -133,7 +159,9 @@ if [ -n "$SCHEMATIC" ] && [ -f "$SCHEMATIC" ]; then
     echo "::group::Schematic Analysis"
     SCH_JSON="$OUTDIR/schematic.json"
     echo "Analyzing: $SCHEMATIC"
-    if python3 "$SCRIPTS/analyze_schematic.py" "$SCHEMATIC" -o "$SCH_JSON" 2>"$OUTDIR/schematic.err"; then
+    SCH_CMD=("$SCRIPTS/analyze_schematic.py" "$SCHEMATIC" -o "$SCH_JSON")
+    [ -n "$CONFIG_PATH" ] && SCH_CMD+=(--config "$CONFIG_PATH")
+    if python3 "${SCH_CMD[@]}" 2>"$OUTDIR/schematic.err"; then
         echo "schematic-json=$SCH_JSON" >> "$GITHUB_OUTPUT"
         COMP_COUNT=$(python3 -c "import json; d=json.load(open('$SCH_JSON')); print(d.get('statistics',{}).get('total_components',0))" 2>/dev/null || echo "?")
         NET_COUNT=$(python3 -c "import json; d=json.load(open('$SCH_JSON')); print(d.get('statistics',{}).get('total_nets',0))" 2>/dev/null || echo "?")
@@ -155,7 +183,9 @@ if [ -n "$PCB" ] && [ -f "$PCB" ]; then
     echo "::group::PCB Analysis"
     PCB_JSON="$OUTDIR/pcb.json"
     echo "Analyzing: $PCB"
-    if python3 "$SCRIPTS/analyze_pcb.py" "$PCB" -o "$PCB_JSON" 2>"$OUTDIR/pcb.err"; then
+    PCB_CMD=("$SCRIPTS/analyze_pcb.py" "$PCB" -o "$PCB_JSON")
+    [ -n "$CONFIG_PATH" ] && PCB_CMD+=(--config "$CONFIG_PATH")
+    if python3 "${PCB_CMD[@]}" 2>"$OUTDIR/pcb.err"; then
         echo "pcb-json=$PCB_JSON" >> "$GITHUB_OUTPUT"
     else
         echo "::warning::PCB analysis failed"
@@ -197,6 +227,7 @@ if [ -n "$SCH_JSON" ] || [ -n "$PCB_JSON" ]; then
     [ -n "$SCH_JSON" ] && [ -f "$SCH_JSON" ] && EMC_ARGS+=(--schematic "$SCH_JSON")
     [ -n "$PCB_JSON" ] && [ -f "$PCB_JSON" ] && EMC_ARGS+=(--pcb "$PCB_JSON")
     EMC_ARGS+=(--output "$EMC_JSON")
+    [ -n "$CONFIG_PATH" ] && EMC_ARGS+=(--config "$CONFIG_PATH")
     if command -v ngspice &>/dev/null; then
         EMC_ARGS+=(--spice-enhanced)
     fi
@@ -219,6 +250,7 @@ if [ -n "$SCH_JSON" ] && [ -n "$PCB_JSON" ]; then
     echo "::group::Thermal Analysis"
     THERMAL_JSON="$OUTDIR/thermal.json"
     THERMAL_ARGS=(--schematic "$SCH_JSON" --pcb "$PCB_JSON" --output "$THERMAL_JSON")
+    [ -n "$CONFIG_PATH" ] && THERMAL_ARGS+=(--config "$CONFIG_PATH")
     if [ -n "$DS_DIR" ] && [ -d "$DS_DIR/extracted" ]; then
         THERMAL_ARGS+=(--datasheets "$DS_DIR/extracted")
     fi

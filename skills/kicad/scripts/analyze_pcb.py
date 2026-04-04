@@ -4119,8 +4119,24 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         fp_summary["connected_nets"] = sorted(fp_nets)
         footprint_summary.append(fp_summary)
 
+    # Confidence map for downstream consumers
+    confidence_map = {
+        # Deterministic — measured geometry/structure
+        "dfm_analysis.violations": "deterministic",
+        "documentation_warnings": "deterministic",
+        "placement.courtyard_overlaps": "deterministic",
+        "placement.edge_clearance": "deterministic",
+        "tombstoning_risk": "deterministic",
+        "thermal_pad_vias": "deterministic",
+        "copper_balance": "deterministic",
+        "track_analysis": "deterministic",
+        "via_analysis": "deterministic",
+        "zone_analysis": "deterministic",
+    }
+
     result = {
         "analyzer_type": "pcb",
+        "confidence_map": confidence_map,
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": version,
@@ -4253,6 +4269,8 @@ def main():
                         help="Run trace proximity analysis for crosstalk assessment")
     parser.add_argument("--schema", action="store_true",
                         help="Print JSON output schema and exit")
+    parser.add_argument("--config", default=None,
+                        help="Path to .kicad-happy.json project config file")
     args = parser.parse_args()
 
     if args.schema:
@@ -4262,8 +4280,24 @@ def main():
     if not args.pcb:
         parser.error("the following arguments are required: pcb")
 
+    # Load project config (for project settings — suppressions applied to
+    # EMC/thermal findings, not PCB warnings which lack rule_ids)
+    try:
+        from project_config import load_config_from_path, load_config
+        if args.config:
+            config = load_config_from_path(args.config)
+        else:
+            config = load_config(str(Path(args.pcb).parent))
+    except ImportError:
+        config = {"version": 1, "project": {}, "suppressions": []}
+
     result = analyze_pcb(args.pcb, proximity=args.proximity,
                          include_trace_segments=args.full)
+
+    # Attach project config summary to output for downstream consumers
+    project = config.get("project", {})
+    if project:
+        result["project_config"] = project
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)

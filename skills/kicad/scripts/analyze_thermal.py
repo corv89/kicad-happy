@@ -422,6 +422,15 @@ def _compute_junction_temps(power_comps: list, pcb: dict,
 # Finding generation
 # ---------------------------------------------------------------------------
 
+def _thermal_confidence(assessment: dict) -> str:
+    """Determine confidence level from assessment data sources."""
+    if assessment.get("rtheta_ja_source") == "default":
+        return "heuristic"
+    if assessment.get("tj_max_source") == "default_125":
+        return "heuristic"
+    return "datasheet-backed"
+
+
 def _generate_findings(assessments: list) -> list:
     """Generate thermal findings from assessments."""
     findings = []
@@ -434,6 +443,7 @@ def _generate_findings(assessments: list) -> list:
         margin = a["margin_c"]
         pdiss = a["pdiss_w"]
         pkg = a["package"]
+        confidence = _thermal_confidence(a)
 
         label = f"{ref} ({val})" if val else ref
 
@@ -442,6 +452,7 @@ def _generate_findings(assessments: list) -> list:
                 "category": "thermal_safety",
                 "severity": "CRITICAL",
                 "rule_id": "TS-001",
+                "confidence": confidence,
                 "title": f"{label} estimated Tj {tj:.0f}°C exceeds abs max {tj_max:.0f}°C",
                 "description": (
                     f"{a['component_type']} dissipates {pdiss:.3f}W in {pkg} package "
@@ -460,6 +471,7 @@ def _generate_findings(assessments: list) -> list:
                 "category": "thermal_safety",
                 "severity": "HIGH",
                 "rule_id": "TS-002",
+                "confidence": confidence,
                 "title": f"{label} estimated Tj {tj:.0f}°C — only {margin:.0f}°C margin to abs max",
                 "description": (
                     f"{a['component_type']} dissipates {pdiss:.3f}W in {pkg} package "
@@ -479,6 +491,7 @@ def _generate_findings(assessments: list) -> list:
                 "category": "thermal_safety",
                 "severity": "MEDIUM",
                 "rule_id": "TS-003",
+                "confidence": confidence,
                 "title": f"{label} estimated Tj {tj:.0f}°C may affect nearby components",
                 "description": (
                     f"{a['component_type']} runs hot at {tj:.0f}°C "
@@ -498,6 +511,7 @@ def _generate_findings(assessments: list) -> list:
                 "category": "thermal_safety",
                 "severity": "INFO",
                 "rule_id": "TS-005",
+                "confidence": confidence,
                 "title": f"{label} Tj {tj:.0f}°C, margin {margin:.0f}°C",
                 "description": (
                     f"{a['component_type']} dissipates {pdiss:.3f}W in {pkg} — "
@@ -517,6 +531,7 @@ def _generate_findings(assessments: list) -> list:
                 "category": "thermal_safety",
                 "severity": "MEDIUM",
                 "rule_id": "TS-004",
+                "confidence": "deterministic",
                 "title": f"{label} dissipates {a['pdiss_w']:.2f}W with no thermal vias",
                 "description": (
                     f"{a['component_type']} in {a['package']} package dissipates "
@@ -582,6 +597,7 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
                     "category": "thermal_proximity",
                     "severity": "MEDIUM",
                     "rule_id": "TP-002",
+                    "confidence": "deterministic",
                     "title": (f"Electrolytic {cap['ref']} ({cap['value']}) "
                               f"is {dist:.1f}mm from {hot_label} "
                               f"(Tj={hot['tj_estimated_c']:.0f}°C)"),
@@ -601,6 +617,7 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
                     "category": "thermal_proximity",
                     "severity": "LOW",
                     "rule_id": "TP-001",
+                    "confidence": "deterministic",
                     "title": (f"MLCC {cap['ref']} is {dist:.1f}mm from "
                               f"{hot_label} (Tj={hot['tj_estimated_c']:.0f}°C)"),
                     "description": (
@@ -763,6 +780,8 @@ def main():
                         help=f"Ambient temperature in °C (default: {DEFAULT_AMBIENT_C})")
     parser.add_argument("--datasheets", "-d",
                         help="Path to datasheets/extracted/ directory")
+    parser.add_argument("--config", default=None,
+                        help="Path to .kicad-happy.json project config file")
     args = parser.parse_args()
 
     # Load inputs
@@ -790,6 +809,23 @@ def main():
             if os.path.isdir(candidate):
                 extract_dir = candidate
 
+    # Load project config
+    try:
+        from project_config import load_config_from_path, load_config, apply_suppressions
+        if args.config:
+            config = load_config_from_path(args.config)
+        else:
+            sch_file = schematic.get("file", "")
+            search = os.path.dirname(sch_file) if sch_file else "."
+            config = load_config(search)
+    except ImportError:
+        config = {"version": 1, "project": {}, "suppressions": []}
+
+    # Apply config defaults
+    project = config.get("project", {})
+    if args.ambient == DEFAULT_AMBIENT_C and project.get("ambient_temperature_c"):
+        args.ambient = project["ambient_temperature_c"]
+
     t0 = time.monotonic()
 
     # Estimate power dissipation
@@ -803,23 +839,46 @@ def main():
     findings = _generate_findings(assessments)
     findings.extend(_check_thermal_proximity(assessments, pcb))
 
-    # Score
-    score = compute_thermal_score(findings)
+    # Apply suppressions
+    try:
+        apply_suppressions(findings, config.get("suppressions", []))
+    except NameError:
+        pass  # project_config not available
+
+    # Score (only active findings)
+    score = compute_thermal_score(
+        [f for f in findings if not f.get("suppressed")])
 
     # Severity counts
     counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
+    suppressed_count = 0
     for f in findings:
         sev = f.get("severity", "INFO")
         counts[sev] = counts.get(sev, 0) + 1
+        if f.get("suppressed"):
+            suppressed_count += 1
 
     # Board summary
     board = _board_summary(assessments, args.ambient)
 
     elapsed = time.monotonic() - t0
 
+    # Missing information — components with default thermal parameters
+    missing_info = {}
+    default_rtheta = [a["ref"] for a in assessments
+                      if a.get("rtheta_ja_source") == "default"]
+    if default_rtheta:
+        missing_info["default_rtheta_ja"] = default_rtheta
+    default_tjmax = [a["ref"] for a in assessments
+                     if a.get("tj_max_source") == "default_125"]
+    if default_tjmax:
+        missing_info["default_tj_max"] = default_tjmax
+
     result = {
         "summary": {
             "total_checks": len(findings),
+            "active": len(findings) - suppressed_count,
+            "suppressed": suppressed_count,
             "critical": counts["CRITICAL"],
             "high": counts["HIGH"],
             "medium": counts["MEDIUM"],
@@ -832,6 +891,8 @@ def main():
         "thermal_assessments": assessments,
         "elapsed_s": round(elapsed, 3),
     }
+    if missing_info:
+        result["missing_info"] = missing_info
 
     # Output
     if args.output:

@@ -6791,8 +6791,31 @@ def analyze_schematic(path: str) -> dict:
     # Statistics
     stats = compute_statistics(all_components, nets, bom, all_wires, all_no_connects)
 
+    # Confidence map for downstream consumers (format-report.py, top-risk)
+    confidence_map = {
+        # Deterministic — structural/netlist checks
+        "erc_warnings": "deterministic",
+        "annotation_issues": "deterministic",
+        "label_shape_warnings": "deterministic",
+        "pwr_flag_warnings": "deterministic",
+        "connectivity_issues": "deterministic",
+        "pin_coverage_warnings": "deterministic",
+        "instance_consistency_warnings": "deterministic",
+        "hierarchical_labels": "deterministic",
+        # Heuristic — value parsing, net name inference
+        "footprint_filter_warnings": "heuristic",
+        "generic_symbol_warnings": "heuristic",
+        "voltage_derating": "heuristic",
+        "sleep_current_audit": "heuristic",
+        "property_issues": "heuristic",
+        "wire_geometry": "heuristic",
+        # Datasheet-backed — when Vref comes from lookup table
+        "signal_analysis.power_regulators": "heuristic",  # mixed; per-item vref_source overrides
+    }
+
     result = {
         "analyzer_type": "schematic",
+        "confidence_map": confidence_map,
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": file_version,
@@ -6864,6 +6887,32 @@ def analyze_schematic(path: str) -> dict:
     if len(sheets_parsed) > 1:
         result["sheets"] = sheets_parsed
 
+    # --- Missing information section ---
+    # Aggregates data gaps so downstream consumers can separate
+    # "missing data" from "actual design issues"
+    missing_info = {}
+    # Missing MPNs and footprints (from statistics)
+    missing_mpn = stats.get("missing_mpn", [])
+    if missing_mpn:
+        missing_info["missing_mpn"] = missing_mpn
+    missing_fp = stats.get("missing_footprint", [])
+    if missing_fp:
+        missing_info["missing_footprint"] = missing_fp
+    # Components with MPN but no datasheet URL
+    missing_ds = [c["reference"] for c in all_components
+                  if c.get("mpn") and not c.get("datasheet")
+                  and c["type"] not in ("power_symbol", "power_flag", "flag")]
+    if missing_ds:
+        missing_info["missing_datasheet"] = sorted(missing_ds)
+    # Regulators with heuristic Vref (no datasheet lookup available)
+    sig = signal_analysis or {}
+    heuristic_vref = [r["ref"] for r in sig.get("power_regulators", [])
+                      if r.get("vref_source") == "heuristic"]
+    if heuristic_vref:
+        missing_info["heuristic_vref"] = heuristic_vref
+    if missing_info:
+        result["missing_info"] = missing_info
+
     return result
 
 
@@ -6925,6 +6974,8 @@ def main():
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
     parser.add_argument("--schema", action="store_true",
                         help="Print JSON output schema and exit")
+    parser.add_argument("--config", default=None,
+                        help="Path to .kicad-happy.json project config file")
     args = parser.parse_args()
 
     if args.schema:
@@ -6934,7 +6985,23 @@ def main():
     if not args.schematic:
         parser.error("the following arguments are required: schematic")
 
+    # Load project config (for project settings — suppressions applied to
+    # EMC/thermal findings, not schematic warnings which lack rule_ids)
+    try:
+        from project_config import load_config_from_path, load_config
+        if args.config:
+            config = load_config_from_path(args.config)
+        else:
+            config = load_config(str(Path(args.schematic).parent))
+    except ImportError:
+        config = {"version": 1, "project": {}, "suppressions": []}
+
     result = analyze_schematic(args.schematic)
+
+    # Attach project config summary to output for downstream consumers
+    project = config.get("project", {})
+    if project:
+        result["project_config"] = project
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
