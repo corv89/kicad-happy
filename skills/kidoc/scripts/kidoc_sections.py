@@ -1,8 +1,12 @@
 """Section content generators for the markdown scaffold.
 
-Each function generates markdown for one document section, including
-AUTO-START/AUTO-END markers for auto-generated content and NARRATIVE
-placeholders for prose sections.
+Each function generates clean markdown directly from analysis data.
+No template markers in the output — the generated markdown is the final
+document.  On regeneration, the scaffold is re-generated and the user
+reconciles with their edits via git diff/merge.
+
+Narrative prompts are italic placeholder text that the user or Claude
+replaces with real prose.
 
 Zero external dependencies — Python stdlib only.
 """
@@ -16,17 +20,16 @@ from kidoc_tables import (
 
 
 def _auto(section_id: str, content: str) -> str:
-    """Wrap content in AUTO-START/AUTO-END markers."""
-    return (f"<!-- AUTO-START: {section_id} -->\n"
-            f"{content}\n"
-            f"<!-- AUTO-END: {section_id} -->")
+    """Emit auto-generated content directly.  No markers needed."""
+    return content
 
 
 def _narrative(section_id: str, hint: str = "") -> str:
-    """Generate a NARRATIVE placeholder."""
-    return (f"<!-- NARRATIVE: {section_id} -->\n"
-            f"*[{hint or 'Describe the design decisions and rationale for this section.'}]*\n"
-            f"<!-- END-NARRATIVE: {section_id} -->")
+    """Generate a narrative prompt placeholder.
+
+    Italic text that the user or Claude replaces with real prose.
+    """
+    return f"*[{hint or 'Describe the design decisions and rationale for this section.'}]*"
 
 
 # ======================================================================

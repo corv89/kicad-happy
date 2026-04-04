@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -131,48 +130,6 @@ def load_analysis_cache(project_dir: str,
     return cache
 
 
-# ======================================================================
-# Merge with existing markdown
-# ======================================================================
-
-def merge_with_existing(new_md: str, existing_path: str) -> str:
-    """Merge new auto-generated content with existing markdown.
-
-    Preserves everything outside AUTO-START/AUTO-END markers.
-    Replaces content between matching markers with new data.
-    """
-    if not os.path.isfile(existing_path):
-        return new_md
-
-    with open(existing_path, 'r', encoding='utf-8') as f:
-        existing = f.read()
-
-    # Extract all auto blocks from new markdown
-    new_blocks = {}
-    for match in re.finditer(
-            r'<!-- AUTO-START: (\S+) -->\n(.*?)\n<!-- AUTO-END: \1 -->',
-            new_md, re.DOTALL):
-        new_blocks[match.group(1)] = match.group(2)
-
-    # Replace auto blocks in existing, preserving everything else
-    def _replace_block(match):
-        block_id = match.group(1)
-        if block_id in new_blocks:
-            content = new_blocks.pop(block_id)
-            return f"<!-- AUTO-START: {block_id} -->\n{content}\n<!-- AUTO-END: {block_id} -->"
-        return match.group(0)  # keep existing if no new content
-
-    merged = re.sub(
-        r'<!-- AUTO-START: (\S+) -->\n.*?\n<!-- AUTO-END: \1 -->',
-        _replace_block, existing, flags=re.DOTALL)
-
-    # If there are new blocks not in existing, append them
-    # (This handles new sections added to the template)
-    if new_blocks:
-        for block_id, content in new_blocks.items():
-            merged += f"\n<!-- AUTO-START: {block_id} -->\n{content}\n<!-- AUTO-END: {block_id} -->\n"
-
-    return merged
 
 
 # ======================================================================
@@ -281,11 +238,7 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
     # Resolve template variables
     markdown = resolve_template_vars(markdown, config)
 
-    # Merge with existing file if it exists
-    if os.path.isfile(output_path):
-        markdown = merge_with_existing(markdown, output_path)
-
-    # Write output
+    # Write output (overwrites — use git to track/merge user edits)
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or '.', exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(markdown)

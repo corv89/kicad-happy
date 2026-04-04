@@ -5,8 +5,7 @@ typed document elements.  Used by both kidoc_pdf.py and kidoc_docx.py.
 
 Supports: headings, paragraphs (with bold/italic/code), tables, images,
 code blocks, horizontal rules, bullet lists, numbered lists, blockquotes.
-AUTO-START/AUTO-END and NARRATIVE markers are transparent (content between
-them is parsed normally).
+HTML comments are skipped silently.
 
 Zero external dependencies — Python stdlib only.
 """
