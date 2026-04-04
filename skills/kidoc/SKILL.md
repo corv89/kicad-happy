@@ -74,7 +74,7 @@ Generates power tree, bus topology, and architecture block diagrams.
 ### Step 4: Generate markdown scaffold
 
 ```bash
-python3 skills/kidoc/scripts/kidoc_scaffold.py --project-dir . --type hdd --output reports/hardware-design-report.md
+python3 skills/kidoc/scripts/kidoc_scaffold.py --project-dir . --type hdd --output reports/HDD.md
 ```
 
 Document types: `hdd`, `ce_technical_file`, `design_review`, `icd`, `manufacturing`.
@@ -106,7 +106,7 @@ Creates `reports/.venv/` automatically on first run (not needed for HTML). Forma
 
 | Type | Name | Key Sections |
 |------|------|-------------|
-| `hdd` | Hardware Design Report | System overview, power, signals, analog, thermal, EMC, PCB, mechanical, BOM, test, compliance |
+| `hdd` | Hardware Design Description | System overview, power, signals, analog, thermal, EMC, PCB, mechanical, BOM, test, compliance |
 | `ce_technical_file` | CE Technical File | Product ID, essential requirements, harmonized standards, risk assessment, Declaration of Conformity |
 | `design_review` | Design Review Package | Review summary (cross-analyzer scores), findings, action items |
 | `icd` | Interface Control Document | Interface list, per-connector pinout details, electrical characteristics |

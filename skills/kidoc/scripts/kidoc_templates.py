@@ -12,7 +12,7 @@ from __future__ import annotations
 
 DOCUMENT_TEMPLATES = {
     "hdd": {
-        "name": "Hardware Design Report",
+        "name": "Hardware Design Description",
         "sections": [
             "front_matter", "system_overview", "power_design",
             "signal_interfaces", "analog_design", "thermal_analysis",
