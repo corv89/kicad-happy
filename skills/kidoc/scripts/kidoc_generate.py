@@ -42,6 +42,47 @@ except ImportError:
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Map markdown stem → human-readable document type name
+_DOC_TYPE_NAMES = {
+    'hdd': 'Hardware Design Description',
+    'ce_technical_file': 'CE Technical File',
+    'design_review': 'Design Review',
+    'icd': 'Interface Control Document',
+    'manufacturing': 'Manufacturing Transfer Package',
+}
+
+
+def _build_filename(stem: str, project_name: str, revision: str) -> str:
+    """Build a human-readable filename from project info.
+
+    Examples:
+        "SacMap Rev2 - Hardware Design Description Rev 2.0"
+        "Widget Board - Design Review Rev 1.1"
+        "HDD" (fallback if no project name)
+    """
+    # Try to match stem to a known doc type
+    doc_type_name = ''
+    stem_lower = stem.lower().replace('-', '_').replace(' ', '_')
+    for key, name in _DOC_TYPE_NAMES.items():
+        if key in stem_lower or stem_lower in key:
+            doc_type_name = name
+            break
+    if not doc_type_name:
+        doc_type_name = stem.replace('_', ' ').replace('-', ' ').title()
+
+    parts = []
+    if project_name:
+        parts.append(project_name)
+    parts.append(doc_type_name)
+    name = ' - '.join(parts)
+
+    if revision:
+        name += f' Rev {revision}'
+
+    # Sanitize for filesystem
+    name = name.replace('/', '-').replace('\\', '-').replace(':', '-')
+    return name
+
 
 def _find_markdown_files(project_dir: str) -> list[str]:
     """Find markdown scaffolds in the reports/ directory."""
@@ -165,9 +206,11 @@ def generate_documents(project_dir: str, formats: list[str],
         stem = Path(md_path).stem
         project = config.get('project', {})
         rev = project.get('revision', '')
+        proj_name = project.get('name', '')
 
-        # Build output filename
-        base_name = f"{stem}-{rev}" if rev else stem
+        # Build human-readable filename a manager can understand
+        # e.g. "SacMap Rev2 - Hardware Design Description Rev 2.0.pdf"
+        base_name = _build_filename(stem, proj_name, rev)
 
         if 'html' in formats or 'all' in formats:
             html_path = os.path.join(output_dir, f"{base_name}.html")
