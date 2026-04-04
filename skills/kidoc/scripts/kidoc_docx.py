@@ -22,10 +22,9 @@ from docx.shared import Inches, Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT
 
-# For SVG to PNG conversion
+# SVG to PNG conversion via Pillow-based rasterizer (no Cairo dependency)
 try:
-    from svglib.svglib import svg2rlg
-    from reportlab.graphics import renderPM
+    from svg_to_png import svg_to_png as _svg_to_png_impl
     _HAS_SVG_RENDER = True
 except ImportError:
     _HAS_SVG_RENDER = False
@@ -46,13 +45,9 @@ def _svg_to_png(svg_path: str, dpi: int = 300) -> str | None:
     if not os.path.isfile(svg_path):
         return None
     try:
-        drawing = svg2rlg(svg_path)
-        if not drawing:
-            return None
-        # Create temp PNG
         fd, png_path = tempfile.mkstemp(suffix='.png')
         os.close(fd)
-        renderPM.drawToFile(drawing, png_path, fmt='PNG', dpi=dpi)
+        _svg_to_png_impl(svg_path, png_path, dpi=dpi)
         return png_path
     except Exception:
         return None

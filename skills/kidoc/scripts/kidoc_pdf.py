@@ -28,12 +28,6 @@ from reportlab.platypus import (
 )
 from reportlab.platypus.tableofcontents import TableOfContents
 
-# svglib for vector SVG embedding
-try:
-    from svglib.svglib import svg2rlg
-except ImportError:
-    svg2rlg = None
-
 # Add kidoc scripts to path for the markdown parser
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kidoc_md_parser import parse_markdown, parse_inline
@@ -185,7 +179,7 @@ def _element_to_flowables(elem: dict, styles, base_dir: str,
 
 def _build_image(elem: dict, base_dir: str, page_width: float,
                  styles) -> list:
-    """Build image flowable — SVG as vector, raster as Image."""
+    """Build image flowable — SVG rasterized to PNG via Pillow, raster as-is."""
     path = elem['path']
     if not os.path.isabs(path):
         path = os.path.join(base_dir, path)
@@ -196,30 +190,34 @@ def _build_image(elem: dict, base_dir: str, page_width: float,
 
     flowables = []
     max_width = page_width - 2 * inch  # margins
+    img_path = path
 
-    if path.lower().endswith('.svg') and svg2rlg:
-        drawing = svg2rlg(path)
-        if drawing:
-            # Scale to fit page width
-            scale = min(1.0, max_width / drawing.width) if drawing.width > 0 else 1.0
-            drawing.width *= scale
-            drawing.height *= scale
-            drawing.scale(scale, scale)
-            flowables.append(drawing)
-    else:
-        # Raster image
+    # Rasterize SVGs to PNG (avoids Cairo/svglib dependency)
+    if path.lower().endswith('.svg'):
         try:
-            img = Image(path)
-            img_w, img_h = img.drawWidth, img.drawHeight
-            if img_w > max_width:
-                scale = max_width / img_w
-                img.drawWidth = img_w * scale
-                img.drawHeight = img_h * scale
-            flowables.append(img)
+            from svg_to_png import svg_to_png
+            import tempfile
+            fd, png_path = tempfile.mkstemp(suffix='.png')
+            os.close(fd)
+            svg_to_png(path, png_path, dpi=300)
+            img_path = png_path
         except Exception:
-            flowables.append(Paragraph(
-                f'<i>[Failed to load image: {_escape_xml(elem["path"])}]</i>',
-                styles['KidocCaption']))
+            return [Paragraph(
+                f'<i>[SVG rasterization failed: {_escape_xml(elem["path"])}]</i>',
+                styles['KidocCaption'])]
+
+    try:
+        img = Image(img_path)
+        img_w, img_h = img.drawWidth, img.drawHeight
+        if img_w > max_width:
+            scale = max_width / img_w
+            img.drawWidth = img_w * scale
+            img.drawHeight = img_h * scale
+        flowables.append(img)
+    except Exception:
+        flowables.append(Paragraph(
+            f'<i>[Failed to load image: {_escape_xml(elem["path"])}]</i>',
+            styles['KidocCaption']))
 
     if elem.get('alt'):
         flowables.append(Paragraph(

@@ -27,10 +27,9 @@ from odf.style import (Style, TextProperties, ParagraphProperties,
 from odf.text import P, H, List, ListItem, ListLevelStyleBullet, ListStyle
 from odf.table import Table, TableColumn, TableRow, TableCell
 
-# For SVG to PNG conversion
+# SVG to PNG conversion via Pillow-based rasterizer (no Cairo dependency)
 try:
-    from svglib.svglib import svg2rlg
-    from reportlab.graphics import renderPM
+    from svg_to_png import svg_to_png as _svg_to_png_impl
     _HAS_SVG_RENDER = True
 except ImportError:
     _HAS_SVG_RENDER = False
@@ -187,12 +186,9 @@ def _svg_to_png(svg_path: str, dpi: int = 300) -> str | None:
     if not _HAS_SVG_RENDER or not os.path.isfile(svg_path):
         return None
     try:
-        drawing = svg2rlg(svg_path)
-        if not drawing:
-            return None
         fd, png_path = tempfile.mkstemp(suffix='.png')
         os.close(fd)
-        renderPM.drawToFile(drawing, png_path, fmt='PNG', dpi=dpi)
+        _svg_to_png_impl(svg_path, png_path, dpi=dpi)
         return png_path
     except Exception:
         return None
