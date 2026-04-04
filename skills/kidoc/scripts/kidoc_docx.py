@@ -163,15 +163,36 @@ def _add_image(doc: Document, elem: dict, base_dir: str,
 
 
 def _add_table(doc: Document, elem: dict) -> None:
-    """Add a table to the DOCX."""
+    """Add a table to the DOCX with explicit borders."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
     headers = elem['headers']
     rows = elem['rows']
     n_cols = len(headers)
 
     table = doc.add_table(rows=1 + len(rows), cols=n_cols)
-    table.style = 'Table Grid'
 
-    # Header row
+    # Set 'Table Grid' style (provides borders in most templates)
+    try:
+        table.style = 'Table Grid'
+    except KeyError:
+        pass  # Style not available in this template
+
+    # Explicit border XML — ensures borders render even without the style
+    tbl = table._tbl
+    tblPr = tbl.tblPr if tbl.tblPr is not None else OxmlElement('w:tblPr')
+    borders = OxmlElement('w:tblBorders')
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        el = OxmlElement(f'w:{edge}')
+        el.set(qn('w:val'), 'single')
+        el.set(qn('w:sz'), '4')
+        el.set(qn('w:space'), '0')
+        el.set(qn('w:color'), 'C0C0C0')
+        borders.append(el)
+    tblPr.append(borders)
+
+    # Header row with shading
     for i, h in enumerate(headers):
         cell = table.rows[0].cells[i]
         cell.text = h
@@ -179,6 +200,11 @@ def _add_table(doc: Document, elem: dict) -> None:
             for run in para.runs:
                 run.bold = True
                 run.font.size = Pt(8)
+        # Header cell shading
+        shading = OxmlElement('w:shd')
+        shading.set(qn('w:fill'), 'E8E8F0')
+        shading.set(qn('w:val'), 'clear')
+        cell._tc.get_or_add_tcPr().append(shading)
 
     # Data rows
     for r_idx, row in enumerate(rows):

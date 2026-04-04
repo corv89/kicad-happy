@@ -711,9 +711,30 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
 # Sheet-level rendering
 # ======================================================================
 
+def _in_bbox(x: float, y: float, bbox: tuple | None, margin: float = 15) -> bool:
+    """Check if a point is within the crop bounding box (with margin)."""
+    if bbox is None:
+        return True
+    bx, by, bw, bh = bbox
+    return (bx - margin <= x <= bx + bw + margin and
+            by - margin <= y <= by + bh + margin)
+
+
+def _wire_in_bbox(wire: dict, bbox: tuple | None, margin: float = 15) -> bool:
+    """Check if a wire segment overlaps the crop bbox."""
+    if bbox is None:
+        return True
+    return (_in_bbox(wire['x1'], wire['y1'], bbox, margin) or
+            _in_bbox(wire['x2'], wire['y2'], bbox, margin))
+
+
 def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
-                 paper_w: float, paper_h: float) -> None:
-    """Render a complete schematic sheet."""
+                 paper_w: float, paper_h: float,
+                 crop_bbox: tuple | None = None) -> None:
+    """Render a complete schematic sheet.
+
+    If *crop_bbox* is set, only elements within the bbox are rendered.
+    """
     # Extract all elements
     components = _extract_components_for_render(root)
     wires = _extract_wires(root)
@@ -726,72 +747,86 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
     sheets = _extract_sheet_boxes(root)
 
     # Background
-    svg.rect(0, 0, paper_w, paper_h, fill=BACKGROUND_COLOR, stroke='none')
+    if not crop_bbox:
+        svg.rect(0, 0, paper_w, paper_h, fill=BACKGROUND_COLOR, stroke='none')
+    else:
+        bx, by, bw, bh = crop_bbox
+        svg.rect(bx, by, bw, bh, fill=BACKGROUND_COLOR, stroke='none')
 
-    # Drawing sheet: border, grid labels, title block
-    _render_drawing_sheet(svg, root, paper_w, paper_h)
+    # Drawing sheet: border, grid labels, title block (skip when cropping)
+    if not crop_bbox:
+        _render_drawing_sheet(svg, root, paper_w, paper_h)
 
-    # Render order (back to front)
+    # Render order (back to front), with crop filtering
     # 1. Bus wires
     for bus in buses:
-        svg.line(bus['x1'], bus['y1'], bus['x2'], bus['y2'],
-                 stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
+        if _wire_in_bbox(bus, crop_bbox):
+            svg.line(bus['x1'], bus['y1'], bus['x2'], bus['y2'],
+                     stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
 
     # 2. Bus entries
     for entry in bus_entries:
-        svg.line(entry['x'], entry['y'],
-                 entry['x'] + entry['dx'], entry['y'] + entry['dy'],
-                 stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
+        if _in_bbox(entry['x'], entry['y'], crop_bbox):
+            svg.line(entry['x'], entry['y'],
+                     entry['x'] + entry['dx'], entry['y'] + entry['dy'],
+                     stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
 
     # 3. Wires
     for wire in wires:
-        svg.line(wire['x1'], wire['y1'], wire['x2'], wire['y2'],
-                 stroke=WIRE_COLOR, stroke_width=WIRE_STROKE_WIDTH)
+        if _wire_in_bbox(wire, crop_bbox):
+            svg.line(wire['x1'], wire['y1'], wire['x2'], wire['y2'],
+                     stroke=WIRE_COLOR, stroke_width=WIRE_STROKE_WIDTH)
 
     # 4. Junctions
     for j in junctions:
-        svg.circle(j['x'], j['y'], JUNCTION_RADIUS,
-                   fill=JUNCTION_COLOR, stroke='none')
+        if _in_bbox(j['x'], j['y'], crop_bbox):
+            svg.circle(j['x'], j['y'], JUNCTION_RADIUS,
+                       fill=JUNCTION_COLOR, stroke='none')
 
     # 5. No-connects
     s = NO_CONNECT_SIZE
     for nc in no_connects:
-        svg.line(nc['x'] - s, nc['y'] - s, nc['x'] + s, nc['y'] + s,
-                 stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
-        svg.line(nc['x'] - s, nc['y'] + s, nc['x'] + s, nc['y'] - s,
-                 stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
+        if _in_bbox(nc['x'], nc['y'], crop_bbox):
+            svg.line(nc['x'] - s, nc['y'] - s, nc['x'] + s, nc['y'] + s,
+                     stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
+            svg.line(nc['x'] - s, nc['y'] + s, nc['x'] + s, nc['y'] - s,
+                     stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
 
     # 6. Hierarchical sheet boxes
     for sheet in sheets:
-        svg.rect(sheet['x'], sheet['y'], sheet['w'], sheet['h'],
-                 stroke=SHEET_BORDER_COLOR, fill=SHEET_FILL_COLOR,
-                 stroke_width=DEFAULT_STROKE_WIDTH)
-        svg.text(sheet['x'] + 1, sheet['y'] + sheet['h'] + 1.5,
-                 sheet['name'],
-                 font_size=DEFAULT_FONT_SIZE,
-                 fill=SHEET_BORDER_COLOR, bold=True)
+        if _in_bbox(sheet['x'], sheet['y'], crop_bbox):
+            svg.rect(sheet['x'], sheet['y'], sheet['w'], sheet['h'],
+                     stroke=SHEET_BORDER_COLOR, fill=SHEET_FILL_COLOR,
+                     stroke_width=DEFAULT_STROKE_WIDTH)
+            svg.text(sheet['x'] + 1, sheet['y'] + sheet['h'] + 1.5,
+                     sheet['name'],
+                     font_size=DEFAULT_FONT_SIZE,
+                     fill=SHEET_BORDER_COLOR, bold=True)
 
     # 7. Components
     for comp in components:
-        lib_id = comp['lib_name'] or comp['lib_id']
-        sg = sym_graphics.get(lib_id) or sym_graphics.get(comp['lib_id'])
-        if sg:
-            render_component(svg, comp, sg)
+        if _in_bbox(comp['x'], comp['y'], crop_bbox):
+            lib_id = comp['lib_name'] or comp['lib_id']
+            sg = sym_graphics.get(lib_id) or sym_graphics.get(comp['lib_id'])
+            if sg:
+                render_component(svg, comp, sg)
 
     # 8. Labels
     for lbl in labels:
-        _render_label(svg, lbl)
+        if _in_bbox(lbl['x'], lbl['y'], crop_bbox):
+            _render_label(svg, lbl)
 
     # 9. Text annotations
     for txt in texts:
         if txt.get('effects') and txt['effects'].hidden:
             continue
-        effects = txt.get('effects') or parse_effects([])
-        font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
-        svg.text(txt['x'], txt['y'], txt['text'],
-                 font_size=font_size,
-                 fill=TEXT_COLOR,
-                 bold=effects.bold, italic=effects.italic)
+        if _in_bbox(txt['x'], txt['y'], crop_bbox):
+            effects = txt.get('effects') or parse_effects([])
+            font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
+            svg.text(txt['x'], txt['y'], txt['text'],
+                     font_size=font_size,
+                     fill=TEXT_COLOR,
+                     bold=effects.bold, italic=effects.italic)
 
 
 def _render_label(svg: SvgBuilder, lbl: dict) -> None:
@@ -1034,18 +1069,21 @@ def render_schematic(sch_path: str, output_dir: str,
 
     output_files = []
 
-    # Render the root sheet
-    svg = SvgBuilder(paper_w, paper_h)
-
-    render_sheet(svg, root, sym_graphics, paper_w, paper_h)
-
-    # Apply crop if requested
+    # Compute crop bbox before rendering (to filter elements)
+    crop_bbox = None
     if crop_refs:
         components = _extract_components_for_render(root)
         wires = _extract_wires(root)
-        bbox = compute_crop_bbox(components, crop_refs, wires, padding)
-        if bbox:
-            svg.set_viewbox(*bbox)
+        crop_bbox = compute_crop_bbox(components, crop_refs, wires, padding)
+
+    # Render the root sheet
+    if crop_bbox:
+        svg = SvgBuilder(crop_bbox[2], crop_bbox[3])
+        svg.set_viewbox(*crop_bbox)
+    else:
+        svg = SvgBuilder(paper_w, paper_h)
+
+    render_sheet(svg, root, sym_graphics, paper_w, paper_h, crop_bbox=crop_bbox)
 
     # Apply overlays
     if overlay_data:
