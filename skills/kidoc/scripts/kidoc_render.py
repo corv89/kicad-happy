@@ -41,6 +41,7 @@ from sch_graphics import (
 from color_theme import (
     WIRE_COLOR, BUS_COLOR, JUNCTION_COLOR, NO_CONNECT_COLOR,
     COMPONENT_OUTLINE_COLOR, COMPONENT_FILL_COLOR, PIN_COLOR,
+    PIN_NAME_COLOR, PIN_NUMBER_COLOR,
     LABEL_COLOR, GLOBAL_LABEL_COLOR, HIER_LABEL_COLOR, POWER_SYMBOL_COLOR,
     REFERENCE_COLOR, VALUE_COLOR, TEXT_COLOR,
     SHEET_BORDER_COLOR, SHEET_FILL_COLOR, SHEET_LABEL_COLOR,
@@ -48,7 +49,7 @@ from color_theme import (
     DEFAULT_STROKE_WIDTH, WIRE_STROKE_WIDTH, BUS_STROKE_WIDTH, PIN_STROKE_WIDTH,
     JUNCTION_RADIUS, NO_CONNECT_SIZE, PIN_INVERTED_RADIUS,
     DEFAULT_FONT_SIZE, DEFAULT_FONT_FAMILY,
-    PAPER_SIZES, DASH_PATTERNS,
+    PAPER_SIZES,
 )
 
 
@@ -299,9 +300,21 @@ def _fill_color(fill: FillStyle, outline_color: str, bg_color: str) -> str:
     return 'none'
 
 
-def _dash_pattern(stroke: StrokeStyle) -> str | None:
-    """Get SVG dash pattern from stroke type."""
-    return DASH_PATTERNS.get(stroke.type)
+def _dash_pattern(stroke: StrokeStyle, line_width: float) -> str | None:
+    """Get SVG dash pattern scaled to line width per ISO 128-2."""
+    if not stroke or not stroke.type or stroke.type in ('solid', 'default'):
+        return None
+    w = max(line_width, 0.05)
+    dash = 11.0 * w
+    dot = max(0.2 * w, 0.03)
+    gap = 4.0 * w
+    patterns = {
+        'dash': f"{dash:.3f},{gap:.3f}",
+        'dot': f"{dot:.3f},{gap:.3f}",
+        'dash_dot': f"{dash:.3f},{gap:.3f},{dot:.3f},{gap:.3f}",
+        'dash_dot_dot': f"{dash:.3f},{gap:.3f},{dot:.3f},{gap:.3f},{dot:.3f},{gap:.3f}",
+    }
+    return patterns.get(stroke.type)
 
 
 def _transform_point(px: float, py: float, angle: float,
@@ -380,7 +393,9 @@ def _render_rect(svg: SvgBuilder, g: RectGraphic,
     stroke_c = _stroke_color(g.stroke, COMPONENT_OUTLINE_COLOR)
     fill_c = _fill_color(g.fill, stroke_c, COMPONENT_FILL_COLOR)
     sw = _stroke_width(g.stroke)
-    svg.rect(x, y, w, h, stroke=stroke_c, fill=fill_c, stroke_width=sw)
+    dp = _dash_pattern(g.stroke, sw)
+    svg.rect(x, y, w, h, stroke=stroke_c, fill=fill_c, stroke_width=sw,
+             dash=dp)
 
 
 def _render_circle(svg: SvgBuilder, g: CircleGraphic,
@@ -391,8 +406,9 @@ def _render_circle(svg: SvgBuilder, g: CircleGraphic,
     stroke_c = _stroke_color(g.stroke, COMPONENT_OUTLINE_COLOR)
     fill_c = _fill_color(g.fill, stroke_c, COMPONENT_FILL_COLOR)
     sw = _stroke_width(g.stroke)
+    dp = _dash_pattern(g.stroke, sw)
     svg.circle(center[0], center[1], g.radius,
-               stroke=stroke_c, fill=fill_c, stroke_width=sw)
+               stroke=stroke_c, fill=fill_c, stroke_width=sw, dash=dp)
 
 
 def _render_arc(svg: SvgBuilder, g: ArcGraphic,
@@ -406,8 +422,9 @@ def _render_arc(svg: SvgBuilder, g: ArcGraphic,
     stroke_c = _stroke_color(g.stroke, COMPONENT_OUTLINE_COLOR)
     fill_c = _fill_color(g.fill, stroke_c, COMPONENT_FILL_COLOR)
     sw = _stroke_width(g.stroke)
+    dp = _dash_pattern(g.stroke, sw)
     svg.arc(s[0], s[1], e[0], e[1], r, large_arc, sweep,
-            stroke=stroke_c, fill=fill_c, stroke_width=sw)
+            stroke=stroke_c, fill=fill_c, stroke_width=sw, dash=dp)
 
 
 def _render_polyline(svg: SvgBuilder, g: PolylineGraphic,
@@ -421,12 +438,13 @@ def _render_polyline(svg: SvgBuilder, g: PolylineGraphic,
     stroke_c = _stroke_color(g.stroke, COMPONENT_OUTLINE_COLOR)
     fill_c = _fill_color(g.fill, stroke_c, COMPONENT_FILL_COLOR)
     sw = _stroke_width(g.stroke)
+    dp = _dash_pattern(g.stroke, sw)
     # If fill is set and the polyline closes back to start, render as polygon
     closed = (fill_c != 'none' and len(points) >= 3
               and abs(points[0][0] - points[-1][0]) < 0.01
               and abs(points[0][1] - points[-1][1]) < 0.01)
     svg.polyline(points, stroke=stroke_c, fill=fill_c,
-                 stroke_width=sw, closed=closed)
+                 stroke_width=sw, closed=closed, dash=dp)
 
 
 def _render_bezier(svg: SvgBuilder, g: BezierGraphic,
@@ -440,7 +458,9 @@ def _render_bezier(svg: SvgBuilder, g: BezierGraphic,
     stroke_c = _stroke_color(g.stroke, COMPONENT_OUTLINE_COLOR)
     fill_c = _fill_color(g.fill, stroke_c, COMPONENT_FILL_COLOR)
     sw = _stroke_width(g.stroke)
-    svg.bezier(points, stroke=stroke_c, fill=fill_c, stroke_width=sw)
+    dp = _dash_pattern(g.stroke, sw)
+    svg.bezier(points, stroke=stroke_c, fill=fill_c, stroke_width=sw,
+               dash=dp)
 
 
 def _render_symbol_text(svg: SvgBuilder, g: TextGraphic,
@@ -452,8 +472,9 @@ def _render_symbol_text(svg: SvgBuilder, g: TextGraphic,
     pos = _transform_point(g.x, g.y, angle, mx, my, cx, cy)
     h_just = g.effects.h_justify
     anchor = {'left': 'start', 'right': 'end'}.get(h_just, 'middle')
+    fs = g.effects.height * FONT_SCALE if g.effects.height > 0 else DEFAULT_FONT_SIZE * FONT_SCALE
     svg.text(pos[0], pos[1], g.text,
-             font_size=g.effects.height,
+             font_size=fs,
              font_family=DEFAULT_FONT_FAMILY,
              anchor=anchor,
              dominant_baseline='central',
@@ -526,57 +547,176 @@ def _render_pin(svg: SvgBuilder, pin: PinGraphic,
     if pin.number_effects.hidden:
         numbers_visible = False
 
+    text_inside = name_offset > 0
+
     if names_visible and pin.name and pin.name != '~':
         _render_pin_text(svg, pin.name, body, tip, name_offset,
-                         pin.name_effects, is_name=True)
+                         pin.name_effects, is_name=True,
+                         text_inside=text_inside,
+                         other_visible=numbers_visible and bool(pin.number))
     if numbers_visible and pin.number:
-        _render_pin_text(svg, pin.number, body, tip, 0,
-                         pin.number_effects, is_name=False)
+        _render_pin_text(svg, pin.number, body, tip, name_offset,
+                         pin.number_effects, is_name=False,
+                         text_inside=text_inside,
+                         other_visible=names_visible and bool(pin.name) and pin.name != '~')
+
+
+# Margin between pin line and text, matching KiCad's PIN_TEXT_MARGIN (4 mils)
+PIN_TEXT_MARGIN_MM = 0.1016
+# KiCad Hershey stroke font uses 4/3 height-to-em conversion for SVG text
+FONT_SCALE = 4 / 3
 
 
 def _render_pin_text(svg: SvgBuilder, text: str,
                      body: tuple[float, float], tip: tuple[float, float],
                      offset: float, effects: TextEffects,
-                     is_name: bool) -> None:
-    """Render pin name or number text along the pin."""
-    dx = body[0] - tip[0]
-    dy = body[1] - tip[1]
+                     is_name: bool, text_inside: bool = True,
+                     other_visible: bool = True) -> None:
+    """Render pin name or number text along the pin.
+
+    Implements KiCad's ``PlotPinTexts`` two-mode logic:
+    - **text_inside** (pin_name_offset > 0): name inside body, number at midpoint
+    - **text_outside** (pin_name_offset == 0): name and number stacked at midpoint
+
+    *body*: body-end coordinate (inside the symbol outline).
+    *tip*: connection-point coordinate (wire side).
+    *offset*: symbol's ``pin_name_offset`` value (mm).
+    *other_visible*: whether the complementary text (number for name, name for number) is visible.
+    """
+    # Determine pin orientation from body->tip direction
+    dx = tip[0] - body[0]
+    dy = tip[1] - body[1]
     dist = math.hypot(dx, dy)
     if dist < 0.01:
         return
 
-    # Direction from tip toward body (into the symbol)
-    nx, ny = dx / dist, dy / dist
-    # Perpendicular
-    perp_x, perp_y = -ny, nx
+    if abs(dx) > abs(dy):
+        pin_orient = 'right' if dx > 0 else 'left'
+    else:
+        pin_orient = 'down' if dy > 0 else 'up'
+
+    is_horizontal = pin_orient in ('left', 'right')
 
     font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
+    font_size *= FONT_SCALE
+    # KiCad computes pen width from font size; approximate as height / 8
+    pen_width = max(font_size / 8.0, 0.01)
+    name_off = PIN_TEXT_MARGIN_MM + pen_width
+    num_off = PIN_TEXT_MARGIN_MM + pen_width
 
-    if is_name:
-        # Name goes inside body: start at body end, offset further into body
-        gap = offset + 0.5
-        tx = body[0] + nx * gap
-        ty = body[1] + ny * gap
-        # Horizontal pins: text starts from body end, reads away from tip
-        if abs(dx) > abs(dy):
-            anchor = 'start' if dx > 0 else 'end'
+    color = PIN_NAME_COLOR if is_name else PIN_NUMBER_COLOR
+
+    # Midpoint of pin line
+    mid_x = (tip[0] + body[0]) / 2.0
+    mid_y = (tip[1] + body[1]) / 2.0
+
+    if text_inside:
+        # -- Mode 1: text inside (pin_name_offset > 0) --
+        if is_name:
+            # Name at body end, offset INTO the body by pin_name_offset
+            if is_horizontal:
+                if pin_orient == 'right':
+                    # Body is left of tip; name goes leftward from body
+                    tx = body[0] - offset
+                    ty = body[1]
+                    anchor = 'end'
+                else:
+                    # PIN_LEFT: body is right of tip; name goes rightward
+                    tx = body[0] + offset
+                    ty = body[1]
+                    anchor = 'start'
+                svg.text(tx, ty, text,
+                         font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                         anchor=anchor, dominant_baseline='central',
+                         fill=color, bold=effects.bold, italic=effects.italic)
+            else:
+                # Vertical pins
+                if pin_orient == 'down':
+                    # Body is above tip; name goes upward from body
+                    tx = body[0]
+                    ty = body[1] - offset
+                    anchor = 'end'
+                else:
+                    # PIN_UP: body is below tip; name goes downward
+                    tx = body[0]
+                    ty = body[1] + offset
+                    anchor = 'start'
+                svg.text(tx, ty, text,
+                         font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                         anchor=anchor, dominant_baseline='central',
+                         fill=color, bold=effects.bold, italic=effects.italic,
+                         rotation=90)
         else:
-            anchor = 'middle'
+            # Number at midpoint of the pin line
+            if is_horizontal:
+                tx = mid_x
+                ty = mid_y - num_off
+                svg.text(tx, ty, text,
+                         font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                         anchor='middle', dominant_baseline='auto',
+                         fill=color, bold=effects.bold, italic=effects.italic)
+            else:
+                tx = mid_x - num_off
+                ty = mid_y
+                svg.text(tx, ty, text,
+                         font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                         anchor='middle', dominant_baseline='auto',
+                         fill=color, bold=effects.bold, italic=effects.italic,
+                         rotation=90)
     else:
-        # Number at midpoint, offset perpendicular
-        mx = (tip[0] + body[0]) / 2
-        my = (tip[1] + body[1]) / 2
-        tx = mx + perp_x * font_size * 0.5
-        ty = my + perp_y * font_size * 0.5
-        anchor = 'middle'
-
-    svg.text(tx, ty, text,
-             font_size=font_size,
-             font_family=DEFAULT_FONT_FAMILY,
-             anchor=anchor,
-             dominant_baseline='central',
-             fill=PIN_COLOR,
-             bold=effects.bold, italic=effects.italic)
+        # -- Mode 2: text outside (pin_name_offset == 0) --
+        if is_name:
+            if is_horizontal:
+                tx = mid_x
+                ty = mid_y - name_off
+                svg.text(tx, ty, text,
+                         font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                         anchor='middle', dominant_baseline='auto',
+                         fill=color, bold=effects.bold, italic=effects.italic)
+            else:
+                tx = mid_x - name_off
+                ty = mid_y
+                svg.text(tx, ty, text,
+                         font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                         anchor='middle', dominant_baseline='auto',
+                         fill=color, bold=effects.bold, italic=effects.italic,
+                         rotation=90)
+        else:
+            # Number: below pin (or right side for vertical)
+            if other_visible:
+                # Both name and number visible: number on opposite side
+                if is_horizontal:
+                    tx = mid_x
+                    ty = mid_y + num_off
+                    svg.text(tx, ty, text,
+                             font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                             anchor='middle', dominant_baseline='hanging',
+                             fill=color, bold=effects.bold, italic=effects.italic)
+                else:
+                    tx = mid_x + num_off
+                    ty = mid_y
+                    svg.text(tx, ty, text,
+                             font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                             anchor='middle', dominant_baseline='hanging',
+                             fill=color, bold=effects.bold, italic=effects.italic,
+                             rotation=90)
+            else:
+                # Only number drawn: same side as name would be
+                if is_horizontal:
+                    tx = mid_x
+                    ty = mid_y - name_off
+                    svg.text(tx, ty, text,
+                             font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                             anchor='middle', dominant_baseline='auto',
+                             fill=color, bold=effects.bold, italic=effects.italic)
+                else:
+                    tx = mid_x - name_off
+                    ty = mid_y
+                    svg.text(tx, ty, text,
+                             font_size=font_size, font_family=DEFAULT_FONT_FAMILY,
+                             anchor='middle', dominant_baseline='auto',
+                             fill=color, bold=effects.bold, italic=effects.italic,
+                             rotation=90)
 
 
 def _render_properties(svg: SvgBuilder, comp: dict) -> None:
@@ -596,16 +736,17 @@ def _render_properties(svg: SvgBuilder, comp: dict) -> None:
         h_just = effects.h_justify
         anchor = {'left': 'start', 'right': 'end'}.get(h_just, 'middle')
         font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
+        # KiCad Hershey font metric: SVG em size = stored height * 4/3
+        font_size *= 4 / 3
 
-        prop_angle = at[2] if len(at) > 2 else 0
+        # KiCad renders property text horizontally in SVG — no rotation
         svg.text(at[0], at[1], prop['value'],
                  font_size=font_size,
                  font_family=DEFAULT_FONT_FAMILY,
                  anchor=anchor,
                  dominant_baseline='auto',
                  fill=color,
-                 bold=effects.bold, italic=effects.italic,
-                 rotation=prop_angle)
+                 bold=effects.bold, italic=effects.italic)
 
 
 # ======================================================================
@@ -627,7 +768,7 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
              stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.15)
 
     # Grid labels — match KiCad's default 50mm grid division
-    grid_font = 1.3
+    grid_font = 1.3 * FONT_SCALE
     grid_color = DRAWING_SHEET_COLOR
     tick_len = 2.0  # 2mm tick marks on inner border
     grid_step = 50.0  # KiCad uses a fixed 50mm grid step
@@ -740,8 +881,8 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
 
     # --- Title block text ---
     # Font sizes match KiCad reference: 2.0 for fields, 2.6666 for title
-    tb_font = 2.0
-    tb_title_font = 2.6666
+    tb_font = 1.5 * FONT_SCALE        # 1.5mm stored → 2.0mm rendered
+    tb_title_font = 2.0 * FONT_SCALE   # 2.0mm stored → 2.6666mm rendered
     c = DRAWING_SHEET_COLOR
 
     # Comment rows (top section, 5 slots at 3mm each from y+2.75)
@@ -885,59 +1026,17 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
         _render_drawing_sheet(svg, root, paper_w, paper_h,
                               sch_filename=sch_filename)
 
-    # Render order (back to front), with crop filtering
-    # 1. Bus wires
-    for bus in buses:
-        if _wire_in_bbox(bus, crop_bbox):
-            svg.line(bus['x1'], bus['y1'], bus['x2'], bus['y2'],
-                     stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
+    # Render order (back to front) matching KiCad layer stack:
+    #   LAYER_SCHEMATIC_BACKGROUND → LAYER_DEVICE_BACKGROUND (fills) →
+    #   LAYER_DEVICE (outlines) → LAYER_BUS/WIRE → LAYER_NOCONNECT →
+    #   LAYER_JUNCTION → Labels → Sheet boxes → Notes → Ref/Value → Pins
+    #
+    # Components render BEFORE wires so that symbol body fills sit behind
+    # wires, matching KiCad's visual output.  Sheet boxes render after
+    # wires since they represent sub-sheet navigation and sit above the
+    # wiring layer in KiCad.
 
-    # 2. Bus entries
-    for entry in bus_entries:
-        if _in_bbox(entry['x'], entry['y'], crop_bbox):
-            svg.line(entry['x'], entry['y'],
-                     entry['x'] + entry['dx'], entry['y'] + entry['dy'],
-                     stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
-
-    # 3. Wires (with optional net highlighting)
-    highlight_wire_idxs: set[int] = set()
-    if highlight_nets:
-        highlight_wire_idxs = _trace_net_wires(labels, wires, set(highlight_nets))
-
-    for i, wire in enumerate(wires):
-        if _wire_in_bbox(wire, crop_bbox):
-            color = highlight_color if i in highlight_wire_idxs else WIRE_COLOR
-            width = WIRE_STROKE_WIDTH * 2 if i in highlight_wire_idxs else WIRE_STROKE_WIDTH
-            svg.line(wire['x1'], wire['y1'], wire['x2'], wire['y2'],
-                     stroke=color, stroke_width=width)
-
-    # 4. Junctions
-    for j in junctions:
-        if _in_bbox(j['x'], j['y'], crop_bbox):
-            svg.circle(j['x'], j['y'], JUNCTION_RADIUS,
-                       fill=JUNCTION_COLOR, stroke='none')
-
-    # 5. No-connects
-    s = NO_CONNECT_SIZE
-    for nc in no_connects:
-        if _in_bbox(nc['x'], nc['y'], crop_bbox):
-            svg.line(nc['x'] - s, nc['y'] - s, nc['x'] + s, nc['y'] + s,
-                     stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
-            svg.line(nc['x'] - s, nc['y'] + s, nc['x'] + s, nc['y'] - s,
-                     stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
-
-    # 6. Hierarchical sheet boxes
-    for sheet in sheets:
-        if _in_bbox(sheet['x'], sheet['y'], crop_bbox):
-            svg.rect(sheet['x'], sheet['y'], sheet['w'], sheet['h'],
-                     stroke=SHEET_BORDER_COLOR, fill=SHEET_FILL_COLOR,
-                     stroke_width=DEFAULT_STROKE_WIDTH)
-            svg.text(sheet['x'] + 1, sheet['y'] + sheet['h'] + 1.5,
-                     sheet['name'],
-                     font_size=DEFAULT_FONT_SIZE,
-                     fill=SHEET_BORDER_COLOR, bold=True)
-
-    # 7. Components (with optional focus dimming)
+    # 1. Components (with optional focus dimming) — behind wires
     focus_set = set(focus_refs) if focus_refs else None
     for comp in components:
         if _in_bbox(comp['x'], comp['y'], crop_bbox):
@@ -950,10 +1049,61 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
                 else:
                     render_component(svg, comp, sg)
 
-    # 8. Labels
+    # 2. Bus wires
+    for bus in buses:
+        if _wire_in_bbox(bus, crop_bbox):
+            svg.line(bus['x1'], bus['y1'], bus['x2'], bus['y2'],
+                     stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
+
+    # 3. Bus entries
+    for entry in bus_entries:
+        if _in_bbox(entry['x'], entry['y'], crop_bbox):
+            svg.line(entry['x'], entry['y'],
+                     entry['x'] + entry['dx'], entry['y'] + entry['dy'],
+                     stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
+
+    # 4. Wires (with optional net highlighting) — on top of component fills
+    highlight_wire_idxs: set[int] = set()
+    if highlight_nets:
+        highlight_wire_idxs = _trace_net_wires(labels, wires, set(highlight_nets))
+
+    for i, wire in enumerate(wires):
+        if _wire_in_bbox(wire, crop_bbox):
+            color = highlight_color if i in highlight_wire_idxs else WIRE_COLOR
+            width = WIRE_STROKE_WIDTH * 2 if i in highlight_wire_idxs else WIRE_STROKE_WIDTH
+            svg.line(wire['x1'], wire['y1'], wire['x2'], wire['y2'],
+                     stroke=color, stroke_width=width)
+
+    # 5. Junctions
+    for j in junctions:
+        if _in_bbox(j['x'], j['y'], crop_bbox):
+            svg.circle(j['x'], j['y'], JUNCTION_RADIUS,
+                       fill=JUNCTION_COLOR, stroke='none')
+
+    # 6. No-connects
+    s = NO_CONNECT_SIZE
+    for nc in no_connects:
+        if _in_bbox(nc['x'], nc['y'], crop_bbox):
+            svg.line(nc['x'] - s, nc['y'] - s, nc['x'] + s, nc['y'] + s,
+                     stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
+            svg.line(nc['x'] - s, nc['y'] + s, nc['x'] + s, nc['y'] - s,
+                     stroke=NO_CONNECT_COLOR, stroke_width=DEFAULT_STROKE_WIDTH)
+
+    # 7. Labels
     for lbl in labels:
         if _in_bbox(lbl['x'], lbl['y'], crop_bbox):
             _render_label(svg, lbl)
+
+    # 8. Hierarchical sheet boxes — on top of wires (sub-sheet navigation)
+    for sheet in sheets:
+        if _in_bbox(sheet['x'], sheet['y'], crop_bbox):
+            svg.rect(sheet['x'], sheet['y'], sheet['w'], sheet['h'],
+                     stroke=SHEET_BORDER_COLOR, fill=SHEET_FILL_COLOR,
+                     stroke_width=DEFAULT_STROKE_WIDTH)
+            svg.text(sheet['x'] + 1, sheet['y'] + sheet['h'] + 1.5,
+                     sheet['name'],
+                     font_size=DEFAULT_FONT_SIZE * FONT_SCALE,
+                     fill=SHEET_BORDER_COLOR, bold=True)
 
     # 9. Text annotations
     for txt in texts:
@@ -962,6 +1112,7 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
         if _in_bbox(txt['x'], txt['y'], crop_bbox):
             effects = txt.get('effects') or parse_effects([])
             font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
+            font_size *= FONT_SCALE
             svg.text(txt['x'], txt['y'], txt['text'],
                      font_size=font_size,
                      fill=TEXT_COLOR,
@@ -976,19 +1127,36 @@ def _render_label(svg: SvgBuilder, lbl: dict) -> None:
     effects = lbl.get('effects')
     font_size = (effects.height if effects and effects.height > 0
                  else DEFAULT_FONT_SIZE)
+    font_size *= FONT_SCALE
 
     angle = lbl.get('angle', 0)
 
     if ltype == 'label':
-        # Local label: text at exact position, rotated to match wire direction
+        # Local label: text offset perpendicular to wire direction
+        # KiCad: DEFAULT_TEXT_OFFSET_RATIO * text_height + pen_width
+        text_offset = font_size * 0.15 + DEFAULT_STROKE_WIDTH
+        tx, ty = x, y
+        if angle == 0 or angle == 180:
+            ty = y - text_offset
+        elif angle == 90:
+            tx = x + text_offset
+        elif angle == 270:
+            tx = x - text_offset
+        else:
+            ty = y - text_offset  # default
+
+        # KiCad renders all local labels horizontally (no text rotation).
+        # The angle only controls which direction text extends from the
+        # connection point: 0=right, 180=left, 90/270=vertical wire.
         anchor = 'start'
         if angle == 180:
             anchor = 'end'
-        elif angle == 90 or angle == 270:
-            anchor = 'middle'
-        svg.text(x, y, name, font_size=font_size, fill=LABEL_COLOR,
-                 anchor=anchor, dominant_baseline='auto',
-                 rotation=angle if angle else 0)
+        elif angle == 90:
+            anchor = 'end'    # vertical up: text extends left from point
+        elif angle == 270:
+            anchor = 'start'  # vertical down: text extends right
+        svg.text(tx, ty, name, font_size=font_size, fill=LABEL_COLOR,
+                 anchor=anchor, dominant_baseline='auto')
     elif ltype == 'global_label':
         # Global label: text inside a flag shape
         _render_flag_label(svg, x, y, name, lbl.get('shape', ''),

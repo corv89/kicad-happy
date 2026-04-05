@@ -75,7 +75,8 @@ class SvgBuilder:
 
     def rect(self, x: float, y: float, w: float, h: float,
              stroke: str = "none", fill: str = "none",
-             stroke_width: float = 0.254, rx: float = 0) -> Element:
+             stroke_width: float = 0.254, rx: float = 0,
+             dash: str | None = None) -> Element:
         """Draw a rectangle.  *x, y* is the top-left corner."""
         attrs = {
             "x": _f(x), "y": _f(y),
@@ -85,17 +86,23 @@ class SvgBuilder:
         }
         if rx > 0:
             attrs["rx"] = _f(rx)
+        if dash:
+            attrs["stroke-dasharray"] = dash
         return SubElement(self._parent, "rect", attrs)
 
     def circle(self, cx: float, cy: float, r: float,
                stroke: str = "none", fill: str = "none",
-               stroke_width: float = 0.254) -> Element:
+               stroke_width: float = 0.254,
+               dash: str | None = None) -> Element:
         """Draw a circle."""
-        return SubElement(self._parent, "circle", {
+        attrs = {
             "cx": _f(cx), "cy": _f(cy), "r": _f(r),
             "stroke": stroke, "fill": fill,
             "stroke-width": _f(stroke_width),
-        })
+        }
+        if dash:
+            attrs["stroke-dasharray"] = dash
+        return SubElement(self._parent, "circle", attrs)
 
     def ellipse(self, cx: float, cy: float, rx: float, ry: float,
                 stroke: str = "none", fill: str = "none",
@@ -111,32 +118,41 @@ class SvgBuilder:
     def polyline(self, points: list[tuple[float, float]],
                  stroke: str = "none", fill: str = "none",
                  stroke_width: float = 0.254,
-                 closed: bool = False) -> Element:
+                 closed: bool = False,
+                 dash: str | None = None) -> Element:
         """Draw a polyline (or polygon if *closed*)."""
         pts = " ".join(f"{_f(x)},{_f(y)}" for x, y in points)
         tag = "polygon" if closed else "polyline"
-        return SubElement(self._parent, tag, {
+        attrs = {
             "points": pts,
             "stroke": stroke, "fill": fill,
             "stroke-width": _f(stroke_width),
             "stroke-linejoin": "round",
-        })
+        }
+        if dash:
+            attrs["stroke-dasharray"] = dash
+        return SubElement(self._parent, tag, attrs)
 
     def path(self, d: str, stroke: str = "none", fill: str = "none",
-             stroke_width: float = 0.254) -> Element:
+             stroke_width: float = 0.254,
+             dash: str | None = None) -> Element:
         """Draw an arbitrary SVG path from a *d* string."""
-        return SubElement(self._parent, "path", {
+        attrs = {
             "d": d,
             "stroke": stroke, "fill": fill,
             "stroke-width": _f(stroke_width),
             "stroke-linecap": "round",
             "stroke-linejoin": "round",
-        })
+        }
+        if dash:
+            attrs["stroke-dasharray"] = dash
+        return SubElement(self._parent, "path", attrs)
 
     def arc(self, x1: float, y1: float, x2: float, y2: float,
             r: float, large_arc: bool, sweep: bool,
             stroke: str = "none", fill: str = "none",
-            stroke_width: float = 0.254) -> Element:
+            stroke_width: float = 0.254,
+            dash: str | None = None) -> Element:
         """Draw an arc from (x1,y1) to (x2,y2) with radius *r*.
 
         *large_arc*: True for the major arc.
@@ -146,15 +162,16 @@ class SvgBuilder:
         sw = 1 if sweep else 0
         d = f"M {_f(x1)},{_f(y1)} A {_f(r)},{_f(r)} 0 {la},{sw} {_f(x2)},{_f(y2)}"
         return self.path(d, stroke=stroke, fill=fill,
-                         stroke_width=stroke_width)
+                         stroke_width=stroke_width, dash=dash)
 
     def bezier(self, points: list[tuple[float, float]],
                stroke: str = "none", fill: str = "none",
-               stroke_width: float = 0.254) -> Element:
+               stroke_width: float = 0.254,
+               dash: str | None = None) -> Element:
         """Draw a cubic Bezier curve through *points* (4 points)."""
         if len(points) < 4:
             return self.polyline(points, stroke=stroke, fill=fill,
-                                 stroke_width=stroke_width)
+                                 stroke_width=stroke_width, dash=dash)
         d = f"M {_f(points[0][0])},{_f(points[0][1])}"
         # Process groups of 3 control points after the start
         i = 1
@@ -164,7 +181,7 @@ class SvgBuilder:
                   f" {_f(points[i+2][0])},{_f(points[i+2][1])}")
             i += 3
         return self.path(d, stroke=stroke, fill=fill,
-                         stroke_width=stroke_width)
+                         stroke_width=stroke_width, dash=dash)
 
     def text(self, x: float, y: float, content: str,
              font_size: float = 1.27,

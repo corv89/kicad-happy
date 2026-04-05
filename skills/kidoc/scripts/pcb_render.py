@@ -198,19 +198,19 @@ def render_board_outline(svg: SvgBuilder, outline: BoardOutline,
 # Pads
 # ---------------------------------------------------------------------------
 
-def render_pad(svg: SvgBuilder, pad: PadInfo, color: str,
-               drill_color: str) -> None:
-    """Render a single pad (circle/rect/oval/roundrect + drill hole)."""
-    x, y = pad.abs_x, pad.abs_y
-    w, h = pad.width, pad.height
-
+def _render_pad_shape(svg: SvgBuilder, pad: PadInfo, x: float, y: float,
+                      w: float, h: float, color: str) -> None:
+    """Render the pad shape geometry (no drill, no rotation wrapper)."""
     if pad.shape == "circle":
         r = w / 2 if w > 0 else 0.5
         svg.circle(x, y, r, stroke="none", fill=color, stroke_width=0)
-    elif pad.shape in ("rect", "roundrect"):
-        rx = min(w, h) * 0.25 if pad.shape == "roundrect" else 0
+    elif pad.shape == "roundrect":
+        corner_radius = pad.corner_ratio * min(w, h)
         svg.rect(x - w / 2, y - h / 2, w, h,
-                 stroke="none", fill=color, stroke_width=0, rx=rx)
+                 stroke="none", fill=color, stroke_width=0, rx=corner_radius)
+    elif pad.shape == "rect":
+        svg.rect(x - w / 2, y - h / 2, w, h,
+                 stroke="none", fill=color, stroke_width=0)
     elif pad.shape == "oval":
         svg.rect(x - w / 2, y - h / 2, w, h,
                  stroke="none", fill=color, stroke_width=0,
@@ -228,10 +228,17 @@ def render_pad(svg: SvgBuilder, pad: PadInfo, color: str,
         svg.circle(x, y, max(w, h) / 2 if (w > 0 or h > 0) else 0.5,
                    stroke="none", fill=color, stroke_width=0)
 
-    # Drill hole
-    if pad.drill > 0:
-        svg.circle(x, y, pad.drill / 2, stroke="none",
-                   fill=drill_color, stroke_width=0)
+
+def render_pad(svg: SvgBuilder, pad: PadInfo, color: str) -> None:
+    """Render a single pad shape, with rotation if needed."""
+    x, y = pad.abs_x, pad.abs_y
+    w, h = pad.width, pad.height
+
+    if pad.pad_angle != 0 and pad.shape not in ("circle",):
+        with svg.group(transform=f"rotate({_f(pad.pad_angle)},{_f(x)},{_f(y)})"):
+            _render_pad_shape(svg, pad, x, y, w, h, color)
+    else:
+        _render_pad_shape(svg, pad, x, y, w, h, color)
 
 
 # ---------------------------------------------------------------------------
@@ -362,15 +369,31 @@ def render_vias(svg: SvgBuilder, vias: List[ViaInfo],
                 color: str, drill_color: str,
                 highlight_nets: Optional[Set[str]] = None,
                 highlight_color: str = _HIGHLIGHT_COLOR) -> None:
-    """Render via circles with drill holes."""
+    """Render via circles (drill knockout handled by render_drill_marks)."""
     for via in vias:
         hi = _is_highlighted(via.net_name, highlight_nets)
         c = highlight_color if hi else color
         r = via.size / 2 if via.size > 0 else 0.3
         svg.circle(via.x, via.y, r, stroke="none", fill=c, stroke_width=0)
+
+
+# ---------------------------------------------------------------------------
+# Drill marks (knockout circles)
+# ---------------------------------------------------------------------------
+
+def render_drill_marks(svg: SvgBuilder, footprints: List[FootprintInfo],
+                       vias: List[ViaInfo],
+                       drill_color: str = '#ffffff') -> None:
+    """Render drill holes as knockout circles (white) over pads and vias."""
+    for fp in footprints:
+        for pad in fp.pads:
+            if pad.drill > 0:
+                svg.circle(pad.abs_x, pad.abs_y, pad.drill / 2,
+                           fill=drill_color, stroke='none', stroke_width=0)
+    for via in vias:
         if via.drill > 0:
             svg.circle(via.x, via.y, via.drill / 2,
-                       stroke="none", fill=drill_color, stroke_width=0)
+                       fill=drill_color, stroke='none', stroke_width=0)
 
 
 # ---------------------------------------------------------------------------
@@ -526,15 +549,16 @@ def _render_all_layers(svg: SvgBuilder, preset: LayerPreset,
                        hl_set: Optional[Set[str]]) -> None:
     """Render all layers in correct z-order (back to front).
 
-    Render order:
+    Render order (documentation-oriented -- zones behind tracks):
         1. Background rect
-        2. Zone outlines (if enabled)
-        3. Tracks
-        4. Vias (if enabled)
-        5. Footprint graphics (silk/fab/courtyard)
-        6. Pads (if enabled)
-        7. Board outline (on top)
-        8. Reference designator text (topmost)
+        2. Zone outlines (lowest -- copper fills)
+        3. Footprint graphics (silk/fab/courtyard)
+        4. Pads
+        5. Tracks and arcs (on top of pads/zones -- active routing)
+        6. Vias (on top of tracks for visibility)
+        7. Board outline (on top of everything)
+        8. Drill marks (white knockout circles over pads/vias)
+        9. Reference designator text (topmost)
     """
     # 1. Background
     vb = svg.root.get("viewBox", "0 0 100 100").split()
@@ -546,24 +570,24 @@ def _render_all_layers(svg: SvgBuilder, preset: LayerPreset,
     if preset.show_zones and zones:
         render_zone_outlines(svg, zones, preset, hl_set)
 
-    # 3. Tracks
-    render_tracks(svg, segments, arcs, preset, hl_set)
-
-    # 4. Vias
-    if preset.show_vias and vias_list:
-        render_vias(svg, vias_list, PCB_VIA_COLOR, PCB_DRILL_COLOR, hl_set)
-
-    # 5. Footprint graphics
+    # 3. Footprint graphics
     for fp in footprints:
         render_footprint_graphics(svg, fp, preset)
 
-    # 6. Pads
+    # 4. Pads
     if preset.show_pads:
         for fp in footprints:
             for pad in fp.pads:
                 hi = _is_highlighted(pad.net_name, hl_set)
                 color = _HIGHLIGHT_COLOR if hi else PCB_PAD_COLOR
-                render_pad(svg, pad, color, preset.background)
+                render_pad(svg, pad, color)
+
+    # 5. Tracks and arcs
+    render_tracks(svg, segments, arcs, preset, hl_set)
+
+    # 6. Vias
+    if preset.show_vias and vias_list:
+        render_vias(svg, vias_list, PCB_VIA_COLOR, PCB_DRILL_COLOR, hl_set)
 
     # 7. Board outline
     edge_style = _resolve_style(preset, "Edge.Cuts")
@@ -571,7 +595,13 @@ def _render_all_layers(svg: SvgBuilder, preset: LayerPreset,
         sw = edge_style.stroke_width if edge_style.stroke_width > 0 else 0.15
         render_board_outline(svg, outline, edge_style.color, sw)
 
-    # 8. Reference designator text
+    # 8. Drill marks (knockout circles)
+    if preset.show_pads or (preset.show_vias and vias_list):
+        drill_fps = footprints if preset.show_pads else []
+        drill_vias = vias_list if preset.show_vias else []
+        render_drill_marks(svg, drill_fps, drill_vias, preset.background)
+
+    # 9. Reference designator text
     # Use silk color from the preset; pick front or back based on
     # which silk layer is visible.
     ref_color = "#333333"

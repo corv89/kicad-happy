@@ -20,6 +20,8 @@ NO_CONNECT_COLOR = "#00841a"
 COMPONENT_OUTLINE_COLOR = "#840000"
 COMPONENT_FILL_COLOR = "#ffffc8"      # background fill for symbol bodies
 PIN_COLOR = "#840000"
+PIN_NAME_COLOR = "#006464"            # pin name text (teal/cyan)
+PIN_NUMBER_COLOR = "#A90000"          # pin number text (dark red)
 
 LABEL_COLOR = "#00841a"               # local net labels
 GLOBAL_LABEL_COLOR = "#840000"        # global labels
@@ -79,19 +81,6 @@ PAPER_SIZES = {
     "C":  (558.8, 431.8),
     "D":  (863.6, 558.8),
     "E":  (1117.6, 863.6),
-}
-
-# ---------------------------------------------------------------------------
-# SVG dash patterns (stroke-dasharray values for KiCad line types)
-# ---------------------------------------------------------------------------
-
-DASH_PATTERNS = {
-    "solid": None,
-    "dash": "2.0,1.0",
-    "dot": "0.5,0.5",
-    "dash_dot": "2.0,0.5,0.5,0.5",
-    "dash_dot_dot": "2.0,0.5,0.5,0.5,0.5,0.5",
-    "default": None,
 }
 
 # ---------------------------------------------------------------------------

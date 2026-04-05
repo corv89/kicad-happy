@@ -54,6 +54,8 @@ class PadInfo(NamedTuple):
     drill: float        # 0 for SMD pads
     layers: List[str]
     net_name: str
+    corner_ratio: float  # roundrect corner radius ratio (0-0.5)
+    pad_angle: float     # total pad rotation in degrees (footprint + pad)
 
 
 class FpGraphic(NamedTuple):
@@ -394,6 +396,20 @@ def extract_footprints(root: list, net_map: dict) -> List[FootprintInfo]:
                 # KiCad 10: (net "name")
                 net_name = pad_net[1]
 
+            # Corner ratio for roundrect pads
+            corner_ratio = 0.25  # KiCad default
+            rratio_node = find_first(pad, "roundrect_rratio")
+            if rratio_node and len(rratio_node) >= 2:
+                try:
+                    corner_ratio = float(rratio_node[1])
+                except (ValueError, TypeError):
+                    pass
+
+            # Pad angle (from pad's own at node, relative to footprint)
+            pad_angle_val = pad_at[2] if pad_at and len(pad_at) > 2 else 0.0
+            # Total angle = footprint angle + pad angle
+            total_pad_angle = angle + pad_angle_val
+
             pads.append(PadInfo(
                 number=pad_num,
                 pad_type=pad_type,
@@ -405,6 +421,8 @@ def extract_footprints(root: list, net_map: dict) -> List[FootprintInfo]:
                 drill=drill_val,
                 layers=pad_layers,
                 net_name=net_name,
+                corner_ratio=corner_ratio,
+                pad_angle=total_pad_angle,
             ))
 
         # Extract courtyard bounding box
