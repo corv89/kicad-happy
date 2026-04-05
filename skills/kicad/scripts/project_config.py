@@ -1,9 +1,17 @@
 """
 Project configuration and suppression matching for kicad-happy.
 
-Loads .kicad-happy.json (JSONC with comment stripping) from the project
-directory. Provides suppression matching with fnmatch globs and
-risk-scoring utilities shared across all analyzers.
+Loads .kicad-happy.json (JSONC with comment stripping) with cascading
+config: files found closer to the project override those farther away,
+and ~/.kicad-happy.json serves as a user-level base layer.
+
+Merge rules:
+  - Dicts: deep-merged recursively, closer keys win
+  - "suppressions": concatenated across all layers (additive)
+  - Other lists: closer layer wins entirely
+
+Provides suppression matching with fnmatch globs and risk-scoring
+utilities shared across all analyzers.
 
 Zero external dependencies — stdlib only.
 """
@@ -52,6 +60,10 @@ VALID_MARKETS = {'us', 'eu', 'automotive', 'medical', 'military'}
 VALID_DERATING_PROFILES = {'hobby', 'commercial', 'conservative', 'automotive'}
 VALID_BOARD_CLASSES = {'class_1', 'class_2', 'class_3'}
 
+# Top-level keys whose list values are concatenated across layers
+# instead of replaced.  All other lists use closer-wins semantics.
+_ADDITIVE_KEYS = {'suppressions'}
+
 # Default project config (used when no file found)
 DEFAULT_CONFIG: Dict[str, Any] = {
     'version': 1,
@@ -60,62 +72,146 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
-def load_config(search_dir: str) -> Dict[str, Any]:
-    """Walk upward from *search_dir* looking for .kicad-happy.json.
+# ---------------------------------------------------------------------------
+# Deep merge
+# ---------------------------------------------------------------------------
 
-    Returns the parsed config dict, or DEFAULT_CONFIG if not found.
-    Prints a warning to stderr on parse errors and returns defaults.
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any],
+                _path: str = '') -> Dict[str, Any]:
+    """Recursively merge *override* into *base*, returning a new dict.
+
+    - Dict values are merged recursively (override keys win on conflict).
+    - List values under keys in _ADDITIVE_KEYS are concatenated
+      (base items first, then override items).
+    - All other values (including non-additive lists) from *override*
+      replace the corresponding *base* value entirely.
     """
+    merged: Dict[str, Any] = {}
+    all_keys = set(base) | set(override)
+    for key in all_keys:
+        full_key = f'{_path}.{key}' if _path else key
+        if key in override and key in base:
+            bval = base[key]
+            oval = override[key]
+            if isinstance(bval, dict) and isinstance(oval, dict):
+                merged[key] = _deep_merge(bval, oval, full_key)
+            elif isinstance(bval, list) and isinstance(oval, list) \
+                    and key in _ADDITIVE_KEYS:
+                merged[key] = bval + oval
+            else:
+                merged[key] = oval
+        elif key in override:
+            merged[key] = override[key]
+        else:
+            merged[key] = base[key]
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Discovery and cascading load
+# ---------------------------------------------------------------------------
+
+def _discover_config_paths(search_dir: str) -> List[str]:
+    """Walk upward from *search_dir* collecting all .kicad-happy.json paths.
+
+    Returns paths ordered from farthest (most general) to closest
+    (most specific).  Also includes ~/.kicad-happy.json as the base
+    layer if it exists and was not already found during the walk.
+    """
+    found: List[str] = []
+    seen: set = set()
     d = os.path.abspath(search_dir)
     for _ in range(50):  # depth limit
         candidate = os.path.join(d, CONFIG_FILENAME)
-        if os.path.isfile(candidate):
-            return _load_and_validate(candidate)
+        real = os.path.realpath(candidate)
+        if os.path.isfile(candidate) and real not in seen:
+            found.append(candidate)
+            seen.add(real)
         parent = os.path.dirname(d)
         if parent == d:
             break
         d = parent
-    return dict(DEFAULT_CONFIG)
+
+    # Check ~/.kicad-happy.json as a user-level base layer
+    home_cfg = os.path.join(os.path.expanduser('~'), CONFIG_FILENAME)
+    if os.path.isfile(home_cfg) and os.path.realpath(home_cfg) not in seen:
+        found.append(home_cfg)
+
+    # Reverse: farthest first so closer layers override during merge
+    found.reverse()
+    return found
+
+
+def load_config(search_dir: str) -> Dict[str, Any]:
+    """Discover and merge all .kicad-happy.json files from *search_dir* upward.
+
+    Config files are merged with cascading precedence: files closer to
+    the project directory override those farther away.  The user-level
+    ~/.kicad-happy.json is the base layer (lowest precedence).
+
+    Merge rules:
+      - Dict values: deep-merged recursively, closer keys win.
+      - "suppressions": concatenated across all layers (additive).
+      - Other lists: closer layer wins entirely.
+
+    Returns the merged config dict, or DEFAULT_CONFIG if no files found.
+    Prints warnings to stderr on parse errors (those files are skipped).
+    """
+    paths = _discover_config_paths(search_dir)
+    if not paths:
+        return dict(DEFAULT_CONFIG)
+
+    merged = dict(DEFAULT_CONFIG)
+    for path in paths:
+        layer = _load_and_validate(path)
+        if layer is not None:
+            merged = _deep_merge(merged, layer)
+
+    return merged
 
 
 def load_config_from_path(path: str) -> Dict[str, Any]:
-    """Load config from an explicit file path (for --config CLI arg)."""
+    """Load config from an explicit file path (for --config CLI arg).
+
+    No cascading — loads only the specified file.
+    """
     if not path or not os.path.isfile(path):
         return dict(DEFAULT_CONFIG)
-    return _load_and_validate(path)
+    cfg = _load_and_validate(path)
+    return cfg if cfg is not None else dict(DEFAULT_CONFIG)
 
 
-def _load_and_validate(path: str) -> Dict[str, Any]:
-    """Load, validate, and return config from *path*."""
+def _load_and_validate(path: str) -> Optional[Dict[str, Any]]:
+    """Load, validate, and return config from *path*.
+
+    Returns None on parse errors (caller should skip this layer).
+    """
     import sys
     try:
         cfg = load_jsonc(path)
     except (json.JSONDecodeError, OSError) as exc:
         print(f'Warning: failed to parse {path}: {exc}', file=sys.stderr)
-        return dict(DEFAULT_CONFIG)
+        return None
 
     if not isinstance(cfg, dict):
         print(f'Warning: {path} root must be an object', file=sys.stderr)
-        return dict(DEFAULT_CONFIG)
+        return None
 
-    # Ensure required top-level keys
-    cfg.setdefault('version', 1)
-    cfg.setdefault('project', {})
-    cfg.setdefault('suppressions', [])
-
-    # Validate suppressions
-    valid_suppressions = []
-    for i, s in enumerate(cfg.get('suppressions', [])):
-        if not isinstance(s, dict):
-            print(f'Warning: suppressions[{i}] is not an object, skipping',
-                  file=sys.stderr)
-            continue
-        if 'rule_id' not in s:
-            print(f'Warning: suppressions[{i}] missing required "rule_id", '
-                  f'skipping', file=sys.stderr)
-            continue
-        valid_suppressions.append(s)
-    cfg['suppressions'] = valid_suppressions
+    # Validate suppressions if present
+    raw_suppressions = cfg.get('suppressions')
+    if raw_suppressions is not None:
+        valid_suppressions = []
+        for i, s in enumerate(raw_suppressions):
+            if not isinstance(s, dict):
+                print(f'Warning: {path}: suppressions[{i}] is not an object, '
+                      f'skipping', file=sys.stderr)
+                continue
+            if 'rule_id' not in s:
+                print(f'Warning: {path}: suppressions[{i}] missing required '
+                      f'"rule_id", skipping', file=sys.stderr)
+                continue
+            valid_suppressions.append(s)
+        cfg['suppressions'] = valid_suppressions
 
     return cfg
 
