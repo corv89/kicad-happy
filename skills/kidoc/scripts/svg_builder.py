@@ -202,7 +202,7 @@ class SvgBuilder:
     # ------------------------------------------------------------------
 
     @contextmanager
-    def group(self, transform: str | None = None, **attrs: str):
+    def group(self, transform: str | None = None, opacity: float | None = None, **attrs: str):
         """Context manager that creates a ``<g>`` element.
 
         All elements created inside the ``with`` block become children
@@ -216,6 +216,8 @@ class SvgBuilder:
         g_attrs: dict[str, str] = dict(attrs)
         if transform:
             g_attrs["transform"] = transform
+        if opacity is not None and opacity < 1.0:
+            g_attrs["opacity"] = _f(opacity)
         g = SubElement(self._parent, "g", g_attrs)
         self._stack.append(g)
         try:

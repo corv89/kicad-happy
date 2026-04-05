@@ -93,3 +93,38 @@ DASH_PATTERNS = {
     "dash_dot_dot": "2.0,0.5,0.5,0.5,0.5,0.5",
     "default": None,
 }
+
+# ---------------------------------------------------------------------------
+# PCB layer colors -- KiCad native palette (bright, for dark background)
+# ---------------------------------------------------------------------------
+
+PCB_LAYER_COLORS = {
+    'F.Cu': '#ff0000', 'B.Cu': '#0000ff',
+    'In1.Cu': '#ffff00', 'In2.Cu': '#ff00ff',
+    'F.SilkS': '#ffff00', 'B.SilkS': '#ff00ff',
+    'F.Silkscreen': '#ffff00', 'B.Silkscreen': '#ff00ff',
+    'F.Fab': '#808000', 'B.Fab': '#800080',
+    'F.CrtYd': '#808080', 'B.CrtYd': '#808080',
+    'F.Courtyard': '#808080', 'B.Courtyard': '#808080',
+    'Edge.Cuts': '#ffff00',
+}
+
+# ---------------------------------------------------------------------------
+# PCB document colors -- muted palette for white-background documentation
+# ---------------------------------------------------------------------------
+
+PCB_DOC_COLORS = {
+    'F.Cu': '#cc3333', 'B.Cu': '#3333cc',
+    'In1.Cu': '#cc9933', 'In2.Cu': '#33cc33',
+    'F.SilkS': '#333333', 'B.SilkS': '#666666',
+    'F.Silkscreen': '#333333', 'B.Silkscreen': '#666666',
+    'F.Fab': '#999999', 'B.Fab': '#bbbbbb',
+    'F.CrtYd': '#cccccc', 'B.CrtYd': '#cccccc',
+    'F.Courtyard': '#cccccc', 'B.Courtyard': '#cccccc',
+    'Edge.Cuts': '#000000',
+}
+
+PCB_BACKGROUND_COLOR = '#ffffff'
+PCB_PAD_COLOR = '#c8c800'
+PCB_VIA_COLOR = '#808080'
+PCB_DRILL_COLOR = '#ffffff'

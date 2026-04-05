@@ -539,34 +539,36 @@ def _render_pin_text(svg: SvgBuilder, text: str,
                      offset: float, effects: TextEffects,
                      is_name: bool) -> None:
     """Render pin name or number text along the pin."""
-    dx = tip[0] - body[0]
-    dy = tip[1] - body[1]
+    dx = body[0] - tip[0]
+    dy = body[1] - tip[1]
     dist = math.hypot(dx, dy)
     if dist < 0.01:
         return
 
-    # Pin direction unit vector (body → tip)
+    # Direction from tip toward body (into the symbol)
     nx, ny = dx / dist, dy / dist
+    # Perpendicular
+    perp_x, perp_y = -ny, nx
 
     font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
 
     if is_name:
-        # Name is placed outside the body, past the body end with clearance
-        tx = body[0] - nx * (offset + 0.4)
-        ty = body[1] - ny * (offset + 0.4)
-        # Anchor depends on pin direction
-        anchor = 'end' if abs(nx) > 0.5 and nx > 0 else 'start'
-        if abs(nx) < 0.1:
+        # Name goes inside body: start at body end, offset further into body
+        gap = offset + 0.5
+        tx = body[0] + nx * gap
+        ty = body[1] + ny * gap
+        # Horizontal pins: text starts from body end, reads away from tip
+        if abs(dx) > abs(dy):
+            anchor = 'start' if dx > 0 else 'end'
+        else:
             anchor = 'middle'
     else:
-        # Number is placed along the pin, biased toward body end (70% from tip)
-        tx = tip[0] + (body[0] - tip[0]) * 0.7
-        ty = tip[1] + (body[1] - tip[1]) * 0.7
+        # Number at midpoint, offset perpendicular
+        mx = (tip[0] + body[0]) / 2
+        my = (tip[1] + body[1]) / 2
+        tx = mx + perp_x * font_size * 0.5
+        ty = my + perp_y * font_size * 0.5
         anchor = 'middle'
-        # Offset perpendicular to the pin line to clear the wire
-        perp_x, perp_y = -ny, nx
-        tx += perp_x * font_size * 0.8
-        ty += perp_y * font_size * 0.8
 
     svg.text(tx, ty, text,
              font_size=font_size,
@@ -595,14 +597,15 @@ def _render_properties(svg: SvgBuilder, comp: dict) -> None:
         anchor = {'left': 'start', 'right': 'end'}.get(h_just, 'middle')
         font_size = effects.height if effects.height > 0 else DEFAULT_FONT_SIZE
 
-        # KiCad CLI renders all text horizontal — match that behavior
+        prop_angle = at[2] if len(at) > 2 else 0
         svg.text(at[0], at[1], prop['value'],
                  font_size=font_size,
                  font_family=DEFAULT_FONT_FAMILY,
                  anchor=anchor,
-                 dominant_baseline='central',
+                 dominant_baseline='auto',
                  fill=color,
-                 bold=effects.bold, italic=effects.italic)
+                 bold=effects.bold, italic=effects.italic,
+                 rotation=prop_angle)
 
 
 # ======================================================================
@@ -610,51 +613,80 @@ def _render_properties(svg: SvgBuilder, comp: dict) -> None:
 # ======================================================================
 
 def _render_drawing_sheet(svg: SvgBuilder, root: list,
-                          paper_w: float, paper_h: float) -> None:
+                          paper_w: float, paper_h: float,
+                          sch_filename: str = '') -> None:
     """Render the drawing sheet border, grid labels, and title block."""
-    margin = 5.0
+    margin = 10.0
     inner_x = margin
     inner_y = margin
     inner_w = paper_w - 2 * margin
     inner_h = paper_h - 2 * margin
 
-    # Outer border
+    # Inner border
     svg.rect(inner_x, inner_y, inner_w, inner_h,
-             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
+             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.15)
 
-    # Grid labels — match KiCad's default grid division
-    # KiCad uses: A4=6 cols/4 rows, A3=8 cols/4 rows, Letter=6 cols/4 rows
-    grid_font = 1.5
+    # Grid labels — match KiCad's default 50mm grid division
+    grid_font = 1.3
     grid_color = DRAWING_SHEET_COLOR
+    tick_len = 2.0  # 2mm tick marks on inner border
+    grid_step = 50.0  # KiCad uses a fixed 50mm grid step
 
-    # Standard grid: 6 columns for A4/Letter, more for larger sheets
-    if inner_w > 400:
-        n_cols = 10
-    elif inner_w > 300:
-        n_cols = 8
-    else:
-        n_cols = 6
-    n_rows = 4  # KiCad always uses 4 rows (A-D)
+    n_cols = round(inner_w / grid_step)
+    n_rows = round(inner_h / grid_step)
 
-    col_w = inner_w / n_cols
+    # Column labels and tick marks — fixed 50mm spacing from inner_x
+    # Label y-positions: just inside the inner border (matches KiCad reference)
+    col_label_y_top = inner_y + 1.7
+    col_label_y_bot = inner_y + inner_h - 0.3
     for i in range(n_cols):
         label = str(i + 1)
-        cx = inner_x + col_w * (i + 0.5)
-        svg.text(cx, inner_y - 1.5, label, font_size=grid_font,
-                 fill=grid_color, anchor='middle', dominant_baseline='auto')
-        svg.text(cx, inner_y + inner_h + 3.0, label, font_size=grid_font,
-                 fill=grid_color, anchor='middle', dominant_baseline='auto')
+        cx = inner_x + grid_step * i + grid_step / 2
+        svg.text(cx, col_label_y_top, label, font_size=grid_font,
+                 fill=grid_color, anchor='middle', dominant_baseline='central')
+        svg.text(cx, col_label_y_bot, label, font_size=grid_font,
+                 fill=grid_color, anchor='middle', dominant_baseline='central')
+        # Tick marks at column boundaries (skip first = inner border edge)
+        if i > 0:
+            bx = inner_x + grid_step * i
+            svg.line(bx, inner_y, bx, inner_y + tick_len,
+                     stroke=grid_color, stroke_width=0.15)
+            svg.line(bx, inner_y + inner_h - tick_len, bx, inner_y + inner_h,
+                     stroke=grid_color, stroke_width=0.15)
 
-    row_h = inner_h / n_rows
+    # Row labels and tick marks — fixed 50mm spacing from inner_y
+    # Label x-positions: just inside the inner border (matches KiCad reference)
+    row_label_x_left = inner_x + 1.0
+    row_label_x_right = inner_x + inner_w - 1.0
     for i in range(n_rows):
-        label = chr(65 + i)  # A, B, C, D
-        cy = inner_y + row_h * (i + 0.5)
-        svg.text(inner_x - 2.5, cy, label, font_size=grid_font,
+        label = chr(65 + i)  # A, B, C, D, ...
+        cy = inner_y + grid_step * i + grid_step / 2
+        svg.text(row_label_x_left, cy, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
-        svg.text(inner_x + inner_w + 2.5, cy, label, font_size=grid_font,
+        svg.text(row_label_x_right, cy, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
+        # Tick marks at row boundaries (skip first = inner border edge)
+        if i > 0:
+            by = inner_y + grid_step * i
+            svg.line(inner_x, by, inner_x + tick_len, by,
+                     stroke=grid_color, stroke_width=0.15)
+            svg.line(inner_x + inner_w - tick_len, by, inner_x + inner_w, by,
+                     stroke=grid_color, stroke_width=0.15)
 
     # Title block (lower-right corner)
+    # KiCad standard drawing sheet: 108mm wide x 32mm tall, flush with
+    # inner border right and bottom edges.
+    #
+    # Horizontal dividers (offsets from tb_y):
+    #   +15.5  separates comment rows from Sheet/File area
+    #   +21.5  separates Sheet/File from Title row
+    #   +25.5  separates Title from Date-Rev / Size row
+    #   +28.5  separates Date-Rev / Size from KiCad / Id row
+    #
+    # Vertical dividers (offsets from tb_x):
+    #   +20   Date | Rev  (from y+25.5 to y+28.5)
+    #   +84   left | right columns  (from y+25.5 to y+32)
+
     tb = find_first(root, 'title_block')
     title = ''
     date = ''
@@ -679,52 +711,78 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
     elif gen_node and len(gen_node) >= 2:
         kicad_ver = str(gen_node[1])
 
-    # Title block — KiCad standard layout: right-aligned box inside border
-    # KiCad uses a 111mm wide title block at the bottom-right
-    tb_w = min(111, inner_w)
-    tb_h = 24
-    tb_x = inner_x + inner_w - tb_w
-    tb_y = inner_y + inner_h - tb_h
+    # KiCad has two border lines: outer at 10mm, inner at 12mm.
+    # The title block is flush with the inner (12mm) border.
+    inner2_margin = 12.0
+    inner2_right = paper_w - inner2_margin
+    inner2_bottom = paper_h - inner2_margin
+    tb_w = min(108, inner2_right - inner2_margin)
+    tb_h = 32
+    tb_x = inner2_right - tb_w
+    tb_y = inner2_bottom - tb_h
 
+    # Outer rectangle
     svg.rect(tb_x, tb_y, tb_w, tb_h,
              stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
-    # Horizontal divider
-    svg.line(tb_x, tb_y + 10, tb_x + tb_w, tb_y + 10,
+
+    # Horizontal dividers (full-width)
+    for dy in (15.5, 21.5, 25.5, 28.5):
+        svg.line(tb_x, tb_y + dy, tb_x + tb_w, tb_y + dy,
+                 stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
+
+    # Vertical dividers
+    # Date | Rev separator (row 25.5–28.5 only)
+    svg.line(tb_x + 20, tb_y + 25.5, tb_x + 20, tb_y + 28.5,
              stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
-    # Vertical divider
-    mid_x = tb_x + tb_w * 0.55
-    svg.line(mid_x, tb_y + 10, mid_x, tb_y + tb_h,
+    # Left | Right column separator (rows 25.5–32)
+    svg.line(tb_x + 84, tb_y + 25.5, tb_x + 84, tb_y + tb_h,
              stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
 
-    # Title block text
-    tb_font = 1.8
-    tb_small = 1.2
+    # --- Title block text ---
+    # Font sizes match KiCad reference: 2.0 for fields, 2.6666 for title
+    tb_font = 2.0
+    tb_title_font = 2.6666
+    c = DRAWING_SHEET_COLOR
 
-    # Top row: title
-    if title:
-        svg.text(tb_x + 2, tb_y + 5.5, f"Title: {title}",
-                 font_size=tb_font, fill=DRAWING_SHEET_COLOR, bold=True)
+    # Comment rows (top section, 5 slots at 3mm each from y+2.75)
+    # KiCad renders comment1..comment4 here; we skip for now (empty in most files)
 
-    # Bottom-left: date, rev, file, sheet
-    col1 = tb_x + 2
-    if date:
-        svg.text(col1, tb_y + 14, f"Date: {date}",
-                 font_size=tb_small, fill=DRAWING_SHEET_COLOR)
-    if rev:
-        svg.text(col1, tb_y + 18, f"Rev: {rev}",
-                 font_size=tb_small, fill=DRAWING_SHEET_COLOR)
-    svg.text(col1, tb_y + 22, "Sheet: /",
-             font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    # Sheet: / (in the Sheet/File area, offset 17.75 from tb_y)
+    svg.text(tb_x + 1, tb_y + 17.75, "Sheet: /",
+             font_size=tb_font, fill=c)
 
-    # Bottom-right: size, id, kicad version
-    col2 = mid_x + 2
-    svg.text(col2, tb_y + 14, f"Size: {paper_name}",
-             font_size=tb_small, fill=DRAWING_SHEET_COLOR)
-    svg.text(col2, tb_y + 18, "Id: 1/1",
-             font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+    # File: <filename> (offset 20.45 from tb_y)
+    file_text = f"File: {sch_filename}" if sch_filename else "File:"
+    svg.text(tb_x + 1, tb_y + 20.45, file_text,
+             font_size=tb_font, fill=c)
+
+    # Title (offset 24.30 from tb_y, larger font)
+    title_text = f"Title: {title}" if title else "Title:"
+    svg.text(tb_x + 1, tb_y + 24.30, title_text,
+             font_size=tb_title_font, fill=c)
+
+    # Date (offset 27.85 from tb_y, in left sub-column after +20 divider)
+    date_text = f"Date: {date}" if date else "Date:"
+    svg.text(tb_x + 23, tb_y + 27.85, date_text,
+             font_size=tb_font, fill=c)
+
+    # Rev (offset 27.85 from tb_y, in right column after +84 divider)
+    rev_text = f"Rev: {rev}" if rev else "Rev:"
+    svg.text(tb_x + 86, tb_y + 27.85, rev_text,
+             font_size=tb_font, fill=c)
+
+    # Size (offset 27.85 from tb_y, in leftmost sub-column)
+    svg.text(tb_x + 1, tb_y + 27.85, f"Size: {paper_name}",
+             font_size=tb_font, fill=c)
+
+    # KiCad version (offset 30.65 from tb_y, left column)
     if kicad_ver:
-        svg.text(col2, tb_y + 22, kicad_ver,
-                 font_size=tb_small, fill=DRAWING_SHEET_COLOR)
+        svg.text(tb_x + 1, tb_y + 30.65, kicad_ver,
+                 font_size=tb_font, fill=c)
+
+    # Id (offset 30.65 from tb_y, right column)
+    svg.text(tb_x + 86, tb_y + 30.65, "Id: 1/1",
+             font_size=tb_font, fill=c)
 
 
 # ======================================================================
@@ -748,12 +806,61 @@ def _wire_in_bbox(wire: dict, bbox: tuple | None, margin: float = 15) -> bool:
             _in_bbox(wire['x2'], wire['y2'], bbox, margin))
 
 
+def _trace_net_wires(labels: list[dict], wires: list[dict],
+                     net_names: set[str]) -> set[int]:
+    """Find wire indices connected to labels matching *net_names* via BFS.
+
+    Starting from label attachment points, flood-fill along wires that
+    share endpoints to collect every wire segment belonging to the net.
+    """
+    net_points: set[tuple[float, float]] = set()
+    for lbl in labels:
+        if lbl['name'] in net_names:
+            net_points.add((round(lbl['x'], 1), round(lbl['y'], 1)))
+    if not net_points:
+        return set()
+
+    # Build spatial index: endpoint → set of wire indices
+    wire_endpoints: dict[tuple[float, float], set[int]] = {}
+    for i, w in enumerate(wires):
+        for key in [(round(w['x1'], 1), round(w['y1'], 1)),
+                    (round(w['x2'], 1), round(w['y2'], 1))]:
+            wire_endpoints.setdefault(key, set()).add(i)
+
+    highlighted: set[int] = set()
+    frontier: set[int] = set()
+    for pt in net_points:
+        frontier.update(wire_endpoints.get(pt, set()))
+    while frontier:
+        idx = frontier.pop()
+        if idx in highlighted:
+            continue
+        highlighted.add(idx)
+        w = wires[idx]
+        for key in [(round(w['x1'], 1), round(w['y1'], 1)),
+                    (round(w['x2'], 1), round(w['y2'], 1))]:
+            for connected_idx in wire_endpoints.get(key, set()):
+                if connected_idx not in highlighted:
+                    frontier.add(connected_idx)
+    return highlighted
+
+
 def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
                  paper_w: float, paper_h: float,
-                 crop_bbox: tuple | None = None) -> None:
+                 crop_bbox: tuple | None = None,
+                 focus_refs: list[str] | None = None,
+                 dim_opacity: float = 0.15,
+                 highlight_nets: list[str] | None = None,
+                 highlight_color: str = '#ff0000',
+                 sch_filename: str = '') -> None:
     """Render a complete schematic sheet.
 
     If *crop_bbox* is set, only elements within the bbox are rendered.
+    *focus_refs* dims all components whose reference is NOT in the list.
+    *dim_opacity* controls the opacity of dimmed elements (0.0–1.0).
+    *highlight_nets* colors wires belonging to the named nets.
+    *highlight_color* is the CSS color used for highlighted wires.
+    *sch_filename* is the basename of the .kicad_sch file (for the title block).
     """
     # Extract all elements
     components = _extract_components_for_render(root)
@@ -775,7 +882,8 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
 
     # Drawing sheet: border, grid labels, title block (skip when cropping)
     if not crop_bbox:
-        _render_drawing_sheet(svg, root, paper_w, paper_h)
+        _render_drawing_sheet(svg, root, paper_w, paper_h,
+                              sch_filename=sch_filename)
 
     # Render order (back to front), with crop filtering
     # 1. Bus wires
@@ -791,11 +899,17 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
                      entry['x'] + entry['dx'], entry['y'] + entry['dy'],
                      stroke=BUS_COLOR, stroke_width=BUS_STROKE_WIDTH)
 
-    # 3. Wires
-    for wire in wires:
+    # 3. Wires (with optional net highlighting)
+    highlight_wire_idxs: set[int] = set()
+    if highlight_nets:
+        highlight_wire_idxs = _trace_net_wires(labels, wires, set(highlight_nets))
+
+    for i, wire in enumerate(wires):
         if _wire_in_bbox(wire, crop_bbox):
+            color = highlight_color if i in highlight_wire_idxs else WIRE_COLOR
+            width = WIRE_STROKE_WIDTH * 2 if i in highlight_wire_idxs else WIRE_STROKE_WIDTH
             svg.line(wire['x1'], wire['y1'], wire['x2'], wire['y2'],
-                     stroke=WIRE_COLOR, stroke_width=WIRE_STROKE_WIDTH)
+                     stroke=color, stroke_width=width)
 
     # 4. Junctions
     for j in junctions:
@@ -823,13 +937,18 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
                      font_size=DEFAULT_FONT_SIZE,
                      fill=SHEET_BORDER_COLOR, bold=True)
 
-    # 7. Components
+    # 7. Components (with optional focus dimming)
+    focus_set = set(focus_refs) if focus_refs else None
     for comp in components:
         if _in_bbox(comp['x'], comp['y'], crop_bbox):
             lib_id = comp['lib_name'] or comp['lib_id']
             sg = sym_graphics.get(lib_id) or sym_graphics.get(comp['lib_id'])
             if sg:
-                render_component(svg, comp, sg)
+                if focus_set and comp['ref'] not in focus_set:
+                    with svg.group(opacity=dim_opacity):
+                        render_component(svg, comp, sg)
+                else:
+                    render_component(svg, comp, sg)
 
     # 8. Labels
     for lbl in labels:
@@ -858,11 +977,18 @@ def _render_label(svg: SvgBuilder, lbl: dict) -> None:
     font_size = (effects.height if effects and effects.height > 0
                  else DEFAULT_FONT_SIZE)
 
+    angle = lbl.get('angle', 0)
+
     if ltype == 'label':
-        # Local label: horizontal text, offset slightly from wire
-        offset = font_size * 0.15
-        svg.text(x, y - offset, name, font_size=font_size, fill=LABEL_COLOR,
-                 dominant_baseline='auto')
+        # Local label: text at exact position, rotated to match wire direction
+        anchor = 'start'
+        if angle == 180:
+            anchor = 'end'
+        elif angle == 90 or angle == 270:
+            anchor = 'middle'
+        svg.text(x, y, name, font_size=font_size, fill=LABEL_COLOR,
+                 anchor=anchor, dominant_baseline='auto',
+                 rotation=angle if angle else 0)
     elif ltype == 'global_label':
         # Global label: text inside a flag shape
         _render_flag_label(svg, x, y, name, lbl.get('shape', ''),
@@ -1069,6 +1195,8 @@ def _discover_sub_sheets(root: list, sch_dir: str) -> list[tuple[str, str]]:
 
 def render_schematic(sch_path: str, output_dir: str,
                      crop_refs: list[str] | None = None,
+                     focus_refs: list[str] | None = None,
+                     highlight_nets: list[str] | None = None,
                      overlay_json: str | None = None,
                      padding: float = 5.0,
                      recursive: bool = True) -> list[str]:
@@ -1103,7 +1231,11 @@ def render_schematic(sch_path: str, output_dir: str,
     else:
         svg = SvgBuilder(paper_w, paper_h)
 
-    render_sheet(svg, root, sym_graphics, paper_w, paper_h, crop_bbox=crop_bbox)
+    sch_filename = Path(sch_path).name
+    render_sheet(svg, root, sym_graphics, paper_w, paper_h,
+                 crop_bbox=crop_bbox, focus_refs=focus_refs,
+                 highlight_nets=highlight_nets,
+                 sch_filename=sch_filename)
 
     # Apply overlays
     if overlay_data:
@@ -1132,7 +1264,9 @@ def render_schematic(sch_path: str, output_dir: str,
                 sub_pw, sub_ph = _get_paper_size(sub_root)
                 sub_graphics = extract_symbol_graphics(sub_root)
                 sub_svg = SvgBuilder(sub_pw, sub_ph)
-                render_sheet(sub_svg, sub_root, sub_graphics, sub_pw, sub_ph)
+                sub_filename = Path(sheet_path).name
+                render_sheet(sub_svg, sub_root, sub_graphics, sub_pw, sub_ph,
+                             sch_filename=sub_filename)
                 safe_name = sheet_name.replace(' ', '_').replace('/', '_')
                 sub_path = os.path.join(output_dir, f"{base}-{safe_name}.svg")
                 sub_svg.write(sub_path)
@@ -1163,9 +1297,15 @@ def main():
                         help='Path to analysis JSON for annotation overlays')
     parser.add_argument('--padding', type=float, default=5.0,
                         help='Padding around crop bounding box (mm)')
+    parser.add_argument('--focus', default=None,
+                        help='Comma-separated refs to focus (dim everything else)')
+    parser.add_argument('--highlight-nets', default=None,
+                        help='Comma-separated net names to highlight')
     args = parser.parse_args()
 
     crop_refs = args.crop.split(',') if args.crop else None
+    focus_refs = args.focus.split(',') if args.focus else None
+    highlight_nets = args.highlight_nets.split(',') if args.highlight_nets else None
 
     # If output looks like a file (has .svg extension), use its directory
     output_dir = args.output
@@ -1175,6 +1315,8 @@ def main():
     files = render_schematic(
         args.schematic, output_dir,
         crop_refs=crop_refs,
+        focus_refs=focus_refs,
+        highlight_nets=highlight_nets,
         overlay_json=args.overlay,
         padding=args.padding,
     )
