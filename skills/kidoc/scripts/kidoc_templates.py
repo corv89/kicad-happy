@@ -63,6 +63,33 @@ DOCUMENT_TEMPLATES = {
         ],
         "default_formats": ["pdf"],
     },
+    "schematic_review": {
+        "name": "Schematic Review Report",
+        "sections": [
+            "front_matter", "executive_summary", "system_overview",
+            "power_design", "signal_interfaces", "analog_design",
+            "bom_summary", "appendix_schematics",
+        ],
+        "default_formats": ["pdf"],
+    },
+    "power_analysis": {
+        "name": "Power Analysis Report",
+        "sections": [
+            "front_matter", "executive_summary", "power_design",
+            "thermal_analysis", "emc_analysis", "bom_summary",
+            "appendix_schematics",
+        ],
+        "default_formats": ["pdf"],
+    },
+    "emc_report": {
+        "name": "EMC Pre-Compliance Report",
+        "sections": [
+            "front_matter", "executive_summary",
+            "emc_analysis", "compliance",
+            "appendix_schematics",
+        ],
+        "default_formats": ["pdf"],
+    },
 }
 
 

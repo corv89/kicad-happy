@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -159,7 +160,9 @@ def resolve_template_vars(text: str, config: dict) -> str:
 
 def scaffold_document(project_dir: str, doc_type: str, output_path: str,
                       config: dict,
-                      analysis_cache: dict | None = None) -> str:
+                      analysis_cache: dict | None = None,
+                      analysis_dir: str | None = None,
+                      spec: dict | None = None) -> str:
     """Generate a markdown scaffold for the specified document type.
 
     Returns the markdown content (also writes to output_path).
@@ -172,10 +175,14 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
     emc_data = analysis_cache.get('emc')
     thermal_data = analysis_cache.get('thermal')
 
-    # Determine paths for diagrams and schematic SVGs
-    reports_dir = os.path.join(project_dir, 'reports')
-    diagrams_dir = os.path.join(reports_dir, 'cache', 'diagrams')
-    sch_cache_dir = os.path.join(reports_dir, 'cache', 'schematic')
+    # Determine paths for diagrams and schematic SVGs.
+    # Figures live under reports/figures/ (git-tracked), separate from
+    # reports/cache/analysis/ (gitignored) which holds only JSON data.
+    output_abs = os.path.abspath(output_path)
+    reports_root = os.path.dirname(output_abs)
+    figures_base = os.path.join(reports_root, 'figures')
+    diagrams_dir = os.path.join(figures_base, 'diagrams')
+    sch_cache_dir = os.path.join(figures_base, 'schematics')
 
     # Use relative paths from the output file's directory
     output_dir = os.path.dirname(os.path.abspath(output_path))
@@ -186,8 +193,12 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
         diagrams_rel = diagrams_dir
         sch_cache_rel = sch_cache_dir
 
-    # Get sections for this document type (with config overrides)
-    sections = get_section_list(doc_type, config)
+    # Get sections for this document type (spec overrides config overrides)
+    if spec:
+        from kidoc_spec import get_section_types
+        sections = get_section_types(spec)
+    else:
+        sections = get_section_list(doc_type, config)
 
     gate_data = analysis_cache.get('gate')
 
@@ -209,7 +220,7 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
         'bom_summary': lambda: section_bom_summary(analysis),
         'test_debug': lambda: section_test_debug(analysis),
         'compliance': lambda: section_compliance(analysis, emc_data, config),
-        'appendix_schematics': lambda: section_appendix_schematics(sch_cache_rel, analysis),
+        'appendix_schematics': lambda: section_appendix_schematics(sch_cache_rel, analysis, sch_cache_dir),
         # CE Technical File
         'ce_product_identification': lambda: section_ce_product_identification(analysis, config),
         'ce_essential_requirements': lambda: section_ce_essential_requirements(analysis, config),
@@ -233,7 +244,9 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
     for section_name in sections:
         generator = section_map.get(section_name)
         if generator:
-            parts.append(generator())
+            content = generator()
+            if content is not None:
+                parts.append(content)
 
     markdown = "\n".join(parts)
 
@@ -249,6 +262,199 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
 
 
 # ======================================================================
+# Auto-run analyses
+# ======================================================================
+
+def _auto_run_analyses(project_dir: str, analysis_dir: str,
+                       figures_dir: str | None = None,
+                       sch_path: str | None = None,
+                       pcb_path: str | None = None) -> dict[str, bool]:
+    """Auto-run available analyses that haven't been generated yet.
+
+    Args:
+        figures_dir: Base directory for generated figures (diagrams, schematics).
+            Defaults to ``analysis_dir`` parent's ``figures/`` sibling when None.
+
+    Returns dict of {analysis_name: was_run_successfully} for reporting.
+    """
+    if figures_dir is None:
+        # Default: reports/figures/ (sibling of reports/cache/)
+        figures_dir = os.path.join(os.path.dirname(os.path.normpath(analysis_dir)),
+                                   '..', 'figures')
+    results = {}
+    scripts_dir = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', '..', 'kicad', 'scripts'))
+
+    os.makedirs(analysis_dir, exist_ok=True)
+
+    # Auto-detect schematic and PCB files if not specified
+    if not sch_path:
+        for f in Path(project_dir).rglob('*.kicad_sch'):
+            sch_path = str(f)
+            break
+    if not pcb_path:
+        for f in Path(project_dir).rglob('*.kicad_pcb'):
+            pcb_path = str(f)
+            break
+
+    # Schematic analysis
+    sch_json = os.path.join(analysis_dir, 'schematic.json')
+    if sch_path and not os.path.isfile(sch_json):
+        analyzer = os.path.join(scripts_dir, 'analyze_schematic.py')
+        if os.path.isfile(analyzer):
+            try:
+                result = subprocess.run(
+                    [sys.executable, analyzer, sch_path, '--output', sch_json],
+                    capture_output=True, text=True, timeout=120)
+                results['schematic'] = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                results['schematic'] = False
+
+    # PCB analysis
+    pcb_json = os.path.join(analysis_dir, 'pcb.json')
+    if pcb_path and not os.path.isfile(pcb_json):
+        analyzer = os.path.join(scripts_dir, 'analyze_pcb.py')
+        if os.path.isfile(analyzer):
+            try:
+                result = subprocess.run(
+                    [sys.executable, analyzer, pcb_path, '--output', pcb_json],
+                    capture_output=True, text=True, timeout=120)
+                results['pcb'] = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                results['pcb'] = False
+
+    # EMC analysis (requires both schematic + PCB JSONs)
+    emc_json = os.path.join(analysis_dir, 'emc.json')
+    if (os.path.isfile(sch_json) and os.path.isfile(pcb_json)
+            and not os.path.isfile(emc_json)):
+        emc_scripts = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', '..', 'emc', 'scripts'))
+        analyzer = os.path.join(emc_scripts, 'analyze_emc.py')
+        if os.path.isfile(analyzer):
+            try:
+                result = subprocess.run(
+                    [sys.executable, analyzer,
+                     '--schematic', sch_json, '--pcb', pcb_json,
+                     '--output', emc_json],
+                    capture_output=True, text=True, timeout=120)
+                results['emc'] = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                results['emc'] = False
+
+    # Thermal analysis (requires both schematic + PCB JSONs)
+    thermal_json = os.path.join(analysis_dir, 'thermal.json')
+    if (os.path.isfile(sch_json) and os.path.isfile(pcb_json)
+            and not os.path.isfile(thermal_json)):
+        analyzer = os.path.join(scripts_dir, 'analyze_thermal.py')
+        if os.path.isfile(analyzer):
+            try:
+                result = subprocess.run(
+                    [sys.executable, analyzer,
+                     '--schematic', sch_json, '--pcb', pcb_json,
+                     '--output', thermal_json],
+                    capture_output=True, text=True, timeout=120)
+                results['thermal'] = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                results['thermal'] = False
+
+    # Diagrams (requires schematic analysis JSON)
+    diagrams_dir = os.path.join(os.path.normpath(figures_dir), 'diagrams')
+    if os.path.isfile(sch_json) and not os.path.isdir(diagrams_dir):
+        diagram_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'kidoc_diagrams.py')
+        if os.path.isfile(diagram_script):
+            os.makedirs(diagrams_dir, exist_ok=True)
+            try:
+                result = subprocess.run(
+                    [sys.executable, diagram_script,
+                     '--analysis', sch_json, '--all', '--output', diagrams_dir],
+                    capture_output=True, text=True, timeout=60)
+                results['diagrams'] = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                results['diagrams'] = False
+
+    # Schematic SVG renders (requires .kicad_sch)
+    sch_cache_dir = os.path.join(os.path.normpath(figures_dir), 'schematics')
+    if sch_path and not os.path.isdir(sch_cache_dir):
+        render_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'kidoc_render.py')
+        if os.path.isfile(render_script):
+            os.makedirs(sch_cache_dir, exist_ok=True)
+            try:
+                result = subprocess.run(
+                    [sys.executable, render_script, sch_path,
+                     '--output', sch_cache_dir],
+                    capture_output=True, text=True, timeout=120)
+                results['renders'] = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                results['renders'] = False
+
+    return results
+
+
+def _print_analysis_summary(results: dict, analysis_dir: str,
+                            figures_dir: str | None = None) -> None:
+    """Print what analyses are available and what's missing."""
+    available = []
+    missing = []
+
+    checks = {
+        'schematic': 'schematic.json',
+        'pcb': 'pcb.json',
+        'emc': 'emc.json',
+        'thermal': 'thermal.json',
+        'spice': 'spice.json',
+    }
+
+    for name, filename in checks.items():
+        path = os.path.join(analysis_dir, filename)
+        if os.path.isfile(path):
+            if name in results:
+                available.append(f"  {name}: auto-generated")
+            else:
+                available.append(f"  {name}: found")
+        else:
+            if name in results:
+                missing.append(f"  {name}: auto-run failed")
+            elif name == 'spice':
+                missing.append(f"  {name}: requires manual SPICE simulation")
+            else:
+                missing.append(f"  {name}: not available (no source data)")
+
+    # Check diagrams and renders (under figures/ directory)
+    fig_base = figures_dir or os.path.join(
+        os.path.dirname(os.path.normpath(analysis_dir)), '..', 'figures')
+    diagrams_dir = os.path.join(os.path.normpath(fig_base), 'diagrams')
+    if os.path.isdir(diagrams_dir):
+        if 'diagrams' in results:
+            available.append("  diagrams: auto-generated")
+        else:
+            available.append("  diagrams: found")
+    else:
+        missing.append("  diagrams: not generated")
+
+    sch_fig_dir = os.path.join(os.path.normpath(fig_base), 'schematics')
+    if os.path.isdir(sch_fig_dir):
+        if 'renders' in results:
+            available.append("  renders: auto-generated")
+        else:
+            available.append("  renders: found")
+    else:
+        missing.append("  renders: not generated (needs kicad-cli)")
+
+    if available:
+        print("Analysis data:", file=sys.stderr)
+        for a in available:
+            print(a, file=sys.stderr)
+    if missing:
+        print("Not included (run separately to add):", file=sys.stderr)
+        for m in missing:
+            print(m, file=sys.stderr)
+
+
+# ======================================================================
 # Main
 # ======================================================================
 
@@ -259,8 +465,12 @@ def main():
                         help='Path to KiCad project directory')
     parser.add_argument('--type', '-t', default='hdd',
                         choices=['hdd', 'ce_technical_file', 'design_review',
-                                 'icd', 'manufacturing'],
+                                 'icd', 'manufacturing',
+                                 'schematic_review', 'power_analysis',
+                                 'emc_report'],
                         help='Document type (default: hdd)')
+    parser.add_argument('--spec', default=None,
+                        help='Path to document spec JSON (overrides --type)')
     parser.add_argument('--output', '-o', required=True,
                         help='Output markdown file path')
     parser.add_argument('--config', default=None,
@@ -269,14 +479,39 @@ def main():
                         help='Directory containing analysis JSONs')
     args = parser.parse_args()
 
+    # Load spec (--spec overrides --type)
+    if args.spec:
+        from kidoc_spec import load_spec
+        spec = load_spec(args.spec)
+        doc_type = spec.get('type', 'custom')
+    else:
+        from kidoc_spec import load_builtin_spec
+        spec = load_builtin_spec(args.type)
+        doc_type = args.type
+
     # Load config
     if args.config:
         config = load_config_from_path(args.config)
     else:
         config = load_config(args.project_dir)
 
-    # Load analysis cache
+    # Auto-run available analyses before loading cache
+    analysis_dir = args.analysis_dir or os.path.join(
+        args.project_dir, 'reports', 'cache', 'analysis')
+
+    # Figures (diagrams, schematics) go under reports/figures/ (git-tracked),
+    # separate from reports/cache/ (gitignored) which holds analysis JSONs.
+    output_dir = os.path.dirname(os.path.abspath(args.output))
+    figures_dir = os.path.join(output_dir, 'figures')
+
+    auto_results = _auto_run_analyses(args.project_dir, analysis_dir,
+                                       figures_dir=figures_dir)
+
+    # Load analysis cache (now includes any auto-generated files)
     cache = load_analysis_cache(args.project_dir, args.analysis_dir)
+
+    # Print summary of what's available
+    _print_analysis_summary(auto_results, analysis_dir, figures_dir=figures_dir)
 
     if not cache:
         print("Warning: no analysis JSONs found. Scaffold will have placeholder content.",
@@ -285,10 +520,12 @@ def main():
     # Generate scaffold
     scaffold_document(
         project_dir=args.project_dir,
-        doc_type=args.type,
+        doc_type=doc_type,
         output_path=args.output,
         config=config,
         analysis_cache=cache,
+        analysis_dir=analysis_dir,
+        spec=spec,
     )
 
     print(args.output, file=sys.stderr)

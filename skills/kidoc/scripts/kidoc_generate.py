@@ -167,6 +167,8 @@ def _generate_odt(venv_py: str, md_path: str, output_path: str,
     return True
 
 
+
+
 def generate_documents(project_dir: str, formats: list[str],
                        doc_name: str | None = None,
                        config: dict | None = None) -> list[str]:
@@ -222,6 +224,8 @@ def generate_documents(project_dir: str, formats: list[str],
         if 'pdf' in formats or 'all' in formats:
             pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
             print(f"Generating PDF: {pdf_path}", file=sys.stderr)
+            if venv_py is None:
+                venv_py = ensure_venv(project_dir)
             if _generate_pdf(venv_py, md_path, pdf_path, config):
                 outputs.append(pdf_path)
                 print(f"  -> {pdf_path}", file=sys.stderr)
@@ -255,12 +259,22 @@ def main():
                         help='Specific markdown file to process')
     parser.add_argument('--config', default=None,
                         help='Path to .kicad-happy.json config')
+    parser.add_argument('--spec', default=None,
+                        help='Path to document spec JSON')
     args = parser.parse_args()
 
     if args.config:
         config = load_config_from_path(args.config)
     else:
         config = load_config(args.project_dir)
+
+    # When --spec is provided, use its title as fallback project name
+    if args.spec:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from kidoc_spec import load_spec
+        spec = load_spec(args.spec)
+        if not config.get('project', {}).get('name'):
+            config.setdefault('project', {})['name'] = spec.get('title', '')
 
     formats = [args.format] if args.format != 'all' else ['html', 'pdf', 'docx', 'odt']
 

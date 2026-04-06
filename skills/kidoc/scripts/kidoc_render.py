@@ -343,9 +343,50 @@ def _transform_point(px: float, py: float, angle: float,
     return cx + rpx, cy - rpy
 
 
+NET_ANNOTATION_COLOR = "#008484"
+
+
+def _render_net_annotation(svg: SvgBuilder, tip: tuple[float, float],
+                           net_name: str, pin: PinGraphic,
+                           comp_angle: float, mx: bool, my: bool,
+                           cx: float, cy: float) -> None:
+    """Render a net name annotation at a pin tip position."""
+    body_dx = pin.length * math.cos(math.radians(pin.angle))
+    body_dy = pin.length * math.sin(math.radians(pin.angle))
+    body = _transform_point(pin.x + body_dx, pin.y + body_dy,
+                            comp_angle, mx, my, cx, cy)
+
+    dx = tip[0] - body[0]
+    dy = tip[1] - body[1]
+    dist = math.hypot(dx, dy)
+
+    font_size = 1.27 * FONT_SCALE
+    gap = font_size * 0.3
+
+    if dist > 0.01:
+        nx, ny = dx / dist, dy / dist
+        tx = tip[0] + nx * gap
+        ty = tip[1] + ny * gap
+        if abs(dx) > abs(dy):
+            anchor = 'start' if dx > 0 else 'end'
+        else:
+            anchor = 'middle'
+    else:
+        tx, ty = tip[0] + gap, tip[1]
+        anchor = 'start'
+
+    svg.text(tx, ty, net_name,
+             font_size=font_size,
+             font_family=DEFAULT_FONT_FAMILY,
+             anchor=anchor,
+             dominant_baseline='auto',
+             fill=NET_ANNOTATION_COLOR)
+
+
 def render_component(svg: SvgBuilder, comp: dict,
                      sym_graphics: SymbolGraphics,
-                     lib_symbols: dict | None = None) -> None:
+                     lib_symbols: dict | None = None,
+                     pin_nets: dict[str, str] | None = None) -> None:
     """Render a single placed component."""
     cx, cy = comp['x'], comp['y']
     angle = comp['angle']
@@ -378,6 +419,14 @@ def render_component(svg: SvgBuilder, comp: dict,
 
     # Render property text (Reference, Value) at their specified positions
     _render_properties(svg, comp)
+
+    # Render net name annotations at pin tips
+    if pin_nets:
+        for g in all_graphics:
+            if isinstance(g, PinGraphic) and g.number in pin_nets:
+                net_name = pin_nets[g.number]
+                tip = _transform_point(g.x, g.y, angle, mx, my, cx, cy)
+                _render_net_annotation(svg, tip, net_name, g, angle, mx, my, cx, cy)
 
 
 def _render_rect(svg: SvgBuilder, g: RectGraphic,
@@ -993,7 +1042,8 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
                  dim_opacity: float = 0.15,
                  highlight_nets: list[str] | None = None,
                  highlight_color: str = '#ff0000',
-                 sch_filename: str = '') -> None:
+                 sch_filename: str = '',
+                 pin_nets: dict[str, dict[str, str]] | None = None) -> None:
     """Render a complete schematic sheet.
 
     If *crop_bbox* is set, only elements within the bbox are rendered.
@@ -1043,11 +1093,12 @@ def render_sheet(svg: SvgBuilder, root: list, sym_graphics: dict,
             lib_id = comp['lib_name'] or comp['lib_id']
             sg = sym_graphics.get(lib_id) or sym_graphics.get(comp['lib_id'])
             if sg:
+                comp_pin_nets = pin_nets.get(comp['ref']) if pin_nets else None
                 if focus_set and comp['ref'] not in focus_set:
                     with svg.group(opacity=dim_opacity):
-                        render_component(svg, comp, sg)
+                        render_component(svg, comp, sg, pin_nets=comp_pin_nets)
                 else:
-                    render_component(svg, comp, sg)
+                    render_component(svg, comp, sg, pin_nets=comp_pin_nets)
 
     # 2. Bus wires
     for bus in buses:
@@ -1367,7 +1418,8 @@ def render_schematic(sch_path: str, output_dir: str,
                      highlight_nets: list[str] | None = None,
                      overlay_json: str | None = None,
                      padding: float = 5.0,
-                     recursive: bool = True) -> list[str]:
+                     recursive: bool = True,
+                     pin_nets: dict[str, dict[str, str]] | None = None) -> list[str]:
     """Render a .kicad_sch file to SVG.
 
     If *recursive* is True, also renders hierarchical sub-sheets.
@@ -1403,7 +1455,8 @@ def render_schematic(sch_path: str, output_dir: str,
     render_sheet(svg, root, sym_graphics, paper_w, paper_h,
                  crop_bbox=crop_bbox, focus_refs=focus_refs,
                  highlight_nets=highlight_nets,
-                 sch_filename=sch_filename)
+                 sch_filename=sch_filename,
+                 pin_nets=pin_nets)
 
     # Apply overlays
     if overlay_data:
@@ -1434,7 +1487,8 @@ def render_schematic(sch_path: str, output_dir: str,
                 sub_svg = SvgBuilder(sub_pw, sub_ph)
                 sub_filename = Path(sheet_path).name
                 render_sheet(sub_svg, sub_root, sub_graphics, sub_pw, sub_ph,
-                             sch_filename=sub_filename)
+                             sch_filename=sub_filename,
+                             pin_nets=pin_nets)
                 safe_name = sheet_name.replace(' ', '_').replace('/', '_')
                 sub_path = os.path.join(output_dir, f"{base}-{safe_name}.svg")
                 sub_svg.write(sub_path)
@@ -1469,11 +1523,18 @@ def main():
                         help='Comma-separated refs to focus (dim everything else)')
     parser.add_argument('--highlight-nets', default=None,
                         help='Comma-separated net names to highlight')
+    parser.add_argument('--pin-nets', default=None,
+                        help='Path to pin-nets JSON ({ref: {pin: net_name}})')
     args = parser.parse_args()
 
     crop_refs = args.crop.split(',') if args.crop else None
     focus_refs = args.focus.split(',') if args.focus else None
     highlight_nets = args.highlight_nets.split(',') if args.highlight_nets else None
+
+    pin_nets_data = None
+    if args.pin_nets and os.path.isfile(args.pin_nets):
+        with open(args.pin_nets) as f:
+            pin_nets_data = json.load(f)
 
     # If output looks like a file (has .svg extension), use its directory
     output_dir = args.output
@@ -1487,6 +1548,7 @@ def main():
         highlight_nets=highlight_nets,
         overlay_json=args.overlay,
         padding=args.padding,
+        pin_nets=pin_nets_data,
     )
 
     for f in files:
