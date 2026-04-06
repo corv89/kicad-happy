@@ -62,6 +62,43 @@ Creates `reports/.venv/` automatically on first run (PDF/DOCX/ODT only — HTML 
 | `design_review` | Design Review Package | Review summary (cross-analyzer scores), findings, action items |
 | `icd` | Interface Control Document | Interface list, per-connector pinout details, electrical characteristics |
 | `manufacturing` | Manufacturing Transfer Package | Assembly overview, PCB fab notes, assembly instructions, test procedures |
+| `schematic_review` | Schematic Review Report | System overview, power, signals, analog, BOM, schematic appendix |
+| `power_analysis` | Power Analysis Report | Power design, thermal, EMC, BOM |
+| `emc_report` | EMC Pre-Compliance Report | EMC analysis, compliance, schematic appendix |
+
+## Custom Reports
+
+Use `--spec` to generate reports with arbitrary section ordering:
+
+```bash
+python3 skills/kidoc/scripts/kidoc_scaffold.py \
+  --project-dir . --spec my-report.json --output reports/custom.md
+```
+
+Spec format (JSON):
+
+```json
+{
+  "type": "custom",
+  "title": "USB Interface Analysis",
+  "sections": [
+    {"id": "front_matter", "type": "front_matter"},
+    {"id": "signal_interfaces", "type": "signal_interfaces"},
+    {"id": "bom", "type": "bom_summary"}
+  ]
+}
+```
+
+Each section's `type` must match a known section type (same names used in the document types table above). The `id` field is a unique key for that section instance.
+
+To see the full default spec for any built-in type:
+
+```bash
+python3 skills/kidoc/scripts/kidoc_spec.py --expand hdd
+python3 skills/kidoc/scripts/kidoc_spec.py --list
+```
+
+The `--spec` flag also works with `kidoc_generate.py` (uses the spec title as fallback project name).
 
 ## Schematic Rendering
 

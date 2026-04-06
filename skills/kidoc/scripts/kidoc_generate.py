@@ -259,12 +259,22 @@ def main():
                         help='Specific markdown file to process')
     parser.add_argument('--config', default=None,
                         help='Path to .kicad-happy.json config')
+    parser.add_argument('--spec', default=None,
+                        help='Path to document spec JSON')
     args = parser.parse_args()
 
     if args.config:
         config = load_config_from_path(args.config)
     else:
         config = load_config(args.project_dir)
+
+    # When --spec is provided, use its title as fallback project name
+    if args.spec:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from kidoc_spec import load_spec
+        spec = load_spec(args.spec)
+        if not config.get('project', {}).get('name'):
+            config.setdefault('project', {})['name'] = spec.get('title', '')
 
     formats = [args.format] if args.format != 'all' else ['html', 'pdf', 'docx', 'odt']
 

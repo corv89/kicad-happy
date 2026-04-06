@@ -161,7 +161,8 @@ def resolve_template_vars(text: str, config: dict) -> str:
 def scaffold_document(project_dir: str, doc_type: str, output_path: str,
                       config: dict,
                       analysis_cache: dict | None = None,
-                      analysis_dir: str | None = None) -> str:
+                      analysis_dir: str | None = None,
+                      spec: dict | None = None) -> str:
     """Generate a markdown scaffold for the specified document type.
 
     Returns the markdown content (also writes to output_path).
@@ -192,8 +193,12 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
         diagrams_rel = diagrams_dir
         sch_cache_rel = sch_cache_dir
 
-    # Get sections for this document type (with config overrides)
-    sections = get_section_list(doc_type, config)
+    # Get sections for this document type (spec overrides config overrides)
+    if spec:
+        from kidoc_spec import get_section_types
+        sections = get_section_types(spec)
+    else:
+        sections = get_section_list(doc_type, config)
 
     gate_data = analysis_cache.get('gate')
 
@@ -460,8 +465,12 @@ def main():
                         help='Path to KiCad project directory')
     parser.add_argument('--type', '-t', default='hdd',
                         choices=['hdd', 'ce_technical_file', 'design_review',
-                                 'icd', 'manufacturing'],
+                                 'icd', 'manufacturing',
+                                 'schematic_review', 'power_analysis',
+                                 'emc_report'],
                         help='Document type (default: hdd)')
+    parser.add_argument('--spec', default=None,
+                        help='Path to document spec JSON (overrides --type)')
     parser.add_argument('--output', '-o', required=True,
                         help='Output markdown file path')
     parser.add_argument('--config', default=None,
@@ -469,6 +478,16 @@ def main():
     parser.add_argument('--analysis-dir', default=None,
                         help='Directory containing analysis JSONs')
     args = parser.parse_args()
+
+    # Load spec (--spec overrides --type)
+    if args.spec:
+        from kidoc_spec import load_spec
+        spec = load_spec(args.spec)
+        doc_type = spec.get('type', 'custom')
+    else:
+        from kidoc_spec import load_builtin_spec
+        spec = load_builtin_spec(args.type)
+        doc_type = args.type
 
     # Load config
     if args.config:
@@ -501,11 +520,12 @@ def main():
     # Generate scaffold
     scaffold_document(
         project_dir=args.project_dir,
-        doc_type=args.type,
+        doc_type=doc_type,
         output_path=args.output,
         config=config,
         analysis_cache=cache,
         analysis_dir=analysis_dir,
+        spec=spec,
     )
 
     print(args.output, file=sys.stderr)
