@@ -2700,6 +2700,8 @@ def parse_legacy_schematic(path: str) -> dict:
         pin_net=pin_net,
         no_connects=all_no_connects,
     )
+    from netlist_queries import NetlistQueries
+    ctx.nq = NetlistQueries(ctx)
 
     subcircuits = identify_subcircuits(ctx)
 
@@ -6954,6 +6956,8 @@ def analyze_schematic(path: str) -> dict:
         no_connects=all_no_connects,
         generator_version=generator_version,
     )
+    from netlist_queries import NetlistQueries
+    ctx.nq = NetlistQueries(ctx)
 
     # Identify subcircuits
     subcircuits = identify_subcircuits(ctx)

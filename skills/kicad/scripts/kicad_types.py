@@ -33,6 +33,7 @@ class AnalysisContext:
     ref_pins: dict[str, dict[str, tuple[str | None, str | None]]] = field(default_factory=dict)
     no_connects: list[dict] = field(default_factory=list)
     generator_version: str = "unknown"
+    nq: 'NetlistQueries | None' = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.comp_lookup:

@@ -24,7 +24,9 @@ from kicad_types import AnalysisContext
 # ---------------------------------------------------------------------------
 
 def _get_net_components(ctx: AnalysisContext, net_name, exclude_ref):
-    """Get components on a net excluding the transistor itself."""
+    """Get components on a net excluding the given component."""
+    if ctx.nq:
+        return ctx.nq.components_on_net(net_name, exclude_refs={exclude_ref})
     if net_name not in ctx.nets:
         return []
     result_comps = []
@@ -454,13 +456,21 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
             if ctx.is_power_net(shared_net) or ctx.is_ground(shared_net):
                 continue
 
-            # Reject if shared net has too many connections — a real RC filter
-            # node typically has 2-3 connections (R + C + maybe one IC pin).
-            # High-fanout nets (>6 pins) are likely buses or IC rails where
-            # R and C happen to share a node but don't form a filter.
+            # Reject if shared net has too many non-passive connections.
+            # A real RC filter node typically has 2-3 connections (R + C +
+            # maybe one IC pin).  On high-fanout nets, accept if most
+            # connections are passives (filter node with parallel caps),
+            # reject if many ICs are connected (bus/data line).
             shared_pin_count = len(ctx.nets.get(shared_net, {}).get("pins", []))
             if shared_pin_count > 6:
-                continue
+                if ctx.nq:
+                    non_passive = sum(
+                        1 for c in ctx.nq.components_on_net(shared_net)
+                        if c["type"] not in ("resistor", "capacitor", "inductor"))
+                    if non_passive > 3:
+                        continue
+                else:
+                    continue
 
             r_other = (r_nets - {shared_net}).pop()
             c_other = (c_nets - {shared_net}).pop()
@@ -588,7 +598,14 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
             # filters have 2-4 connections at the junction node.
             shared_pin_count = len(ctx.nets.get(shared_net_lc, {}).get("pins", []))
             if shared_pin_count > 6:
-                continue
+                if ctx.nq:
+                    non_passive = sum(
+                        1 for c in ctx.nq.components_on_net(shared_net_lc)
+                        if c["type"] not in ("resistor", "capacitor", "inductor"))
+                    if non_passive > 3:
+                        continue
+                else:
+                    continue
 
             # Skip bootstrap capacitors: cap between BST/BOOT pin and SW/LX node.
             # These are gate-drive charge pumps, not signal filters.
@@ -1347,12 +1364,12 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     continue
             if sw_pin and not has_reg_keyword:
                 # SW pin but check if inductor is connected
-                sw_has_inductor = False
                 sw_net_name = sw_pin[1]
-                if sw_net_name in ctx.nets:
-                    for p in ctx.nets[sw_net_name]["pins"]:
-                        comp_c = ctx.comp_lookup.get(p["component"])
-                        if comp_c and comp_c["type"] == "inductor":
+                sw_has_inductor = bool(ctx.nq and ctx.nq.inductors_on_net(sw_net_name, exclude_ref=ref))
+                if not sw_has_inductor and ctx.nq:
+                    # Try 1-hop through connectors/hierarchical pins
+                    for other_net in ctx.nq.trace_through(sw_net_name, ref):
+                        if ctx.nq.inductors_on_net(other_net):
                             sw_has_inductor = True
                             break
                 if not sw_has_inductor:
@@ -1370,13 +1387,16 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             sw_net = sw_pin[1]
             has_inductor = False
             inductor_ref = None
-            if sw_net in ctx.nets:
-                for p in ctx.nets[sw_net]["pins"]:
-                    comp = ctx.comp_lookup.get(p["component"])
-                    if comp and comp["type"] == "inductor":
-                        has_inductor = True
-                        inductor_ref = p["component"]
+            inductors = ctx.nq.inductors_on_net(sw_net, exclude_ref=ref) if ctx.nq else []
+            if not inductors and ctx.nq:
+                # Try 1-hop through connectors for modular designs
+                for other_net in ctx.nq.trace_through(sw_net, ref):
+                    inductors = ctx.nq.inductors_on_net(other_net)
+                    if inductors:
                         break
+            if inductors:
+                has_inductor = True
+                inductor_ref = inductors[0]["reference"]
             if has_inductor:
                 reg_info["topology"] = "switching"
                 reg_info["inductor"] = inductor_ref

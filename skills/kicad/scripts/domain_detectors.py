@@ -2915,16 +2915,37 @@ def _find_series_termination(ctx: AnalysisContext, net_name: str,
 
 def _trace_clock_consumers(ctx: AnalysisContext, net_name: str,
                             source_ref: str) -> list[str]:
-    """Find IC consumers on a clock net, excluding the source."""
+    """Find IC consumers on a clock net, excluding the source.
+
+    When ctx.nq is available, traces through clock buffers to find
+    downstream consumers (e.g., SI5351 → MCU, FPGA).
+    """
     consumers: list[str] = []
     if net_name not in ctx.nets:
         return consumers
+    seen: set[str] = {source_ref}
     for p in ctx.nets[net_name]["pins"]:
-        if p["component"] == source_ref:
+        ref = p["component"]
+        if ref in seen:
             continue
-        comp = ctx.comp_lookup.get(p["component"])
-        if comp and comp["type"] == "ic" and p["component"] not in consumers:
-            consumers.append(p["component"])
+        comp = ctx.comp_lookup.get(ref)
+        if not comp or comp["type"] != "ic":
+            continue
+        seen.add(ref)
+        # Check if this IC is a clock buffer — trace through to outputs
+        if ctx.nq:
+            val_lib = (comp.get("value", "") + " " + comp.get("lib_id", "")).lower()
+            if any(kw in val_lib for kw in _CLOCK_BUFFER_KEYWORDS):
+                for out_net in ctx.nq.trace_through(net_name, ref):
+                    if ctx.is_ground(out_net) or ctx.is_power_net(out_net):
+                        continue
+                    for downstream in ctx.nq.ics_on_net(out_net, exclude_ref=ref):
+                        dref = downstream["reference"]
+                        if dref not in seen:
+                            seen.add(dref)
+                            consumers.append(dref)
+                continue
+        consumers.append(ref)
     return consumers
 
 
