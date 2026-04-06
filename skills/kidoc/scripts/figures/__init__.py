@@ -1,11 +1,13 @@
 """Figure generators for engineering documentation.
 
-Provides power tree, bus topology, and architecture block diagrams
-from schematic analysis JSON.  Output is SVG via svg_builder.
+Provides power tree, bus topology, architecture block diagrams,
+and connector pinout diagrams from schematic analysis JSON.
+Output is SVG via svg_builder.
 
 Usage from other scripts::
 
     from figures import generate_power_tree, generate_bus_topology, generate_architecture
+    from figures import generate_pinout, generate_pinouts
     from figures import generate_all
 """
 
@@ -16,11 +18,14 @@ import os
 from .power_tree import generate_power_tree
 from .bus_topology import generate_bus_topology
 from .architecture import generate_architecture
+from .pinout import generate_pinout, generate_pinouts
 
 __all__ = [
     'generate_power_tree',
     'generate_bus_topology',
     'generate_architecture',
+    'generate_pinout',
+    'generate_pinouts',
     'generate_all',
 ]
 
