@@ -24,23 +24,24 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-# Cross-skill imports -- same pattern as kidoc_render.py
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
+# Path setup: scripts/ dir (for cross-skill sexp_parser) and figures.lib
+_scripts_dir = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+sys.path.insert(0, _scripts_dir)
+_kicad_scripts = os.path.join(_scripts_dir, '..', '..', 'kicad', 'scripts')
 if os.path.isdir(_kicad_scripts):
     sys.path.insert(0, os.path.abspath(_kicad_scripts))
 
-from svg_builder import SvgBuilder, three_point_arc, _f
-from pcb_graphics import (
+from figures.lib.svg_builder import SvgBuilder, three_point_arc, _f  # noqa: E402
+from .pcb_graphics import (  # noqa: E402
     extract_pcb, BoardOutline, FootprintInfo, PadInfo,
     TrackInfo, ArcTrackInfo, ViaInfo, ZoneOutline, FpGraphic,
 )
-from layer_presets import (
+from figures.lib.layer_presets import (  # noqa: E402
     LayerPreset, LayerStyle, PRESETS, get_preset,
     layer_visible, layer_style,
 )
-from color_theme import (
+from figures.lib.color_theme import (  # noqa: E402
     PCB_PAD_COLOR, PCB_VIA_COLOR, PCB_DRILL_COLOR,
 )
 

@@ -26,9 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kidoc_spec import load_spec, expand_type_to_spec, SECTION_DEFAULTS
 from kicad_cli import find_kicad_cli, export_sch_svg, export_pcb_svg
-from kidoc_render import render_schematic
-from pcb_render import render_pcb
-from figures import generate_all, generate_pinouts, FigureTheme
+from figures.renderers import render_schematic, render_pcb
+from figures import run_all, FigureTheme
 
 
 # ======================================================================
@@ -210,27 +209,15 @@ def _render_pcb_views(pcb_path: str, output_dir: str,
     return paths
 
 
-def _generate_diagrams(analysis: dict, output_dir: str,
-                       theme: Optional[FigureTheme] = None) -> List[str]:
-    """Generate all block diagrams. Returns list of SVG paths."""
+def _generate_all_figures(analysis: dict, output_dir: str,
+                          config: Optional[dict] = None,
+                          theme: Optional[FigureTheme] = None) -> List[str]:
+    """Generate all figures (diagrams + pinouts). Returns list of SVG paths."""
     os.makedirs(output_dir, exist_ok=True)
     try:
-        return generate_all(analysis, output_dir, theme=theme)
+        return run_all(analysis, config or {}, output_dir, theme=theme)
     except Exception as exc:
-        print(f"  Warning: diagram generation failed: {exc}",
-              file=sys.stderr)
-        return []
-
-
-def _generate_pinout_figures(analysis: dict,
-                             output_dir: str,
-                             theme: Optional[FigureTheme] = None) -> List[str]:
-    """Generate connector pinout SVGs. Returns list of SVG paths."""
-    os.makedirs(output_dir, exist_ok=True)
-    try:
-        return generate_pinouts(analysis, output_dir, theme=theme)
-    except Exception as exc:
-        print(f"  Warning: pinout generation failed: {exc}",
+        print(f"  Warning: figure generation failed: {exc}",
               file=sys.stderr)
         return []
 
@@ -353,23 +340,13 @@ def orchestrate_renders(spec: dict, project_dir: str,
                 result.setdefault(section_id, []).extend(paths)
                 pcb_done = True
 
-        # Pinout figures
-        if (section_type in _PINOUT_SECTION_TYPES and analysis
-                and not pinouts_done):
-            print(f"  [{section_id}] pinout figures", file=sys.stderr)
-            paths = _generate_pinout_figures(analysis, pinouts_dir,
-                                                     theme=theme)
-            if paths:
-                result.setdefault(section_id, []).extend(paths)
-                pinouts_done = True
-
-    # ---- Always generate diagrams from analysis data ----
+    # ---- Generate all figures (diagrams + pinouts) ----
     if analysis:
-        print("  [diagrams] generating block diagrams", file=sys.stderr)
-        diagram_paths = _generate_diagrams(analysis, diagrams_dir,
-                                                  theme=theme)
-        if diagram_paths:
-            result['_diagrams'] = diagram_paths
+        print("  [figures] generating all figures", file=sys.stderr)
+        fig_paths = _generate_all_figures(analysis, diagrams_dir,
+                                          config=config, theme=theme)
+        if fig_paths:
+            result['_figures'] = fig_paths
 
     return result
 

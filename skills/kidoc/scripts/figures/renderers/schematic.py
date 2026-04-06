@@ -22,23 +22,24 @@ import os
 import sys
 from pathlib import Path
 
-# Cross-skill imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
+# Path setup: scripts/ dir (for cross-skill sexp_parser) and figures.lib
+_scripts_dir = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+sys.path.insert(0, _scripts_dir)
+_kicad_scripts = os.path.join(_scripts_dir, '..', '..', 'kicad', 'scripts')
 if os.path.isdir(_kicad_scripts):
     sys.path.insert(0, os.path.abspath(_kicad_scripts))
 
-from sexp_parser import (parse_file, find_all, find_first, get_value,
+from sexp_parser import (parse_file, find_all, find_first, get_value,  # noqa: E402
                           get_at, get_property, get_properties)
-from svg_builder import SvgBuilder, three_point_arc, _f
-from sch_graphics import (
+from figures.lib.svg_builder import SvgBuilder, three_point_arc, _f  # noqa: E402
+from .sch_graphics import (  # noqa: E402
     extract_symbol_graphics, parse_stroke, parse_fill, parse_effects,
     StrokeStyle, FillStyle, TextEffects, SymbolGraphics,
     RectGraphic, CircleGraphic, ArcGraphic, PolylineGraphic,
     BezierGraphic, TextGraphic, PinGraphic,
 )
-from color_theme import (
+from figures.lib.color_theme import (  # noqa: E402
     WIRE_COLOR, BUS_COLOR, JUNCTION_COLOR, NO_CONNECT_COLOR,
     COMPONENT_OUTLINE_COLOR, COMPONENT_FILL_COLOR, PIN_COLOR,
     PIN_NAME_COLOR, PIN_NUMBER_COLOR,
