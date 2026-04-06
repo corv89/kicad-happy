@@ -424,9 +424,7 @@ def section_thermal(thermal_data: dict | None) -> str:
     lines.append("")
 
     if not thermal_data:
-        lines.append("*Thermal analysis not available. Run analyze_thermal.py.*")
-        lines.append("")
-        return "\n".join(lines)
+        return None
 
     summary = thermal_data.get('summary', {})
     lines.append(_auto("thermal_summary",
@@ -465,9 +463,7 @@ def section_emc(emc_data: dict | None) -> str:
     lines.append("")
 
     if not emc_data:
-        lines.append("*EMC analysis not available. Run analyze_emc.py.*")
-        lines.append("")
-        return "\n".join(lines)
+        return None
 
     summary = emc_data.get('summary', {})
     lines.append(_auto("emc_summary",
@@ -534,15 +530,13 @@ def section_emc(emc_data: dict | None) -> str:
 # PCB design
 # ======================================================================
 
-def section_pcb_design(pcb_data: dict | None) -> str:
+def section_pcb_design(pcb_data: dict | None) -> str | None:
     """Generate PCB design section from analyze_pcb output."""
+    if not pcb_data:
+        return None
+
     lines = ["## 8. PCB Design Details"]
     lines.append("")
-
-    if not pcb_data:
-        lines.append("*PCB analysis not available. Run analyze_pcb.py.*")
-        lines.append("")
-        return "\n".join(lines)
 
     stats = pcb_data.get('statistics', {})
     if stats:
@@ -642,12 +636,14 @@ def section_test_debug(analysis: dict) -> str:
 # ======================================================================
 
 def section_compliance(analysis: dict, emc_data: dict | None,
-                       config: dict) -> str:
+                       config: dict) -> str | None:
     """Generate compliance and standards section."""
+    market = config.get('project', {}).get('market', '')
+    if not emc_data and not market:
+        return None
+
     lines = ["## 12. Compliance and Standards"]
     lines.append("")
-
-    market = config.get('project', {}).get('market', '')
     if market:
         lines.append(_auto("target_market", f"**Target Market:** {market.upper()}"))
         lines.append("")
@@ -674,15 +670,24 @@ def section_compliance(analysis: dict, emc_data: dict | None,
 # ======================================================================
 
 def section_appendix_schematics(sch_cache_dir: str,
-                                analysis: dict) -> str:
-    """Generate appendix with full schematic sheet images."""
+                                analysis: dict,
+                                sch_cache_abs: str | None = None) -> str:
+    """Generate appendix with full schematic sheet images.
+
+    Args:
+        sch_cache_dir: Relative path for markdown image links.
+        analysis: Schematic analysis data.
+        sch_cache_abs: Absolute path for filesystem checks (falls back to
+            sch_cache_dir if not provided).
+    """
     lines = ["## Appendix A: Schematic Drawings"]
     lines.append("")
 
-    # Reference any SVGs in the schematic cache directory
+    # Use absolute path for filesystem checks, relative for markdown links
     import os
-    if os.path.isdir(sch_cache_dir):
-        svgs = sorted(f for f in os.listdir(sch_cache_dir) if f.endswith('.svg'))
+    check_dir = sch_cache_abs or sch_cache_dir
+    if os.path.isdir(check_dir):
+        svgs = sorted(f for f in os.listdir(check_dir) if f.endswith('.svg'))
         if svgs:
             for svg_file in svgs:
                 name = svg_file.replace('.svg', '').replace('_', ' ')
@@ -1091,15 +1096,13 @@ def section_mfg_assembly_overview(analysis: dict) -> str:
     return "\n".join(lines)
 
 
-def section_mfg_pcb_fab_notes(pcb_data: dict | None) -> str:
+def section_mfg_pcb_fab_notes(pcb_data: dict | None) -> str | None:
     """Manufacturing: PCB fabrication notes."""
+    if not pcb_data:
+        return None
+
     lines = ["## PCB Fabrication Notes"]
     lines.append("")
-
-    if not pcb_data:
-        lines.append("*PCB analysis not available.*")
-        lines.append("")
-        return "\n".join(lines)
 
     stats = pcb_data.get('statistics', {})
     outline = pcb_data.get('board_outline', {})
@@ -1163,8 +1166,11 @@ def section_mfg_test_procedures(analysis: dict) -> str:
 # Mechanical / Environmental
 # ======================================================================
 
-def section_mechanical_environmental(analysis: dict, pcb_data: dict | None) -> str:
+def section_mechanical_environmental(analysis: dict, pcb_data: dict | None) -> str | None:
     """Mechanical and environmental specifications."""
+    if not pcb_data:
+        return None
+
     lines = ["## 9. Mechanical / Environmental"]
     lines.append("")
 
