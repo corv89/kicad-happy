@@ -109,6 +109,31 @@ Chain with [`anthropics/claude-code-action`](https://github.com/anthropics/claud
 
 Get an API key from [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys), then add it as a repository secret named `ANTHROPIC_API_KEY` in Settings → Secrets → Actions. Cost depends on design complexity — see [Anthropic pricing](https://www.anthropic.com/pricing).
 
+## Codex-powered review (alternative)
+
+If you use OpenAI Codex, you can chain the deterministic analysis with [`openai/codex-action@v1`](https://github.com/openai/codex-action) for AI-powered PR reviews:
+
+```yaml
+      - uses: openai/codex-action@v1
+        if: github.event_name == 'pull_request' && env.OPENAI_API_KEY != ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          prompt: |
+            The kicad-happy deterministic analysis has already been run.
+            Read the markdown report at ${{ steps.analysis.outputs.report-path }}.
+
+            Do NOT re-run analysis scripts. Review the findings and:
+            1. Verify the top 3-5 IC pinouts against datasheets
+            2. Check WARNING findings for accuracy
+            3. Note anything the analysis may have missed
+
+            Post a concise summary (under 2000 chars) as a PR comment.
+            Focus on actionable findings only.
+```
+
+You can also trigger reviews from PR comments with `@codex review` if the Codex GitHub app is installed on the repo.
+
 ## More examples
 
 See [`action/examples/`](action/examples/) for fork-safe workflows, distributor API keys for datasheet download, and advanced configuration.

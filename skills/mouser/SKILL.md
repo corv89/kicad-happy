@@ -230,11 +230,11 @@ When all methods fail, provide the `ProductDetailUrl` to the user so they can do
 
 ## Web Search Fallback
 
-If no API key is available, search Mouser via WebFetch:
+If no API key is available, search Mouser by fetching product pages directly:
 
 - Search URL: `https://www.mouser.com/c/?q=<query>`
 - Product pages contain full specs, pricing tiers, stock, datasheets
-- WebFetch results from Mouser can be noisy (JS-heavy pages)
+- Results from Mouser can be noisy (JS-heavy pages)
 
 Include key parameters in the query:
 - **Passives**: value, package (0402/0603/0805), tolerance, voltage/power rating, dielectric (C0G/X7R)

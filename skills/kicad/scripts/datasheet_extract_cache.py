@@ -19,7 +19,7 @@ Directory structure:
 
 The extraction resolution during review:
     1. Check cache (datasheets/extracted/) — instant if fresh
-    2. If stale or missing → Claude reads PDF pages and extracts
+    2. If stale or missing → the agent reads PDF pages and extracts
     3. Score extraction → cache if sufficient (score >= 6.0)
 """
 

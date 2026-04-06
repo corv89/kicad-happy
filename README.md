@@ -82,14 +82,20 @@ For a complete example, see the [full design review](example-report.md) of an ES
 
 ## 🚀 Install
 
-We're excited to release kicad-happy as a **Claude Code plugin** — you can now install it with two commands from the `/plugin` menu. For OpenAI Codex, the manual install and agent prompt methods still work as before.
-
-**Claude Code plugin** (recommended):
+**Claude Code:**
 
 ```
 /plugin marketplace add aklofas/kicad-happy
 /plugin install kicad-happy@kicad-happy
 ```
+
+**OpenAI Codex:**
+
+```
+/plugins                              # browse repo-local marketplace
+```
+
+Skills are auto-discovered when you open a repo containing kicad-happy (via `.agents/skills/`).
 
 <details>
 <summary><strong>Other install methods</strong></summary>
@@ -103,7 +109,7 @@ We're excited to release kicad-happy as a **Claude Code plugin** — you can now
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 mkdir -p ~/.claude/skills
-for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
+for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.claude/skills/$skill
 done
 ```
@@ -113,7 +119,7 @@ done
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 mkdir -p ~/.codex/skills
-for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway; do
+for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
   ln -sf "$(pwd)/kicad-happy/skills/$skill" ~/.codex/skills/$skill
 done
 ```
@@ -358,7 +364,7 @@ This isn't a beta or a preview. It's production-ready. If you're designing board
 
 ## 🧪 Test harness
 
-Everything above was validated against a [corpus of 1,035 open-source KiCad projects](https://github.com/aklofas/kicad-happy-testharness) — the kind of designs real engineers actually build. The corpus spans hobby boards, production hardware, motor controllers, RF frontends, battery management systems, IoT devices, audio amplifiers, and everything in between. KiCad 5 through 9. Single-sheet and multi-sheet hierarchical. 2-layer through 6-layer.
+Everything above was validated against a [corpus of 1,036 open-source KiCad projects](https://github.com/aklofas/kicad-happy-testharness) — the kind of designs real engineers actually build. The corpus spans hobby boards, production hardware, motor controllers, RF frontends, battery management systems, IoT devices, audio amplifiers, and everything in between. KiCad 5 through 10. Single-sheet and multi-sheet hierarchical. 2-layer through 6-layer. For full methodology and reproducibility instructions, see [VALIDATION.md](VALIDATION.md).
 
 **The numbers:**
 
@@ -398,8 +404,8 @@ Try doing that with Altium or OrCAD. 😉
 
 ## 📜 License
 
-MIT
+MIT — see [CHANGELOG.md](CHANGELOG.md) for release history and [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
 ---
 
-*Built with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).* 🤖
+*Built with [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenAI Codex](https://github.com/openai/codex).* 🤖

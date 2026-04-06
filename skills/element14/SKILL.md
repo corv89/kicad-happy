@@ -37,7 +37,7 @@ For BOM management and export workflows, see `bom`.
    - Free account — just username, email, password. No credit card needed.
    - Provides a "courtesy usage allowance" (2 calls/sec, 1,000 calls/day — sufficient for normal use)
 2. **Register an application** — after logging in, go to [My API Keys](https://partner.element14.com/apps/mykeys) and click "Get API Keys"
-   - App name: anything (e.g., "claude-code")
+   - App name: anything (e.g., "kicad-happy")
    - Type: "Desktop application"
    - Users: "1-10"
    - Commercial: No
@@ -246,7 +246,7 @@ The script:
 
 ## Web Search Fallback
 
-If the API is unavailable, search via WebFetch:
+If the API is unavailable, search by fetching product pages directly:
 
 ```
 https://www.newark.com/search?st=<query>

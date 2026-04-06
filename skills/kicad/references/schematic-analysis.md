@@ -97,7 +97,7 @@ python3 <digikey-skill-path>/scripts/sync_datasheets.py <file.kicad_sch>
 **If datasheets are missing for any component:** Use these fallback methods in order:
 1. Use the `Datasheet` property URL from the schematic symbol
 2. Use the `digikey` skill to search by MPN and download
-3. Use WebSearch to find the manufacturer's datasheet page
+3. Use web search to find the manufacturer's datasheet page
 4. **Ask the user** — do not silently skip verification. Tell them: "I need datasheets for [list of parts] to verify the pinout and application circuit. Can you provide them or point me to a datasheets directory?"
 
 For each IC and active component, extract and **note the page/section numbers** for later citation:

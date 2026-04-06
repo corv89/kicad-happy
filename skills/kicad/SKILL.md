@@ -1,6 +1,18 @@
 ---
 name: kicad
-description: Analyze KiCad EDA projects and PDF schematics — schematics, PCB layouts, Gerbers, footprints, symbols, design rules, netlists. Review designs for bugs, suggest improvements, extract BOMs, trace nets, cross-reference schematic to PCB, verify DRC/ERC, check DFM, analyze power trees and regulator circuits. Also analyze PDF schematics from dev boards, reference designs, eval kits, and datasheets — extract subcircuits, component values, and connectivity for incorporation into KiCad projects. Supports KiCad 5–10. Use whenever the user mentions KiCad files (.kicad_sch, .kicad_pcb, .kicad_pro), PCB design review, schematic analysis, PDF schematics, reference designs, Gerber files, DRC/ERC, netlist issues, BOM extraction, signal tracing, power budget, design for manufacturing, or wants to understand, debug, compare, or review any hardware design. Also use when the user says things like "check my board", "review before fab", "what's wrong with my schematic", "is this design ready to order", "check my power supply", "verify this motor driver circuit", or asks about any electronics/PCB design topic.
+description: >-
+  Analyze KiCad projects and PDF schematics: schematics, PCB layouts, Gerbers,
+  footprints, symbols, netlists, and design rules. Reviews designs for bugs,
+  traces nets, cross-references schematic to PCB, extracts BOM data, checks
+  DRC/ERC, DFM, power trees, and regulator circuits. Analyzes PDF schematics
+  from dev boards, reference designs, eval kits, and datasheets. Supports
+  KiCad 5–10. Use whenever the user mentions .kicad_sch, .kicad_pcb,
+  .kicad_pro, PCB design review, schematic analysis, PDF schematics, reference
+  designs, Gerber files, DRC/ERC, netlist issues, BOM extraction, signal
+  tracing, power budget, DFM, or wants to understand, debug, compare, or
+  review any hardware design. Also for "check my board", "review before fab",
+  "what's wrong with my schematic", "is this ready to order", "check my power
+  supply", "verify this circuit", or any electronics/PCB design question.
 ---
 
 # KiCad Project Analysis Skill
@@ -137,8 +149,8 @@ All scripts output JSON to stdout by default. Use `--output file.json` to write 
 The analysis workflow creates files in the project tree. Analyzer JSON and design review reports use user-chosen filenames, so track what you create:
 
 1. **Tell the user** what files were created and where
-2. **Record them** in the project's `CLAUDE.md` or `AGENTS.md` under a "Generated files" section (create one if needed) so future sessions can find or clean them up
-3. **When the user asks to clean up**, remove generated reports and analyzer JSON. Check `CLAUDE.md`/`AGENTS.md` for the file list — filenames vary per session.
+2. **Record them** in the project's agent instructions file (e.g., `CLAUDE.md`, `AGENTS.md`, or equivalent) under a "Generated files" section so future sessions can find or clean them up
+3. **When the user asks to clean up**, remove generated reports and analyzer JSON. Check the project instructions file for the file list — filenames vary per session.
 
 | File Type | Example | Regenerable? | Commit to git? |
 |-----------|---------|-------------|----------------|
@@ -233,7 +245,7 @@ DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LC
 **Fallback methods when automated sync isn't available or misses parts:**
 1. Use the `Datasheet` property URL from the schematic symbol — many KiCad libraries include direct PDF links
 2. Use the `digikey` skill to search by MPN and download individual datasheets
-3. Use WebSearch to find the manufacturer's datasheet page
+3. Use web search to find the manufacturer's datasheet page
 4. **Ask the user** — if a critical component's datasheet can't be found automatically, tell the user which parts are missing and ask them to provide the datasheets. Don't silently skip verification because a datasheet wasn't available. Example: "I couldn't find datasheets for U3 (XYZ1234) and U7 (ABC5678). Can you provide them? I need them to verify the pinout and application circuit."
 
 **Structured datasheet extraction (for large designs or repeated reviews):** Pre-extract datasheet specs into cached JSON for faster, more consistent pin verification. This is especially valuable for designs with 10+ ICs where re-reading PDFs from scratch each time is slow.
@@ -242,7 +254,7 @@ DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LC
 python3 <skill-path>/scripts/datasheet_page_selector.py <pdf_path> --mpn <mpn> --category <category>
 ```
 
-After Claude reads the selected pages and produces an extraction JSON, score and cache it using `datasheet_score` and `datasheet_extract_cache` modules. Extractions are stored in `datasheets/extracted/<MPN>.json` and reused across reviews. See `references/datasheet-extraction.md` for the full schema, extraction guidance, and scoring rubric.
+After reading the selected pages and producing an extraction JSON, score and cache it using `datasheet_score` and `datasheet_extract_cache` modules. Extractions are stored in `datasheets/extracted/<MPN>.json` and reused across reviews. See `references/datasheet-extraction.md` for the full schema, extraction guidance, and scoring rubric.
 
 **What to extract from each datasheet** (note page/section/figure/equation numbers for citations):
 - Pin function table (pin number → name → function)
@@ -420,7 +432,7 @@ For version detection and detailed field-by-field format documentation, read `re
 
 For a thorough datasheet-driven schematic review — identifying subcircuits, fetching datasheets, validating component values against manufacturer recommendations, comparing against common design patterns, detecting errors, and suggesting improvements — read `references/schematic-analysis.md`. Use this reference whenever the user asks to review, validate, or analyze a schematic in depth.
 
-**Fetching datasheets**: When the analysis requires datasheet data, use the DigiKey API as the preferred source (see the `digikey` skill) — it returns direct PDF URLs via the `DatasheetUrl` field without web scraping. Search by MPN from the schematic's component properties. Fall back to WebSearch only for parts not on DigiKey.
+**Fetching datasheets**: When the analysis requires datasheet data, use the DigiKey API as the preferred source (see the `digikey` skill) — it returns direct PDF URLs via the `DatasheetUrl` field without web scraping. Search by MPN from the schematic's component properties. Fall back to web search only for parts not on DigiKey.
 
 ### Deep PCB Analysis
 

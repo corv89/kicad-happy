@@ -190,7 +190,7 @@ The script:
 
 ## Web Search Fallback
 
-If the jlcsearch API is unavailable, search LCSC via WebFetch:
+If the jlcsearch API is unavailable, search LCSC by fetching the website directly:
 
 ```
 https://www.lcsc.com/search?q=<query>

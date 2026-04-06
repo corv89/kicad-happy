@@ -1,6 +1,17 @@
 ---
 name: spice
-description: Run automatic SPICE simulations on detected subcircuits from KiCad schematic analysis — validates filter frequencies, divider ratios, opamp gains, LC resonance, and crystal load capacitance against simulation results. Supports ngspice, LTspice, and Xyce (auto-detected). Generates testbenches, runs them in batch mode, and produces a structured pass/warn/fail report. Use this skill whenever the user asks to simulate, verify, or validate any analog subcircuit — RC filters, LC filters, voltage dividers, opamp circuits, crystal oscillators. Also use when the user says things like "simulate my circuit", "run spice", "verify with simulation", "check my filter cutoff", "does this divider actually give 1.65V", "what's the actual bandwidth of this opamp stage", "validate the analyzer's calculations", or wants to go beyond static analysis to dynamic SPICE verification. Use during design reviews whenever the schematic analyzer detects simulatable subcircuits and a SPICE simulator is available — simulation adds a layer of confidence that calculated values (fc, gain, Vout) match real circuit behavior. Even if the user doesn't explicitly ask for simulation, consider suggesting it when the kicad skill's analysis reports RC filters, opamp circuits, or feedback networks where a numerical validation would catch errors.
+description: >-
+  Run automatic SPICE simulations on subcircuits detected from KiCad schematic
+  analysis — validates filter frequencies, divider ratios, opamp gains, LC
+  resonance, and crystal load capacitance. Supports ngspice, LTspice, and Xyce
+  (auto-detected). Generates testbenches, runs batch mode, produces structured
+  pass/warn/fail report. Use when the user asks to simulate, verify, or
+  validate any analog subcircuit — RC filters, LC filters, voltage dividers,
+  opamp circuits, crystal oscillators. Also for "simulate my circuit", "run
+  spice", "verify with simulation", "check my filter cutoff", "does this
+  divider give the right voltage", "what's the bandwidth of this opamp stage".
+  Consider suggesting simulation during design reviews when the schematic
+  analyzer reports simulatable subcircuits and a SPICE simulator is available.
 ---
 
 # SPICE Simulation Skill

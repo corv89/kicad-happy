@@ -1,6 +1,17 @@
 ---
 name: digikey
-description: Search DigiKey for electronic components and download datasheets — primary source for prototype orders and the preferred API-based method for fetching datasheets. Find parts by keyword or part number, check pricing/stock, download datasheets directly via API, analyze specifications. Sync and maintain a local datasheets directory for a KiCad project — extract components from schematics, download all missing datasheets, keep them up to date. Use with KiCad for BOM creation and part selection. Use this skill when the user asks about electronic components, part specifications, datasheets, footprints, pricing, stock availability, or needs to download/read a datasheet — even if they don't mention "DigiKey" by name. Also use when the user says "sync datasheets", "download datasheets for my board/project", or mentions a datasheets directory. DigiKey is the default distributor for prototyping and the preferred datasheet source because its API returns direct PDF links without web scraping. For package cross-reference tables and BOM workflow, see the `bom` skill.
+description: >-
+  Search DigiKey for electronic components and download datasheets — primary
+  source for prototype orders and the preferred API method for fetching
+  datasheets. Find parts by keyword or MPN, check pricing/stock, download
+  datasheets via API, analyze specifications. Sync and maintain a local
+  datasheets directory — extract components from schematics, download missing
+  datasheets, keep them up to date. Use when the user asks about electronic
+  components, part specs, datasheets, pricing, stock, footprints, or needs to
+  download a datasheet — even without mentioning "DigiKey". Also for "sync
+  datasheets", "download datasheets for my board/project", or mentions a
+  datasheets directory. DigiKey is the default distributor for prototyping. For
+  BOM workflows, see the bom skill.
 ---
 
 # DigiKey Parts Search & Analysis
@@ -23,7 +34,7 @@ The DigiKey API requires OAuth 2.0 credentials. Here's how to set them up:
 2. **Register an API app** at [developer.digikey.com](https://developer.digikey.com):
    - Sign in with your DigiKey account
    - Go to "My Apps" → "Create App"
-   - App name: anything (e.g., "claude-code")
+   - App name: anything (e.g., "kicad-happy")
    - Select **"Product Information v4"** API
    - OAuth type: **Client Credentials** (2-legged, no user login needed)
    - Callback URL: `https://localhost` (not used for client credentials, but required)
@@ -187,9 +198,9 @@ All errors return `DKProblemDetails`:
 {"type": "...", "title": "...", "status": 401, "detail": "Invalid token", "correlationId": "..."}
 ```
 
-## Fallback: WebFetch to DigiKey Website
+## Fallback: Fetch DigiKey Website
 
-If API credentials are not available or authentication fails, search DigiKey by fetching product pages directly with WebFetch:
+If API credentials are not available or authentication fails, search DigiKey by fetching product pages directly:
 
 ```
 https://www.digikey.com/en/products/result?keywords=<url-encoded-query>
@@ -199,7 +210,7 @@ Examples:
 - `https://www.digikey.com/en/products/result?keywords=GRM155R71C104KA88D` (by MPN)
 - `https://www.digikey.com/en/products/result?keywords=100nF+0402+X7R+16V` (by specs)
 
-WebFetch results from DigiKey can be noisy (JS-heavy pages). Look for the product table rows containing: DigiKey part number, MPN, description, unit price, stock quantity, and datasheet links. If results are truncated or empty, try searching by exact MPN rather than keywords.
+Results from DigiKey can be noisy (JS-heavy pages). Look for the product table rows containing: DigiKey part number, MPN, description, unit price, stock quantity, and datasheet links. If results are truncated or empty, try searching by exact MPN rather than keywords.
 
 ## Datasheet Download & Analysis
 
@@ -333,7 +344,7 @@ If the script isn't available or you need to do it inline:
 If the `DatasheetUrl` field is empty or all download methods fail:
 - Provide the URL to the user for manual browser download
 - Try the `/products/v4/search/{pn}/media` endpoint for alternative media links
-- WebSearch as a last resort: `"<MPN> datasheet filetype:pdf"`
+- Web search as a last resort: `"<MPN> datasheet filetype:pdf"`
 
 ### What to Extract from Datasheets
 

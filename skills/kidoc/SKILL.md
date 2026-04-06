@@ -1,21 +1,18 @@
 ---
 name: kidoc
 description: >-
-  Generate professional engineering documentation from KiCad projects —
-  Hardware Design Descriptions (HDD), CE Technical Files, Interface Control
-  Documents (ICD), Design Review Packages, and Manufacturing Transfer
-  Packages. Auto-runs schematic, PCB, EMC, and thermal analyses; renders
-  publication-quality schematic and PCB SVGs with subsystem cropping, focus
-  dimming, net highlighting, and pin-net annotation; generates power tree,
-  bus topology, and architecture block diagrams. Produces styled PDF output
-  with cover pages, table of contents, and vector SVG embedding. Markdown is
-  the source of truth — human-editable, version-controllable, survives
-  regeneration. Use this skill when the user says "generate documentation",
-  "create report", "hardware design document", "HDD", "CE technical file",
-  "design review package", "ICD", "engineering documentation", "render
-  schematic to SVG", "render layout", "generate block diagram", "create
-  manufacturing package", "generate PDF", "power analysis", "EMC report",
-  "schematic review", or "custom report".
+  Generate professional engineering documentation from KiCad projects — Hardware
+  Design Descriptions (HDD), CE Technical Files, Interface Control Documents
+  (ICD), Design Review Packages, and Manufacturing Transfer Packages. Auto-runs
+  schematic, PCB, EMC, and thermal analyses; renders schematic and PCB SVGs
+  with subsystem cropping, focus dimming, net highlighting, and pin-net
+  annotation; generates power tree, bus topology, and architecture block
+  diagrams. Produces styled PDF with cover pages, TOC, and vector SVG
+  embedding. Markdown source of truth — human-editable, version-controllable.
+  Use for "generate documentation", "create report", "HDD", "CE technical
+  file", "design review package", "ICD", "render schematic", "render layout",
+  "generate block diagram", "manufacturing package", "generate PDF", or
+  "custom report".
 ---
 
 # kidoc — Engineering Documentation Skill
@@ -49,7 +46,7 @@ Creates `reports/.venv/` automatically on first run (PDF/DOCX/ODT only — HTML 
 ## Workflow
 
 1. **Generate scaffold** — `kidoc_scaffold.py` auto-runs all available analyses, renders schematics, generates diagrams, and writes the markdown scaffold.
-2. **Fill narratives** — Claude reads the scaffold and writes engineering prose for each `<!-- NARRATIVE: section_name -->` placeholder. The engineer reviews and edits.
+2. **Fill narratives** — The agent reads the scaffold and writes engineering prose for each `<!-- NARRATIVE: section_name -->` placeholder. The engineer reviews and edits.
 3. **Regenerate** — On re-run, data sections between `<!-- AUTO-START -->` / `<!-- AUTO-END -->` markers update from fresh analysis; user-written narrative content is preserved.
 4. **Render output** — `kidoc_generate.py` produces PDF, HTML, DOCX, or ODT.
 
