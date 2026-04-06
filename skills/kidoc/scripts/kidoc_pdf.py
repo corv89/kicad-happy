@@ -64,6 +64,27 @@ PAGE_SIZES = {
 }
 
 
+def _resolve_branding(config: dict) -> dict:
+    """Resolve branding settings from config, with defaults."""
+    branding = config.get('reports', {}).get('branding', {})
+    colors = branding.get('colors', {})
+
+    return {
+        'dark_navy': HexColor(colors.get('primary', '#1a1a2e')),
+        'accent_blue': HexColor(colors.get('accent', '#0f4c75')),
+        'accent_teal': HexColor(colors.get('highlight', '#1b6ca8')),
+        'table_header_bg': HexColor(colors.get('table_header', '#1a3a5c')),
+        'table_alt_row': HexColor(colors.get('table_alt_row', '#f4f8fb')),
+        'callout_bg': HexColor(colors.get('callout_bg', '#edf5fb')),
+        'callout_border': HexColor(colors.get('callout_border', '#1b6ca8')),
+        'company_name': branding.get('company_name',
+                                      config.get('project', {}).get('company', '')),
+        'logo_path': branding.get('logo', ''),
+        'header_left': branding.get('header_left', '{company}'),
+        'header_right': branding.get('header_right', '{number} Rev {rev}'),
+    }
+
+
 # ======================================================================
 # Custom flowables
 # ======================================================================
@@ -105,20 +126,25 @@ class CalloutBox(Flowable):
 # Styles
 # ======================================================================
 
-def create_styles():
+def create_styles(brand: dict | None = None):
     """Build the complete style set for engineering documents."""
+    b = brand or {}
+    dark_navy = b.get('dark_navy', DARK_NAVY)
+    accent_blue = b.get('accent_blue', ACCENT_BLUE)
+    accent_teal = b.get('accent_teal', ACCENT_TEAL)
+
     s = {}
     s['h1'] = ParagraphStyle(
         'H1', fontName='Helvetica-Bold', fontSize=16, leading=20,
-        textColor=DARK_NAVY, spaceBefore=20, spaceAfter=4,
+        textColor=dark_navy, spaceBefore=20, spaceAfter=4,
     )
     s['h2'] = ParagraphStyle(
         'H2', fontName='Helvetica-Bold', fontSize=13, leading=16,
-        textColor=ACCENT_BLUE, spaceBefore=16, spaceAfter=6,
+        textColor=accent_blue, spaceBefore=16, spaceAfter=6,
     )
     s['h3'] = ParagraphStyle(
         'H3', fontName='Helvetica-Bold', fontSize=11, leading=14,
-        textColor=ACCENT_TEAL, spaceBefore=10, spaceAfter=4,
+        textColor=accent_teal, spaceBefore=10, spaceAfter=4,
     )
     s['body'] = ParagraphStyle(
         'Body', fontName='Helvetica', fontSize=9.5, leading=13.5,
@@ -186,12 +212,14 @@ class KidocDocTemplate(BaseDocTemplate):
     """Custom document template with cover page and main page layouts."""
 
     def __init__(self, filename, doc_title='', doc_subtitle='',
-                 company='', classification='', doc_date='', **kwargs):
+                 company='', classification='', doc_date='',
+                 brand: dict | None = None, **kwargs):
         self.doc_title = doc_title
         self.doc_subtitle = doc_subtitle
         self.company = company
         self.classification = classification
         self.doc_date = doc_date or datetime.now().strftime("%B %d, %Y")
+        self.brand = brand or {}
         super().__init__(filename, **kwargs)
 
         page_w, page_h = kwargs.get('pagesize', letter)
@@ -214,12 +242,14 @@ class KidocDocTemplate(BaseDocTemplate):
         canvas.saveState()
         page_w, page_h = doc.pagesize
         margin = doc.leftMargin
+        dark_navy = self.brand.get('dark_navy', DARK_NAVY)
+        accent_teal = self.brand.get('accent_teal', ACCENT_TEAL)
 
         # Top accent block
-        canvas.setFillColor(DARK_NAVY)
+        canvas.setFillColor(dark_navy)
         canvas.rect(0, page_h - 1.2 * inch, page_w, 1.2 * inch,
                     fill=1, stroke=0)
-        canvas.setStrokeColor(ACCENT_TEAL)
+        canvas.setStrokeColor(accent_teal)
         canvas.setLineWidth(3)
         canvas.line(0, page_h - 1.2 * inch, page_w, page_h - 1.2 * inch)
 
@@ -233,7 +263,7 @@ class KidocDocTemplate(BaseDocTemplate):
         canvas.drawString(margin, page_h - 0.8 * inch, self.doc_subtitle)
 
         # Bottom accent bar
-        canvas.setFillColor(ACCENT_TEAL)
+        canvas.setFillColor(accent_teal)
         canvas.rect(0, 0.5 * inch, page_w, 3, fill=1, stroke=0)
 
         # Footer
@@ -251,12 +281,14 @@ class KidocDocTemplate(BaseDocTemplate):
         canvas.saveState()
         page_w, page_h = doc.pagesize
         margin = doc.leftMargin
+        dark_navy = self.brand.get('dark_navy', DARK_NAVY)
+        accent_teal = self.brand.get('accent_teal', ACCENT_TEAL)
 
         # Header bar
-        canvas.setFillColor(DARK_NAVY)
+        canvas.setFillColor(dark_navy)
         canvas.rect(0, page_h - 0.45 * inch, page_w, 0.45 * inch,
                     fill=1, stroke=0)
-        canvas.setStrokeColor(ACCENT_TEAL)
+        canvas.setStrokeColor(accent_teal)
         canvas.setLineWidth(2)
         canvas.line(0, page_h - 0.45 * inch, page_w, page_h - 0.45 * inch)
 
@@ -329,8 +361,13 @@ def _strip_html_comments(text: str) -> str:
 # ======================================================================
 
 def build_cover(title: str, subtitle: str, meta_lines: list[tuple],
-                styles: dict, classification: str = '') -> list:
+                styles: dict, classification: str = '',
+                brand: dict | None = None) -> list:
     """Build cover page flowables: title, accent rule, metadata table."""
+    b = brand or {}
+    dark_navy = b.get('dark_navy', DARK_NAVY)
+    accent_teal = b.get('accent_teal', ACCENT_TEAL)
+
     elements = []
     elements.append(Spacer(1, 1.6 * inch))
 
@@ -339,14 +376,14 @@ def build_cover(title: str, subtitle: str, meta_lines: list[tuple],
         _escape_xml(title).replace('\n', '<br/>'),
         ParagraphStyle(
             'CoverTitle', fontName='Helvetica-Bold', fontSize=34,
-            leading=40, textColor=DARK_NAVY,
+            leading=40, textColor=dark_navy,
         ),
     ))
     elements.append(Spacer(1, 6))
 
     # Accent rule (35% width, 3pt teal, left-aligned)
     elements.append(HRFlowable(
-        width="35%", thickness=3, color=ACCENT_TEAL,
+        width="35%", thickness=3, color=accent_teal,
         spaceBefore=0, spaceAfter=16, hAlign='LEFT',
     ))
 
@@ -393,20 +430,25 @@ def build_cover(title: str, subtitle: str, meta_lines: list[tuple],
 # Table of Contents
 # ======================================================================
 
-def build_toc(elements: list[dict], styles: dict) -> list:
+def build_toc(elements: list[dict], styles: dict,
+              brand: dict | None = None) -> list:
     """Build TOC from parsed markdown elements.
 
     Extracts headings from the element list and renders as a styled TOC.
     Only includes level-1 and level-2 headings (## and ###).
     Skips the first heading (document title, shown on cover).
     """
+    b = brand or {}
+    dark_navy = b.get('dark_navy', DARK_NAVY)
+    accent_teal = b.get('accent_teal', ACCENT_TEAL)
+
     flowables = []
     flowables.append(Paragraph("Table of Contents", ParagraphStyle(
         'TOCTitle', fontName='Helvetica-Bold', fontSize=18, leading=22,
-        textColor=DARK_NAVY, spaceAfter=12,
+        textColor=dark_navy, spaceAfter=12,
     )))
     flowables.append(HRFlowable(
-        width="100%", thickness=1, color=ACCENT_TEAL,
+        width="100%", thickness=1, color=accent_teal,
         spaceBefore=0, spaceAfter=12,
     ))
 
@@ -439,13 +481,19 @@ def build_toc(elements: list[dict], styles: dict) -> list:
 # ======================================================================
 
 def build_table(headers: list[str], rows: list[list[str]],
-                styles: dict, content_w: float) -> list:
+                styles: dict, content_w: float,
+                brand: dict | None = None) -> list:
     """Build a styled table: dark header, alternating rows, rounded corners.
 
     First column rendered bold. Thin borders with RULE_COLOR.
     """
     if not headers:
         return []
+
+    b = brand or {}
+    table_header_bg = b.get('table_header_bg', TABLE_HEADER_BG)
+    table_alt_row = b.get('table_alt_row', TABLE_ALT_ROW)
+    accent_blue = b.get('accent_blue', ACCENT_BLUE)
 
     num_cols = len(headers)
     table_data = []
@@ -472,7 +520,7 @@ def build_table(headers: list[str], rows: list[list[str]],
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
 
     cmds = [
-        ('BACKGROUND', (0, 0), (-1, 0), TABLE_HEADER_BG),
+        ('BACKGROUND', (0, 0), (-1, 0), table_header_bg),
         ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
         ('TOPPADDING', (0, 0), (-1, 0), 7),
@@ -481,7 +529,7 @@ def build_table(headers: list[str], rows: list[list[str]],
         ('TOPPADDING', (0, 1), (-1, -1), 5),
         ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
         ('GRID', (0, 0), (-1, -1), 0.4, HexColor("#dde4ea")),
-        ('LINEBELOW', (0, 0), (-1, 0), 1.5, ACCENT_BLUE),
+        ('LINEBELOW', (0, 0), (-1, 0), 1.5, accent_blue),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('ROUNDEDCORNERS', [3, 3, 3, 3]),
     ]
@@ -489,7 +537,7 @@ def build_table(headers: list[str], rows: list[list[str]],
     # Alternating row colors
     for ri in range(1, len(table_data)):
         if ri % 2 == 0:
-            cmds.append(('BACKGROUND', (0, ri), (-1, ri), TABLE_ALT_ROW))
+            cmds.append(('BACKGROUND', (0, ri), (-1, ri), table_alt_row))
 
     t.setStyle(TableStyle(cmds))
     return [t, Spacer(1, 8)]
@@ -500,12 +548,19 @@ def build_table(headers: list[str], rows: list[list[str]],
 # ======================================================================
 
 def elements_to_flowables(elements: list[dict], styles: dict,
-                          base_dir: str, content_w: float) -> list:
+                          base_dir: str, content_w: float,
+                          brand: dict | None = None) -> list:
     """Convert parsed markdown elements to ReportLab flowables.
 
     Uses kidoc_md_parser element types. The first H1 heading is skipped
     (it appears on the cover page).
     """
+    b = brand or {}
+    accent_blue = b.get('accent_blue', ACCENT_BLUE)
+    accent_teal = b.get('accent_teal', ACCENT_TEAL)
+    callout_bg = b.get('callout_bg', CALLOUT_BG)
+    callout_border = b.get('callout_border', CALLOUT_BORDER)
+
     flowables = []
     first_h1_seen = False
     figure_counter = 0
@@ -525,7 +580,7 @@ def elements_to_flowables(elements: list[dict], styles: dict,
             if level == 1:
                 flowables.append(Paragraph(text, styles['h1']))
                 flowables.append(HRFlowable(
-                    width="100%", thickness=1.5, color=ACCENT_BLUE,
+                    width="100%", thickness=1.5, color=accent_blue,
                     spaceBefore=0, spaceAfter=6,
                 ))
             elif level == 2:
@@ -534,7 +589,7 @@ def elements_to_flowables(elements: list[dict], styles: dict,
                     Spacer(1, 6),
                     Paragraph(text, styles['h1']),
                     HRFlowable(
-                        width="100%", thickness=1, color=ACCENT_TEAL,
+                        width="100%", thickness=1, color=accent_teal,
                         spaceBefore=0, spaceAfter=4,
                     ),
                 ]
@@ -561,7 +616,8 @@ def elements_to_flowables(elements: list[dict], styles: dict,
         # --- table ---
         elif etype == 'table':
             flowables.extend(build_table(
-                elem['headers'], elem['rows'], styles, content_w))
+                elem['headers'], elem['rows'], styles, content_w,
+                brand=b))
 
         # --- code_block ---
         elif etype == 'code_block':
@@ -591,7 +647,7 @@ def elements_to_flowables(elements: list[dict], styles: dict,
             xml = _runs_to_xml(elem['runs'])
             flowables.append(Spacer(1, 4))
             flowables.append(CalloutBox(
-                xml, content_w, CALLOUT_BG, CALLOUT_BORDER,
+                xml, content_w, callout_bg, callout_border,
                 styles['callout'],
             ))
             flowables.append(Spacer(1, 4))
@@ -707,7 +763,8 @@ def generate_pdf(markdown_path: str, output_path: str, config: dict) -> str:
     md_text = _strip_html_comments(md_text)
 
     elements = parse_markdown(md_text)
-    styles = create_styles()
+    brand = _resolve_branding(config)
+    styles = create_styles(brand=brand)
     base_dir = os.path.dirname(os.path.abspath(markdown_path))
 
     # Extract config
@@ -746,6 +803,7 @@ def generate_pdf(markdown_path: str, output_path: str, config: dict) -> str:
         company=company,
         classification=classification,
         doc_date=doc_date,
+        brand=brand,
         pagesize=page_size,
         topMargin=0.7 * inch,
         bottomMargin=0.7 * inch,
@@ -772,7 +830,7 @@ def generate_pdf(markdown_path: str, output_path: str, config: dict) -> str:
         meta_lines.append(("Classification", classification))
 
     story.extend(build_cover(title, subtitle or title, meta_lines, styles,
-                             classification))
+                             classification, brand=brand))
     story.append(PageBreak())
 
     # Switch to main template after cover
@@ -784,10 +842,11 @@ def generate_pdf(markdown_path: str, output_path: str, config: dict) -> str:
         if e['type'] == 'heading' and e['level'] <= 2
     )
     if heading_count >= 4:
-        story.extend(build_toc(elements, styles))
+        story.extend(build_toc(elements, styles, brand=brand))
 
     # Content
-    story.extend(elements_to_flowables(elements, styles, base_dir, content_w))
+    story.extend(elements_to_flowables(elements, styles, base_dir, content_w,
+                                       brand=brand))
 
     doc.build(story)
     return output_path

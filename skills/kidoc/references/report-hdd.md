@@ -94,6 +94,45 @@ Designing engineer, review board, future maintainers.
 - `project.market` -- sets target market for compliance section
 - `reports.documents[].sections` -- override the section list for this doc type
 - `reports.revision_history` -- populates the revision history table
+- `reports.branding` -- customize PDF colors, company name, logo, and header text
+
+## Branding Configuration
+
+The PDF generator's colors, company name, and header text are configurable via `reports.branding`. All fields are optional -- defaults produce the standard dark navy engineering document style.
+
+```json
+{
+  "reports": {
+    "branding": {
+      "company_name": "Acme Electronics",
+      "logo": "templates/logo.png",
+      "colors": {
+        "primary": "#1a1a2e",
+        "accent": "#0f4c75",
+        "highlight": "#1b6ca8",
+        "table_header": "#1a3a5c",
+        "table_alt_row": "#f4f8fb",
+        "callout_bg": "#edf5fb",
+        "callout_border": "#1b6ca8"
+      },
+      "header_left": "{company}",
+      "header_right": "{number} Rev {rev}"
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `company_name` | `project.company` | Company name shown in headers and cover |
+| `logo` | (none) | Path to logo image for cover page |
+| `colors.primary` | `#1a1a2e` | Dark navy used for header bars and H1 text |
+| `colors.accent` | `#0f4c75` | Accent blue used for H2 text and table rules |
+| `colors.highlight` | `#1b6ca8` | Teal used for H3 text, accent lines, callout borders |
+| `colors.table_header` | `#1a3a5c` | Table header row background |
+| `colors.table_alt_row` | `#f4f8fb` | Alternating table row background |
+| `header_left` | `{company}` | Left header text template |
+| `header_right` | `{number} Rev {rev}` | Right header text template |
 
 ## Example
 
