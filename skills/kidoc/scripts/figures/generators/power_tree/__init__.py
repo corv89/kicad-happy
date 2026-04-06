@@ -39,6 +39,8 @@ from figures.lib import (
 
 def _infer_voltage(rail_name: str) -> str:
     """Extract a voltage hint from a rail name like '+3V3', 'VBUS'."""
+    if not rail_name:
+        return ""
     name = rail_name.strip().upper()
     m = re.match(r'[+]?(\d+)[Vv](\d+)', name)
     if m:
@@ -142,6 +144,8 @@ class PowerTreeGenerator:
             })
 
         # Input rails (roots: appear as input but not as another reg's output)
+        input_rail_set.discard(None)
+        output_rail_set.discard(None)
         root_inputs = sorted(input_rail_set - output_rail_set)
         if not root_inputs:
             root_inputs = sorted(input_rail_set)

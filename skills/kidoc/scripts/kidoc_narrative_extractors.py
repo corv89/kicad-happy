@@ -471,7 +471,7 @@ def _extract_executive_data(analysis: dict, **kwargs) -> str:
         rails = []
         for r in regs:
             vout = r.get('estimated_vout')
-            rail = r.get('output_rail', '?')
+            rail = r.get('output_rail') or '?'
             if vout:
                 rails.append(f"{rail} ({vout:.1f}V)")
             else:
