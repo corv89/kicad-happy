@@ -30,7 +30,7 @@ Renders `.kicad_sch` files to publication-quality SVG.  Uses `sexp_parser.py` fr
 
 ```bash
 # Render full sheet
-python3 kidoc_render.py design.kicad_sch --output reports/cache/schematic/
+python3 kidoc_render.py design.kicad_sch --output reports/figures/schematics/
 
 # Crop to specific components
 python3 kidoc_render.py design.kicad_sch --crop R1,R2,C1 --output crop.svg

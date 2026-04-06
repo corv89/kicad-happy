@@ -174,17 +174,14 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
     emc_data = analysis_cache.get('emc')
     thermal_data = analysis_cache.get('thermal')
 
-    # Determine paths for diagrams and schematic SVGs
-    # When analysis_dir is provided, diagrams/schematic are subdirectories;
-    # otherwise fall back to project-dir's reports/cache/.
-    if analysis_dir:
-        analysis_abs = os.path.abspath(analysis_dir)
-        diagrams_dir = os.path.join(analysis_abs, 'diagrams')
-        sch_cache_dir = os.path.join(analysis_abs, 'schematic')
-    else:
-        default_analysis = os.path.join(project_dir, 'reports', 'cache', 'analysis')
-        diagrams_dir = os.path.join(default_analysis, 'diagrams')
-        sch_cache_dir = os.path.join(default_analysis, 'schematic')
+    # Determine paths for diagrams and schematic SVGs.
+    # Figures live under reports/figures/ (git-tracked), separate from
+    # reports/cache/analysis/ (gitignored) which holds only JSON data.
+    output_abs = os.path.abspath(output_path)
+    reports_root = os.path.dirname(output_abs)
+    figures_base = os.path.join(reports_root, 'figures')
+    diagrams_dir = os.path.join(figures_base, 'diagrams')
+    sch_cache_dir = os.path.join(figures_base, 'schematics')
 
     # Use relative paths from the output file's directory
     output_dir = os.path.dirname(os.path.abspath(output_path))
@@ -264,12 +261,21 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
 # ======================================================================
 
 def _auto_run_analyses(project_dir: str, analysis_dir: str,
+                       figures_dir: str | None = None,
                        sch_path: str | None = None,
                        pcb_path: str | None = None) -> dict[str, bool]:
     """Auto-run available analyses that haven't been generated yet.
 
+    Args:
+        figures_dir: Base directory for generated figures (diagrams, schematics).
+            Defaults to ``analysis_dir`` parent's ``figures/`` sibling when None.
+
     Returns dict of {analysis_name: was_run_successfully} for reporting.
     """
+    if figures_dir is None:
+        # Default: reports/figures/ (sibling of reports/cache/)
+        figures_dir = os.path.join(os.path.dirname(os.path.normpath(analysis_dir)),
+                                   '..', 'figures')
     results = {}
     scripts_dir = os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
@@ -349,7 +355,7 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
                 results['thermal'] = False
 
     # Diagrams (requires schematic analysis JSON)
-    diagrams_dir = os.path.join(os.path.normpath(analysis_dir), 'diagrams')
+    diagrams_dir = os.path.join(os.path.normpath(figures_dir), 'diagrams')
     if os.path.isfile(sch_json) and not os.path.isdir(diagrams_dir):
         diagram_script = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'kidoc_diagrams.py')
@@ -365,7 +371,7 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
                 results['diagrams'] = False
 
     # Schematic SVG renders (requires .kicad_sch)
-    sch_cache_dir = os.path.join(os.path.normpath(analysis_dir), 'schematic')
+    sch_cache_dir = os.path.join(os.path.normpath(figures_dir), 'schematics')
     if sch_path and not os.path.isdir(sch_cache_dir):
         render_script = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'kidoc_render.py')
@@ -383,7 +389,8 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
     return results
 
 
-def _print_analysis_summary(results: dict, analysis_dir: str) -> None:
+def _print_analysis_summary(results: dict, analysis_dir: str,
+                            figures_dir: str | None = None) -> None:
     """Print what analyses are available and what's missing."""
     available = []
     missing = []
@@ -411,8 +418,10 @@ def _print_analysis_summary(results: dict, analysis_dir: str) -> None:
             else:
                 missing.append(f"  {name}: not available (no source data)")
 
-    # Check diagrams and renders
-    diagrams_dir = os.path.join(os.path.normpath(analysis_dir), 'diagrams')
+    # Check diagrams and renders (under figures/ directory)
+    fig_base = figures_dir or os.path.join(
+        os.path.dirname(os.path.normpath(analysis_dir)), '..', 'figures')
+    diagrams_dir = os.path.join(os.path.normpath(fig_base), 'diagrams')
     if os.path.isdir(diagrams_dir):
         if 'diagrams' in results:
             available.append("  diagrams: auto-generated")
@@ -421,8 +430,8 @@ def _print_analysis_summary(results: dict, analysis_dir: str) -> None:
     else:
         missing.append("  diagrams: not generated")
 
-    sch_cache_dir = os.path.join(os.path.normpath(analysis_dir), 'schematic')
-    if os.path.isdir(sch_cache_dir):
+    sch_fig_dir = os.path.join(os.path.normpath(fig_base), 'schematics')
+    if os.path.isdir(sch_fig_dir):
         if 'renders' in results:
             available.append("  renders: auto-generated")
         else:
@@ -470,13 +479,20 @@ def main():
     # Auto-run available analyses before loading cache
     analysis_dir = args.analysis_dir or os.path.join(
         args.project_dir, 'reports', 'cache', 'analysis')
-    auto_results = _auto_run_analyses(args.project_dir, analysis_dir)
+
+    # Figures (diagrams, schematics) go under reports/figures/ (git-tracked),
+    # separate from reports/cache/ (gitignored) which holds analysis JSONs.
+    output_dir = os.path.dirname(os.path.abspath(args.output))
+    figures_dir = os.path.join(output_dir, 'figures')
+
+    auto_results = _auto_run_analyses(args.project_dir, analysis_dir,
+                                       figures_dir=figures_dir)
 
     # Load analysis cache (now includes any auto-generated files)
     cache = load_analysis_cache(args.project_dir, args.analysis_dir)
 
     # Print summary of what's available
-    _print_analysis_summary(auto_results, analysis_dir)
+    _print_analysis_summary(auto_results, analysis_dir, figures_dir=figures_dir)
 
     if not cache:
         print("Warning: no analysis JSONs found. Scaffold will have placeholder content.",
