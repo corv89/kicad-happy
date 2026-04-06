@@ -63,4 +63,11 @@ class AnalysisContext:
     def get_two_pin_nets(self, ref: str) -> tuple[str | None, str | None]:
         n1, _ = self.pin_net.get((ref, "1"), (None, None))
         n2, _ = self.pin_net.get((ref, "2"), (None, None))
+        if n1 is not None and n2 is not None:
+            return n1, n2
+        # Fallback for non-"1"/"2" pin numbering (Eagle imports, diodes A/K, etc.)
+        pins = self.ref_pins.get(ref, {})
+        if len(pins) == 2:
+            nets = [net for net, _ in pins.values()]
+            return nets[0], nets[1]
         return n1, n2

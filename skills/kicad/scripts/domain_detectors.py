@@ -281,20 +281,36 @@ def detect_isolation_barriers(ctx: AnalysisContext) -> list[dict]:
                     iso_pins = ctx.ref_pins.get(iso_ref, {})
                     if len(iso_pins) < 4:
                         continue
-                    # Split pins into two halves (primary/secondary)
+                    # Split pins into primary/secondary halves.
+                    # Prefer VDD/GND pin names to identify sides (works for
+                    # asymmetric parts like ADuM1201).  Fall back to
+                    # pin-number bisection for parts without named power pins.
                     pin_nums = sorted(iso_pins.keys(),
                                       key=lambda x: int(x) if x.isdigit() else 0)
-                    mid = len(pin_nums) // 2
-                    primary_pins = pin_nums[:mid]
-                    secondary_pins = pin_nums[mid:]
+                    # Try name-based side detection: VDD1/GND1 = side A, VDD2/GND2 = side B
+                    side_a_pins: list[str] = []
+                    side_b_pins: list[str] = []
+                    comp_obj = ctx.comp_lookup.get(iso_ref, {})
+                    for pin in comp_obj.get("pins", []):
+                        pname = pin.get("name", "").upper()
+                        pnum = pin.get("number", "")
+                        if any(pname.endswith(s) for s in ("1", "A", "_A", "_IN")):
+                            side_a_pins.append(pnum)
+                        elif any(pname.endswith(s) for s in ("2", "B", "_B", "_OUT")):
+                            side_b_pins.append(pnum)
+                    # Fall back to pin-number bisection if name detection didn't split
+                    if not side_a_pins or not side_b_pins:
+                        mid = len(pin_nums) // 2
+                        side_a_pins = pin_nums[:mid]
+                        side_b_pins = pin_nums[mid:]
                     # Collect ground nets reachable from each side (1 hop)
                     primary_grounds: set[str] = set()
                     secondary_grounds: set[str] = set()
-                    for pnum in primary_pins:
+                    for pnum in side_a_pins:
                         net, _ = iso_pins.get(pnum, (None, None))
                         if net and ctx.is_ground(net):
                             primary_grounds.add(net)
-                    for pnum in secondary_pins:
+                    for pnum in side_b_pins:
                         net, _ = iso_pins.get(pnum, (None, None))
                         if net and ctx.is_ground(net):
                             secondary_grounds.add(net)
@@ -1583,7 +1599,11 @@ _MOTOR_OUTPUT_PIN_NAMES = {"OUT1", "OUT2", "OUT3", "OUT4",
                            "AOUT", "BOUT", "COUT",
                            "PHASE_A", "PHASE_B", "PHASE_C",
                            "MOT_A", "MOT_B",
-                           "OUT_A+", "OUT_A-", "OUT_B+", "OUT_B-"}
+                           "OUT_A+", "OUT_A-", "OUT_B+", "OUT_B-",
+                           # 3-phase UVW notation (BLDC/PMSM)
+                           "U", "V", "W", "UH", "UL", "VH", "VL", "WH", "WL",
+                           # Gate driver high/low side notation
+                           "AH", "AL", "BH", "BL", "CH", "CL"}
 
 _GATE_OUTPUT_PIN_NAMES = {"HO", "LO", "HO1", "LO1", "HO2", "LO2",
                           "HO3", "LO3", "HIN", "LIN",

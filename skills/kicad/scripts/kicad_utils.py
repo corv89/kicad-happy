@@ -673,7 +673,8 @@ def is_ground_name(net_name: str | None) -> bool:
         net_name = net_name.rsplit("/", 1)[-1]
     nu = net_name.upper()
     # Exact matches
-    if nu in ("GND", "VSS", "AGND", "DGND", "PGND", "GNDPWR", "GNDA", "GNDD"):
+    if nu in ("GND", "VSS", "AGND", "DGND", "PGND", "GNDPWR", "GNDA", "GNDD",
+              "SGND", "COM", "0V"):
         return True
     # Prefix/suffix patterns: GND_ISO, GND_SEC, GNDISO, etc.
     if nu.startswith("GND") or nu.endswith("GND"):
@@ -688,9 +689,17 @@ def get_two_pin_nets(pin_net: dict, ref: str) -> tuple[str | None, str | None]:
     """Get the two nets a 2-pin component connects to.
 
     Takes pin_net map explicitly instead of closing over it.
+    Falls back to enumerating all pins when "1"/"2" aren't found.
     """
     n1, _ = pin_net.get((ref, "1"), (None, None))
     n2, _ = pin_net.get((ref, "2"), (None, None))
+    if n1 is not None and n2 is not None:
+        return n1, n2
+    # Fallback for non-"1"/"2" pin numbering (Eagle imports, diodes A/K, etc.)
+    ref_entries = {k[1]: v for k, v in pin_net.items() if k[0] == ref}
+    if len(ref_entries) == 2:
+        nets = [net for net, _ in ref_entries.values()]
+        return nets[0], nets[1]
     return n1, n2
 
 

@@ -114,10 +114,13 @@ def extract_lib_symbols(root: list) -> dict:
         pin_num_node = find_first(pin, "number")
         pin_name = str(pin_name_node[1]) if pin_name_node and len(pin_name_node) > 1 and pin_name_node[1] is not None else ""
         pin_num = str(pin_num_node[1]) if pin_num_node and len(pin_num_node) > 1 and pin_num_node[1] is not None else ""
+        # Detect hidden pins — KiCad uses (hide yes) inside pin node
+        hidden = has_flag(pin, "hide")
         return {
             "number": pin_num, "name": pin_name,
             "type": pin_type, "shape": pin_shape,
             "offset": list(at) if at else None,
+            "hidden": hidden,
         }
 
     def _extract_pins_from_node(node):
@@ -164,10 +167,18 @@ def extract_lib_symbols(root: list) -> dict:
         lib_value = get_property(sym, "Value") or ""
 
         # Check for (power) flag — marks this as a power symbol regardless of lib name
+        # KiCad 8+ writes (power global) or (power local); pre-8.0 writes bare (power)
         is_power = any(
-            isinstance(child, list) and len(child) == 1 and child[0] == "power"
+            isinstance(child, list) and len(child) >= 1 and child[0] == "power"
             for child in sym
         )
+        # Track global vs local power scope (default: global for bare (power))
+        power_scope = "global"
+        if is_power:
+            for child in sym:
+                if isinstance(child, list) and len(child) >= 2 and child[0] == "power":
+                    power_scope = child[1] if child[1] in ("global", "local") else "global"
+                    break
 
         # Extract alternate pin definitions (dual-function pins, e.g., GPIO/SPI/UART)
         alternates = {}
@@ -191,6 +202,7 @@ def extract_lib_symbols(root: list) -> dict:
             "description": desc,
             "keywords": ki_keywords,
             "is_power": is_power,
+            "power_scope": power_scope if is_power else None,
             "ki_fp_filters": ki_fp_filters,
             "alternates": alternates if alternates else None,
         }
@@ -267,13 +279,16 @@ def compute_pin_positions(component: dict, lib_symbols: dict) -> list[dict]:
         else:
             pin_name = str(pin_name)
 
-        pin_positions.append({
+        entry = {
             "number": pin_num,
             "name": pin_name,
             "type": pin["type"],
             "x": abs_x,
             "y": abs_y,
-        })
+        }
+        if pin.get("hidden"):
+            entry["hidden"] = True
+        pin_positions.append(entry)
 
     return pin_positions
 
@@ -454,6 +469,9 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         comp["type"] = classify_component(ref, lib_id, value, is_power_sym, footprint, in_bom=in_bom)
         # Store ki_keywords for downstream analysis (e.g., P-channel detection)
         comp["keywords"] = sym_def.get("keywords", "")
+        # Track power scope (global vs local) for connectivity
+        if is_power_sym:
+            comp["_power_scope"] = sym_def.get("power_scope", "global")
 
         # Compute absolute pin positions
         comp["pins"] = compute_pin_positions(comp, lib_symbols)
@@ -693,7 +711,7 @@ def extract_labels(root: list) -> list[dict]:
     """Extract all labels (local, global, hierarchical)."""
     labels = []
 
-    for label_type in ["label", "global_label", "hierarchical_label"]:
+    for label_type in ["label", "global_label", "hierarchical_label", "directive_label"]:
         for lbl in find_all(root, label_type):
             name = lbl[1] if len(lbl) > 1 else ""
             # KH-078: Malformed s-expressions can yield a list instead of string
@@ -740,6 +758,7 @@ def extract_power_symbols(components: list[dict]) -> list[dict]:
                 "y": py,
                 "lib_id": comp["lib_id"],
                 "_sheet": comp.get("_sheet", 0),
+                "_power_scope": comp.get("_power_scope", "global"),
             })
     return power
 
@@ -1031,9 +1050,27 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
             "source": "power_symbol",
             "net_name": ps["net_name"],
         }, sheet)
-        # Power symbols always connect across sheets (they define global nets)
-        label_keys.setdefault(ps["net_name"], []).append(k)
+        # Global power symbols connect across all sheets; local power symbols
+        # only connect within the same sheet (isolated power domains).
+        if ps.get("_power_scope") == "local":
+            local_key = (ps["net_name"], sheet)
+            label_keys.setdefault(local_key, []).append(k)
+        else:
+            label_keys.setdefault(ps["net_name"], []).append(k)
         union_with_overlapping_wires(k, ps["x"], ps["y"], sheet)
+
+    # Legacy hidden power-in pins: in KiCad 4/5, ICs could have invisible
+    # power-in pins (VCC, GND) that create implicit global net connections
+    # by pin name.  These pins have no wires attached — they connect solely
+    # by their name matching other hidden power pins or power symbols.
+    for comp in components:
+        if comp.get("type") == "power_symbol":
+            continue
+        sheet = comp.get("_sheet", 0)
+        for pin in comp.get("pins", []):
+            if pin.get("hidden") and pin["type"] == "power_in" and pin["name"]:
+                k = key(pin["x"], pin["y"], sheet)
+                label_keys.setdefault(pin["name"], []).append(k)
 
     # Union global/hierarchical labels and power symbols with the same name.
     # This is what connects nets across different parts of the schematic.
@@ -1082,14 +1119,29 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
         for m in members:
             all_info.extend(point_info.get(m, []))
 
-        # Find net name from labels or power symbols
-        net_name = None
+        # Find net name using KiCad's priority:
+        # global_label > power_symbol > hierarchical_label > local label > pin
+        _NET_NAME_PRIORITY = {
+            "global_label": 0,
+            "power_symbol": 1,
+            "hierarchical_label": 2,
+            "label": 3,
+            "directive_label": 4,
+        }
+        best_name = None
+        best_priority = 999
         for info in all_info:
             if info["source"] == "power_symbol":
-                net_name = info["net_name"]
-                break
-            if info["source"] == "label":
-                net_name = info["name"]
+                p = _NET_NAME_PRIORITY["power_symbol"]
+                if p < best_priority:
+                    best_name = info["net_name"]
+                    best_priority = p
+            elif info["source"] == "label":
+                p = _NET_NAME_PRIORITY.get(info.get("label_type", "label"), 3)
+                if p < best_priority:
+                    best_name = info["name"]
+                    best_priority = p
+        net_name = best_name
 
         # Check if any member of this group is a no-connect marker OR a
         # library-defined NC pin (pin type "no_connect" in the symbol def).
@@ -2625,6 +2677,7 @@ def parse_legacy_schematic(path: str) -> dict:
             }
             if "_sheet" in comp:
                 ps["_sheet"] = comp["_sheet"]
+            ps["_power_scope"] = comp.get("_power_scope", "global")
             power_symbols.append(ps)
 
     # Generate BOM

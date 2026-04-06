@@ -850,8 +850,8 @@ def extract_zones(root: list) -> tuple[list[dict], ZoneFills]:
             # "yes" in fill node means the zone has been filled
             is_filled = "yes" in fill
             if not is_filled:
-                fill_type = get_value(fill, "type")
-                if fill_type in ("solid", "hatch"):
+                fill_mode = get_value(fill, "mode")
+                if fill_mode in ("solid", "hatch"):
                     is_filled = True
 
         # Zone outline area and bounding box
@@ -965,7 +965,7 @@ def extract_board_outline(root: list) -> dict:
     """Extract board outline from Edge.Cuts layer."""
     edges = []
 
-    for item_type in ["gr_line", "gr_arc", "gr_circle", "gr_rect"]:
+    for item_type in ["gr_line", "gr_arc", "gr_circle", "gr_rect", "gr_poly", "gr_curve"]:
         for item in find_all(root, item_type):
             layer = get_value(item, "layer")
             if layer != "Edge.Cuts":
@@ -1009,6 +1009,24 @@ def extract_board_outline(root: list) -> dict:
                         "center": [float(center[1]), float(center[2])],
                         "end": [float(end[1]), float(end[2])],
                     })
+            elif item_type == "gr_poly":
+                pts = find_first(item, "pts")
+                if pts:
+                    points = []
+                    for xy in pts:
+                        if isinstance(xy, list) and len(xy) >= 3 and xy[0] == "xy":
+                            points.append([float(xy[1]), float(xy[2])])
+                    if points:
+                        edges.append({"type": "polygon", "points": points})
+            elif item_type == "gr_curve":
+                pts = find_first(item, "pts")
+                if pts:
+                    points = []
+                    for xy in pts:
+                        if isinstance(xy, list) and len(xy) >= 3 and xy[0] == "xy":
+                            points.append([float(xy[1]), float(xy[2])])
+                    if points:
+                        edges.append({"type": "curve", "points": points})
 
     # Compute bounding box from all edge points
     all_x = []
@@ -1060,6 +1078,12 @@ def extract_board_outline(root: list) -> dict:
                     elif sweep < 0 and offset >= (2.0 * math.pi + sweep):
                         all_x.append(ucx + r * dx)
                         all_y.append(ucy + r * dy)
+            continue
+        # Polygons and curves: use all points
+        if e["type"] in ("polygon", "curve") and "points" in e:
+            for pt in e["points"]:
+                all_x.append(pt[0])
+                all_y.append(pt[1])
             continue
         # Lines, rects, arcs without mid: use raw endpoint coordinates
         for key in ["start", "end", "center", "mid"]:
@@ -2326,9 +2350,9 @@ def analyze_vias(vias: dict, footprints: list[dict],
         return {}
 
     # --- Type breakdown ---
-    type_counts: dict[str, int] = {"through": 0, "blind": 0, "micro": 0}
+    type_counts: dict[str, int] = {"through": 0, "blind": 0, "buried": 0, "micro": 0}
     type_sizes: dict[str, dict[str, int]] = {
-        "through": {}, "blind": {}, "micro": {},
+        "through": {}, "blind": {}, "buried": {}, "micro": {},
     }
     for v in all_vias:
         vtype = v.get("type", "through") or "through"

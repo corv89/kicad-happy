@@ -1188,6 +1188,10 @@ def _infer_rail_voltage(net_name):
     if not net_name:
         return None
     name = net_name.upper().strip()
+    # VxPy notation: V3P3 → 3.3, V1P8 → 1.8
+    m = re.match(r'V(\d+)P(\d+)', name)
+    if m:
+        return float(f"{m.group(1)}.{m.group(2)}")
     m = re.match(r'[+]?(\d+)V(\d+)', name)
     if m:
         return float(f"{m.group(1)}.{m.group(2)}")
@@ -1220,7 +1224,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                             "w25q", "at24c", "24c0", "pcf85", "ht42b", "ch340",
                             "cp210", "ft232", "74lvc", "74hc",
                             # KH-100: WiFi/BT modules with filter inductors
-                            "ap62", "ap63", "esp32", "esp8266",
+                            "ap6212", "ap6236", "ap6256", "esp32", "esp8266",
                             "cyw43", "wl18")
         if any(k in _lib_val_check for k in _non_reg_exclude):
             continue
@@ -1936,10 +1940,12 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             if not pin_name:
                 continue
             pn = pin_name.replace(" ", "")
-            if pn in ("+", "+IN", "IN+", "INP", "V+IN", "NONINVERTING") or \
+            if pn in ("+", "+IN", "IN+", "INP", "V+IN", "NONINVERTING",
+                      "NON-INV", "NON-INVERTING", "NI") or \
                (pn.startswith("+") and "IN" in pn):
                 pos_in = (pin_name, net, pnum)
-            elif pn in ("-", "-IN", "IN-", "INM", "V-IN", "INVERTING") or \
+            elif pn in ("-", "-IN", "IN-", "INM", "V-IN", "INVERTING",
+                         "INV", "INV-IN") or \
                  (pn.startswith("-") and "IN" in pn):
                 neg_in = (pin_name, net, pnum)
             elif pn in ("OUT", "OUTPUT", "VOUT", "VO"):
