@@ -18,10 +18,12 @@ Input schema (per crop, e.g. crop_power_design.json)::
 from __future__ import annotations
 
 import os
+import sys
 from typing import Optional
 
 from figures.registry import register
 from figures.lib.theme import FigureTheme
+from figures.lib.analysis_helpers import build_pin_nets
 
 
 @register(name="schematic_crops", output="crops/",
@@ -39,17 +41,7 @@ class SchematicCropGenerator:
         if not sections:
             return None
 
-        # Build pin_nets
-        pin_nets = {}
-        for net_name, net_info in analysis.get('nets', {}).items():
-            if net_name.startswith('__unnamed_'):
-                continue
-            if isinstance(net_info, dict):
-                for p in net_info.get('pins', []):
-                    comp = p.get('component', '')
-                    pin = p.get('pin_number', '')
-                    if comp and pin:
-                        pin_nets.setdefault(comp, {})[pin] = net_name
+        pin_nets = build_pin_nets(analysis)
 
         crops = []
         for section in sections:

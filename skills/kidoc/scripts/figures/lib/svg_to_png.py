@@ -261,24 +261,24 @@ def svg_to_png(svg_path: str, png_path: str, dpi: int = 300,
     return png_path
 
 
+_NAMED_COLORS = {
+    'white': (255, 255, 255), 'black': (0, 0, 0),
+    'red': (255, 0, 0), 'green': (0, 128, 0), 'blue': (0, 0, 255),
+}
+
+
 def _parse_color(color_str: str | None) -> tuple | None:
     """Parse SVG color string to PIL color tuple."""
     if not color_str or color_str == 'none':
         return None
     color_str = color_str.strip()
     if color_str.startswith('#'):
-        hex_str = color_str[1:]
-        if len(hex_str) == 3:
-            hex_str = ''.join(c * 2 for c in hex_str)
-        if len(hex_str) == 6:
-            return (int(hex_str[0:2], 16), int(hex_str[2:4], 16),
-                    int(hex_str[4:6], 16))
-    # Named colors
-    named = {
-        'white': (255, 255, 255), 'black': (0, 0, 0),
-        'red': (255, 0, 0), 'green': (0, 128, 0), 'blue': (0, 0, 255),
-    }
-    return named.get(color_str.lower())
+        from .theme import hex_to_rgb
+        try:
+            return hex_to_rgb(color_str)
+        except (ValueError, IndexError):
+            return None
+    return _NAMED_COLORS.get(color_str.lower())
 
 
 if __name__ == '__main__':

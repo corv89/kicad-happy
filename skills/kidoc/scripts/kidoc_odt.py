@@ -15,7 +15,6 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 
 from odf.opendocument import OpenDocumentText
 from odf import text as odftext
@@ -27,16 +26,10 @@ from odf.style import (Style, TextProperties, ParagraphProperties,
 from odf.text import P, H, List, ListItem, ListLevelStyleBullet, ListStyle
 from odf.table import Table, TableColumn, TableRow, TableCell
 
-# SVG to PNG conversion via Pillow-based rasterizer (no Cairo dependency)
-try:
-    from svg_to_png import svg_to_png as _svg_to_png_impl
-    _HAS_SVG_RENDER = True
-except ImportError:
-    _HAS_SVG_RENDER = False
-
-# Add kidoc scripts to path for the markdown parser
+# Add kidoc scripts to path for sibling imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kidoc_md_parser import parse_markdown
+from kidoc_raster import svg_to_png as _svg_to_png, has_svg_render, get_dpi
 
 
 # ======================================================================
@@ -175,23 +168,6 @@ def _add_runs_to_paragraph(p, runs: list[dict], styles: dict) -> None:
         else:
             span = odftext.Span(text=text_content)
             p.addElement(span)
-
-
-# ======================================================================
-# SVG to PNG
-# ======================================================================
-
-def _svg_to_png(svg_path: str, dpi: int = 300) -> str | None:
-    """Convert SVG to a temporary PNG file."""
-    if not _HAS_SVG_RENDER or not os.path.isfile(svg_path):
-        return None
-    try:
-        fd, png_path = tempfile.mkstemp(suffix='.png')
-        os.close(fd)
-        _svg_to_png_impl(svg_path, png_path, dpi=dpi)
-        return png_path
-    except Exception:
-        return None
 
 
 # ======================================================================

@@ -17,17 +17,22 @@ from typing import Dict, Optional, Tuple
 # Color math helpers
 # ======================================================================
 
-def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
-    """Parse '#rrggbb' to (r, g, b) ints."""
+def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+    """Parse '#rrggbb' or '#rgb' to (r, g, b) ints."""
     h = hex_color.lstrip('#')
     if len(h) == 3:
         h = h[0]*2 + h[1]*2 + h[2]*2
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-def _rgb_to_hex(r: int, g: int, b: int) -> str:
+def rgb_to_hex(r: int, g: int, b: int) -> str:
     """Convert (r, g, b) ints to '#rrggbb'."""
     return f"#{min(255,max(0,r)):02x}{min(255,max(0,g)):02x}{min(255,max(0,b)):02x}"
+
+
+# Backward-compatible aliases
+_hex_to_rgb = hex_to_rgb
+_rgb_to_hex = rgb_to_hex
 
 
 def lighten(hex_color: str, factor: float = 0.15) -> str:

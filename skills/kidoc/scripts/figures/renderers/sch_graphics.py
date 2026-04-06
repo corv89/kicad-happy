@@ -15,12 +15,8 @@ import sys
 from collections import namedtuple
 from typing import Any
 
-# Cross-skill import: sexp_parser from kicad skill
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
-if os.path.isdir(_kicad_scripts):
-    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+from ._path_setup import setup_kicad_imports
+setup_kicad_imports()
 
 try:
     from sexp_parser import find_all, find_first, get_value, get_at, get_property

@@ -15,42 +15,16 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 
 from docx import Document
 from docx.shared import Inches, Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT
 
-# SVG to PNG conversion via Pillow-based rasterizer (no Cairo dependency)
-try:
-    from svg_to_png import svg_to_png as _svg_to_png_impl
-    _HAS_SVG_RENDER = True
-except ImportError:
-    _HAS_SVG_RENDER = False
-
-# Add kidoc scripts to path for the markdown parser
+# Add kidoc scripts to path for sibling imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kidoc_md_parser import parse_markdown
-
-
-# ======================================================================
-# SVG to PNG conversion
-# ======================================================================
-
-def _svg_to_png(svg_path: str, dpi: int = 300) -> str | None:
-    """Convert SVG to a temporary PNG file.  Returns PNG path or None."""
-    if not _HAS_SVG_RENDER:
-        return None
-    if not os.path.isfile(svg_path):
-        return None
-    try:
-        fd, png_path = tempfile.mkstemp(suffix='.png')
-        os.close(fd)
-        _svg_to_png_impl(svg_path, png_path, dpi=dpi)
-        return png_path
-    except Exception:
-        return None
+from kidoc_raster import svg_to_png as _svg_to_png, has_svg_render, get_dpi
 
 
 # ======================================================================

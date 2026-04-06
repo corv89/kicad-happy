@@ -7,7 +7,7 @@ Requires matplotlib (available in venv).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from figures.registry import register
 from figures.lib.theme import FigureTheme

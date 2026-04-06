@@ -124,8 +124,9 @@ def load_analysis_cache(project_dir: str,
                                 cache['gate'] = data
                             if analysis_type in cache:
                                 break
-                        except (json.JSONDecodeError, OSError):
-                            pass
+                        except (json.JSONDecodeError, OSError) as exc:
+                            print(f"  Warning: failed to load {fpath}: {exc}",
+                                  file=sys.stderr)
                 if analysis_type in cache:
                     break
 
@@ -298,31 +299,32 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
             pcb_path = str(f)
             break
 
+    def _run_analysis(name: str, cmd: list[str]) -> None:
+        """Run an analysis subprocess with timeout, recording result."""
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=120)
+            results[name] = result.returncode == 0
+        except subprocess.TimeoutExpired:
+            results[name] = False
+
     # Schematic analysis
     sch_json = os.path.join(analysis_dir, 'schematic.json')
     if sch_path and not os.path.isfile(sch_json):
         analyzer = os.path.join(scripts_dir, 'analyze_schematic.py')
         if os.path.isfile(analyzer):
-            try:
-                result = subprocess.run(
-                    [sys.executable, analyzer, sch_path, '--output', sch_json],
-                    capture_output=True, text=True, timeout=120)
-                results['schematic'] = result.returncode == 0
-            except subprocess.TimeoutExpired:
-                results['schematic'] = False
+            _run_analysis('schematic',
+                          [sys.executable, analyzer, sch_path,
+                           '--output', sch_json])
 
     # PCB analysis
     pcb_json = os.path.join(analysis_dir, 'pcb.json')
     if pcb_path and not os.path.isfile(pcb_json):
         analyzer = os.path.join(scripts_dir, 'analyze_pcb.py')
         if os.path.isfile(analyzer):
-            try:
-                result = subprocess.run(
-                    [sys.executable, analyzer, pcb_path, '--output', pcb_json],
-                    capture_output=True, text=True, timeout=120)
-                results['pcb'] = result.returncode == 0
-            except subprocess.TimeoutExpired:
-                results['pcb'] = False
+            _run_analysis('pcb',
+                          [sys.executable, analyzer, pcb_path,
+                           '--output', pcb_json])
 
     # EMC analysis (requires both schematic + PCB JSONs)
     emc_json = os.path.join(analysis_dir, 'emc.json')
@@ -333,15 +335,10 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
             '..', '..', 'emc', 'scripts'))
         analyzer = os.path.join(emc_scripts, 'analyze_emc.py')
         if os.path.isfile(analyzer):
-            try:
-                result = subprocess.run(
-                    [sys.executable, analyzer,
-                     '--schematic', sch_json, '--pcb', pcb_json,
-                     '--output', emc_json],
-                    capture_output=True, text=True, timeout=120)
-                results['emc'] = result.returncode == 0
-            except subprocess.TimeoutExpired:
-                results['emc'] = False
+            _run_analysis('emc',
+                          [sys.executable, analyzer,
+                           '--schematic', sch_json, '--pcb', pcb_json,
+                           '--output', emc_json])
 
     # Thermal analysis (requires both schematic + PCB JSONs)
     thermal_json = os.path.join(analysis_dir, 'thermal.json')
@@ -349,30 +346,30 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
             and not os.path.isfile(thermal_json)):
         analyzer = os.path.join(scripts_dir, 'analyze_thermal.py')
         if os.path.isfile(analyzer):
-            try:
-                result = subprocess.run(
-                    [sys.executable, analyzer,
-                     '--schematic', sch_json, '--pcb', pcb_json,
-                     '--output', thermal_json],
-                    capture_output=True, text=True, timeout=120)
-                results['thermal'] = result.returncode == 0
-            except subprocess.TimeoutExpired:
-                results['thermal'] = False
+            _run_analysis('thermal',
+                          [sys.executable, analyzer,
+                           '--schematic', sch_json, '--pcb', pcb_json,
+                           '--output', thermal_json])
 
-    # Figures (diagrams + pinouts from schematic analysis JSON)
+    # Figures (diagrams + charts from schematic analysis JSON)
+    # Run via venv so matplotlib generators can render
     diagrams_dir = os.path.join(os.path.normpath(figures_dir), 'diagrams')
     if os.path.isfile(sch_json):
         try:
-            from figures import run_all
-            with open(sch_json) as f:
-                sch_analysis = json.load(f)
-            os.makedirs(diagrams_dir, exist_ok=True)
-            paths = run_all(sch_analysis, {}, diagrams_dir)
-            results['diagrams'] = bool(paths)
+            from kidoc_venv import ensure_venv
+            venv_py = ensure_venv(project_dir)
         except Exception as exc:
-            print(f"  Warning: figure generation failed: {exc}",
+            print(f"  Warning: venv setup failed ({exc}), "
+                  f"matplotlib figures will be skipped",
                   file=sys.stderr)
-            results['diagrams'] = False
+            venv_py = sys.executable
+
+        diagrams_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'kidoc_diagrams.py')
+        _run_analysis('diagrams',
+                      [venv_py, diagrams_script,
+                       '--analysis', sch_json,
+                       '--output', diagrams_dir])
 
     # Schematic SVG renders (requires .kicad_sch)
     sch_cache_dir = os.path.join(os.path.normpath(figures_dir), 'schematics')
@@ -382,7 +379,7 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
             os.makedirs(sch_cache_dir, exist_ok=True)
             paths = render_schematic(sch_path, sch_cache_dir)
             results['renders'] = bool(paths)
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             print(f"  Warning: schematic render failed: {exc}",
                   file=sys.stderr)
             results['renders'] = False

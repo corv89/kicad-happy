@@ -2,14 +2,16 @@
 """Figure generator CLI for engineering documentation.
 
 Generates all registered figures (power tree, bus topology, architecture,
-pinouts, and any matplotlib charts if available) from analysis JSON.
+pinouts, thermal/EMC/SPICE/Monte Carlo charts) from analysis JSON.
+
+Should be run from the reports venv (``reports/.venv/``) so that
+matplotlib-based generators can render.  SVG-only generators work
+without the venv but chart generators will be skipped.
 
 Usage:
     python3 kidoc_diagrams.py --analysis schematic.json --output reports/figures/
     python3 kidoc_diagrams.py --analysis schematic.json --output figures/ --config .kicad-happy.json
     python3 kidoc_diagrams.py --analysis schematic.json --output figures/ --force
-
-Zero external dependencies — Python 3.8+ stdlib only.
 """
 
 from __future__ import annotations

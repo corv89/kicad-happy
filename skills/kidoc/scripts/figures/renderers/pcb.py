@@ -24,13 +24,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-# Path setup: scripts/ dir (for cross-skill sexp_parser) and figures.lib
-_scripts_dir = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))
-sys.path.insert(0, _scripts_dir)
-_kicad_scripts = os.path.join(_scripts_dir, '..', '..', 'kicad', 'scripts')
-if os.path.isdir(_kicad_scripts):
-    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+from ._path_setup import setup_kicad_imports
+setup_kicad_imports()
 
 from figures.lib.svg_builder import SvgBuilder, three_point_arc, _f  # noqa: E402
 from .pcb_graphics import (  # noqa: E402
@@ -64,7 +59,7 @@ _ANNOTATION_FONT_SIZE = 0.8 # mm
 # ---------------------------------------------------------------------------
 
 def compute_pcb_crop(footprints: List[FootprintInfo], refs: List[str],
-                     padding: float = 5.0) -> Optional[Tuple[float, float, float, float]]:
+                     padding: float = _DEFAULT_MARGIN) -> Optional[Tuple[float, float, float, float]]:
     """Compute a crop bbox around the specified component references.
 
     Uses footprint positions and courtyard bounding boxes to determine the

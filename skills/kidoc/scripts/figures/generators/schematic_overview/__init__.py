@@ -22,6 +22,7 @@ from typing import Optional
 
 from figures.registry import register
 from figures.lib.theme import FigureTheme
+from figures.lib.analysis_helpers import build_pin_nets
 
 
 @register(name="schematic_overview", output="schematics/",
@@ -35,17 +36,7 @@ class SchematicOverviewGenerator:
         if not sch_path or not os.path.isfile(sch_path):
             return None
 
-        # Build pin_nets from analysis nets
-        pin_nets = {}
-        for net_name, net_info in analysis.get('nets', {}).items():
-            if net_name.startswith('__unnamed_'):
-                continue
-            if isinstance(net_info, dict):
-                for p in net_info.get('pins', []):
-                    comp = p.get('component', '')
-                    pin = p.get('pin_number', '')
-                    if comp and pin:
-                        pin_nets.setdefault(comp, {})[pin] = net_name
+        pin_nets = build_pin_nets(analysis)
 
         # Check kicad-cli availability
         try:

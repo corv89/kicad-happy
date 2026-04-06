@@ -15,6 +15,7 @@ Input schema (per view, e.g. pcb_assembly_front.json)::
 from __future__ import annotations
 
 import os
+import sys
 from typing import Optional
 
 from figures.registry import register
