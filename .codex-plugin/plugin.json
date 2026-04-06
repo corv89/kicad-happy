@@ -1,19 +1,23 @@
 {
   "name": "kicad-happy",
-  "displayName": "kicad-happy",
   "version": "1.1.0",
   "description": "KiCad electronics design skills. Analyze schematics, review PCB layouts, download datasheets, source components, and prep boards for fabrication.",
-  "shortDescription": "AI-powered KiCad schematic analysis, PCB review, EMC checks, BOM management, and fab prep.",
-  "longDescription": "Suite of 11 skills for electronics design with KiCad 5–10. Structured Python analysis (zero dependencies) for schematics, PCB layouts, and Gerbers. 40+ signal detectors, 42 EMC pre-compliance rules, SPICE simulation, thermal analysis, component sourcing (DigiKey/Mouser/LCSC/element14), BOM management, and manufacturing prep (JLCPCB/PCBWay). Professional documentation generation with kidoc.",
   "author": {
     "name": "aklofas",
     "url": "https://github.com/aklofas"
   },
-  "developerName": "aklofas",
+  "homepage": "https://github.com/aklofas/kicad-happy",
   "repository": "https://github.com/aklofas/kicad-happy",
   "license": "MIT",
-  "category": "Development & Code Tools",
   "keywords": ["electronics", "eda", "kicad", "kicad-schematics", "pcb-design", "kicad-pcb", "hardware-design", "design-review", "schematic-analysis", "emc", "bom", "spice"],
-  "capabilities": ["file-read", "file-write", "shell"],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "kicad-happy",
+    "shortDescription": "AI-powered KiCad schematic analysis, PCB review, EMC checks, BOM management, and fab prep.",
+    "longDescription": "Suite of 11 skills for electronics design with KiCad 5–10. Structured Python analysis for schematics, PCB layouts, and Gerbers, plus EMC checks, SPICE simulation, component sourcing, BOM management, and manufacturing prep.",
+    "developerName": "aklofas",
+    "category": "Development & Code Tools",
+    "capabilities": ["Read", "Write", "Shell"],
+    "websiteURL": "https://github.com/aklofas/kicad-happy"
+  }
 }
