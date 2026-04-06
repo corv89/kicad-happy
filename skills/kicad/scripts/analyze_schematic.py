@@ -31,6 +31,7 @@ from sexp_parser import (
     get_properties,
     get_property,
     get_value,
+    has_flag,
     parse_file,
 )
 from kicad_utils import (

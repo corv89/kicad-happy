@@ -8,7 +8,7 @@ Hardware design review tools must be trustworthy. A false negative (missed bug) 
 
 ## Test corpus
 
-The [test harness](https://github.com/aklofas/kicad-happy-testharness) contains 1,036 open-source KiCad projects — the kind of designs real engineers actually build.
+The [test harness](https://github.com/aklofas/kicad-happy-testharness) contains 5,800+ open-source KiCad projects — the kind of designs real engineers actually build.
 
 **Corpus diversity:**
 
@@ -159,14 +159,14 @@ Before every tagged release:
 
 | Metric | Value |
 |--------|-------|
-| Repos in corpus | 1,036 |
+| Repos in corpus | 5,800+ |
 | Schematic files | 6,845 (100% success) |
 | PCB files | 3,498 (99.9%) |
 | Gerber directories | 1,050 (100%) |
-| EMC analyses | 6,853 (100%, 151K+ findings) |
+| EMC analyses | 6,853 (100%, 141K+ findings) |
 | Components parsed | 312,956 |
 | Nets traced | 531,418 |
-| Regression assertions | 428K+ at 100% |
+| Regression assertions | 808K+ at 100% |
 | SPICE simulations | 30,646 |
 | Equations tracked | 96 with source citations |
 | Constants tracked | 295 (0 critical-risk) |

@@ -366,10 +366,17 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
 
         diagrams_script = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'kidoc_diagrams.py')
-        _run_analysis('diagrams',
-                      [venv_py, diagrams_script,
-                       '--analysis', sch_json,
-                       '--output', diagrams_dir])
+        cmd = [venv_py, diagrams_script,
+               '--analysis', sch_json,
+               '--output', diagrams_dir]
+        if os.path.isfile(emc_json):
+            cmd.extend(['--emc', emc_json])
+        if os.path.isfile(thermal_json):
+            cmd.extend(['--thermal', thermal_json])
+        spice_json = os.path.join(analysis_dir, 'spice.json')
+        if os.path.isfile(spice_json):
+            cmd.extend(['--spice', spice_json])
+        _run_analysis('diagrams', cmd)
 
     # Schematic SVG renders (requires .kicad_sch)
     sch_cache_dir = os.path.join(os.path.normpath(figures_dir), 'schematics')

@@ -37,12 +37,26 @@ def main():
     parser.add_argument('--config', default=None,
                         help='Path to .kicad-happy.json config '
                              '(for branding/theme)')
+    parser.add_argument('--emc', default=None,
+                        help='Path to EMC analysis JSON (enables emc_severity chart)')
+    parser.add_argument('--thermal', default=None,
+                        help='Path to thermal analysis JSON (enables thermal_margin chart)')
+    parser.add_argument('--spice', default=None,
+                        help='Path to SPICE results JSON (enables spice/monte_carlo charts)')
     parser.add_argument('--force', action='store_true',
                         help='Force regeneration (ignore cache)')
     args = parser.parse_args()
 
     with open(args.analysis) as f:
         analysis = json.load(f)
+
+    # Merge supplemental analysis data so matplotlib generators can find it.
+    # Keys don't collide: schematic has components/nets/signal_analysis,
+    # thermal has thermal_assessments, EMC has findings, SPICE has simulation_results.
+    for path in (args.emc, args.thermal, args.spice):
+        if path:
+            with open(path) as f:
+                analysis.update(json.load(f))
 
     config = {}
     if args.config:

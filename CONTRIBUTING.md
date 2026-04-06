@@ -157,7 +157,7 @@ All scripts exit 0 on success. The schematic and PCB analyzers produce JSON to s
 
 ## Test harness
 
-Changes to any analysis script must be validated against the [test harness](https://github.com/aklofas/kicad-happy-testharness) — a corpus of 1,036 real-world KiCad projects spanning hobby boards, production hardware, motor controllers, RF frontends, battery management systems, IoT devices, audio amplifiers, and more. KiCad 5 through 10.
+Changes to any analysis script must be validated against the [test harness](https://github.com/aklofas/kicad-happy-testharness) — a corpus of 5,800+ real-world KiCad projects spanning hobby boards, production hardware, motor controllers, RF frontends, battery management systems, IoT devices, audio amplifiers, and more. KiCad 5 through 10.
 
 ### What the harness checks
 

@@ -20,7 +20,7 @@ This separation matters because it means:
 
 The schematic analyzer (`analyze_schematic.py`) reads your `.kicad_sch` file and:
 
-1. **Parses the S-expression format** into a generic tree. No KiCad-version-specific logic — the parser handles KiCad 5 through 9 because it operates on structure, not schema.
+1. **Parses the S-expression format** into a generic tree. No KiCad-version-specific logic — the parser handles KiCad 5 through 10 because it operates on structure, not schema.
 
 2. **Walks hierarchical sheets.** If your design has sub-sheets (including multi-instance sheets where the same sub-sheet is placed multiple times with different reference designators), the analyzer traverses them breadth-first, remapping references per instance.
 
@@ -28,7 +28,7 @@ The schematic analyzer (`analyze_schematic.py`) reads your `.kicad_sch` file and
 
 4. **Builds the net graph** using union-find on pin coordinates. Every wire endpoint, label, power symbol, and component pin gets a coordinate key. Points within 0.01mm are merged. Wires union their endpoints. Labels union their position with any wire they touch. The result: for every net, a complete list of which component pins are connected.
 
-5. **Runs 21 signal path detectors.** Each is a pure function that looks for specific circuit patterns in the connectivity graph:
+5. **Runs 40 signal and domain detectors.** Each is a pure function that looks for specific circuit patterns in the connectivity graph:
 
    | Detector | What it finds |
    |----------|--------------|
@@ -42,7 +42,7 @@ The schematic analyzer (`analyze_schematic.py`) reads your `.kicad_sch` file and
    | Crystal circuits | Crystals with load capacitor verification. |
    | Bridge circuits | H-bridge and 3-phase motor drive topologies. |
    | Bus detection | I2C (with pull-up resistance check), SPI, UART, CAN (with termination check). |
-   | + 11 more | Decoupling analysis, LED drivers, key matrices, RF chains, Ethernet, memory interfaces, isolation barriers, BMS systems, buzzer/speaker drivers, and design-level observations. |
+   | Domain detectors | RF chains, Ethernet, HDMI, memory, BMS, battery chargers, motor drivers, ADC, reset/supervisor, clock distribution, display/touch, sensors, level shifters, audio, LED drivers, RTC, thermocouple/RTD, power sequencing, debug interfaces, ESD coverage audit, and more. |
 
    Detectors run in dependency order — voltage dividers are found first, then regulators reference those dividers for feedback network analysis. Each detector is documented in [methodology_schematic.md](skills/kicad/scripts/methodology_schematic.md).
 
@@ -92,11 +92,11 @@ Being honest about limitations is more useful than pretending they don't exist.
 
 - **Wrong component choice.** If you picked an LDO that can't handle the dropout voltage in your application, or a MOSFET with insufficient Vgs threshold for your gate drive — the analyzer sees the circuit topology but doesn't know your operating conditions. The agent will flag when datasheet parameters look marginal, but it requires the right datasheet and explicit operating specs.
 
-- **Timing and dynamic behavior.** The analysis is static — it sees component values and connectivity, not waveforms. It can compute filter cutoff frequencies and time constants, and it traces enable chains and power_good sequencing dependencies, but it can't simulate transient response or oscillation stability.
+- **Timing and dynamic behavior.** The analysis is primarily static — it sees component values and connectivity, not waveforms. It can compute filter cutoff frequencies and time constants, trace enable chains and power_good sequencing dependencies, and the **spice** skill can simulate detected subcircuits to verify calculated values. But full transient response, oscillation stability, and signal integrity analysis require dedicated SI/PI tools.
 
-- **Layout parasitics.** The PCB analyzer measures trace widths and via counts, and the `--proximity` flag does spatial analysis to flag signal nets running close together (crosstalk risk). But it doesn't extract parasitic inductance or capacitance, and full impedance matching and return path analysis require dedicated SI tools.
+- **Layout parasitics.** The PCB analyzer measures trace widths and via counts, and the `--proximity` flag does spatial analysis to flag signal nets running close together (crosstalk risk). When both schematic and PCB data are available, SPICE simulations can inject extracted PCB trace parasitics. But full impedance matching and return path analysis require dedicated SI tools.
 
-- **EMC compliance.** The review can flag obvious issues (missing bypass caps, long power loops, unshielded switching regulators near sensitive analog), but it can't predict radiated emissions or susceptibility.
+- **Full EMC compliance.** The **emc** skill now performs pre-compliance risk analysis (42 rule checks, PDN impedance, switching harmonics, diff pair skew — see the [EMC guide](emc-precompliance.md)), but it's analytical, not a substitute for pre-compliance testing with actual test equipment.
 
 - **Mechanical fit.** Board outline dimensions are extracted, but interference with enclosures, connector mating height, thermal clearance to adjacent boards — these require 3D mechanical context the analyzer doesn't have.
 
@@ -164,7 +164,7 @@ The JSON is the truth. Everything the agent says should trace back to it. If it 
 
 ### "Open source analysis scripts are a liability — what if they have bugs?"
 
-The scripts are tested against a [dedicated test harness](https://github.com/aklofas/kicad-happy-testharness) containing 1,000+ open-source KiCad projects from GitHub, spanning KiCad versions 5 through 10. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists and the test harness uses three layers of regression testing (see below).
+The scripts are tested against a [dedicated test harness](https://github.com/aklofas/kicad-happy-testharness) containing 5,800+ open-source KiCad projects from GitHub, Codeberg, and GitLab, spanning KiCad versions 5 through 10. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists and the test harness uses three layers of regression testing (see below).
 
 More importantly, the scripts are designed so that bugs produce *missing data*, not *wrong data*. If a detector fails to recognize a circuit pattern, you get a gap in the analysis (the reviewer's blind spot). If a detector misidentifies a circuit, it reports incorrect facts (the reviewer is misled). The detection logic is tuned to avoid the second failure mode — it's better to miss a voltage divider than to report one that doesn't exist.
 
@@ -204,7 +204,7 @@ Steps 1–4 are deterministic and reproducible. Step 5 is AI-assisted reasoning.
 
 ## How the analyzers are tested
 
-The [kicad-happy test harness](https://github.com/aklofas/kicad-happy-testharness) validates every analyzer against 1,000+ open-source KiCad projects organized into 25 categories — microcontrollers, motor controllers, power supplies, RF, audio, sensors, FPGA, retro computing, aerospace, and more. The corpus is pinned by commit hash for reproducibility, and the test harness never stores the projects themselves — just URLs and hashes. You clone on demand.
+The [kicad-happy test harness](https://github.com/aklofas/kicad-happy-testharness) validates every analyzer against 5,800+ open-source KiCad projects organized into 25+ categories — microcontrollers, motor controllers, power supplies, RF, audio, sensors, FPGA, retro computing, aerospace, and more. The corpus is pinned by commit hash for reproducibility, and the test harness never stores the projects themselves — just URLs and hashes. You clone on demand.
 
 ### Three layers of regression testing
 
@@ -218,7 +218,9 @@ The harness uses three complementary layers, each catching things the others mis
 
 ### What gets exercised
 
-- **All three analyzers** (schematic, PCB, Gerber) against every discovered file in the corpus
+- **All analyzers** (schematic, PCB, Gerber, EMC, thermal) against every discovered file in the corpus
+- **SPICE simulation** — 30,000+ subcircuit simulations across 17 types, with cross-validation
+- **EMC pre-compliance** — 141,000+ findings across 15 rule categories and 6 standards
 - **MPN extraction** from analyzer outputs, validated against DigiKey, Mouser, LCSC, and element14 APIs
 - **Datasheet download pipeline** across all four distributors — testing API auth, PDF retrieval, and MPN matching
 - **BOM manager pipeline** end-to-end — from schematic analysis through distributor search to order file generation
@@ -238,7 +240,7 @@ This means every analyzer change is validated against real hardware designs befo
 
 ## Further reading
 
-- [Schematic analysis methodology](skills/kicad/scripts/methodology_schematic.md) — parsing pipeline, net building, all 21 signal detectors
+- [Schematic analysis methodology](skills/kicad/scripts/methodology_schematic.md) — parsing pipeline, net building, 40 signal and domain detectors
 - [PCB layout analysis methodology](skills/kicad/scripts/methodology_pcb.md) — extraction, connectivity, DFM scoring, thermal analysis
 - [Gerber analysis methodology](skills/kicad/scripts/methodology_gerbers.md) — RS-274X/Excellon parsing, layer identification, completeness checks
 - [Example design review report](example-report.md) — full output from a real ESP32-S3 board analysis

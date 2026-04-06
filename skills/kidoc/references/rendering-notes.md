@@ -62,7 +62,7 @@ is an em-box metric.  The conversion factor is **4/3**:
 
     SVG font-size = KiCad stored height * (4/3)
 
-This is applied globally via `FONT_SCALE = 4 / 3` in `kidoc_render.py`.
+This is applied globally via `FONT_SCALE = 4 / 3` in `figures/renderers/schematic.py`.
 A 1.27mm stored height becomes ~1.69mm rendered, matching KiCad's on-screen
 appearance.
 
@@ -101,7 +101,7 @@ schematic SVGs to show connectivity information without requiring full netlists.
 
 ## PCB Rendering
 
-`pcb_render.py` renders `.kicad_pcb` files to SVG using named layer presets
+`figures/renderers/pcb.py` renders `.kicad_pcb` files to SVG using named layer presets
 defined in `layer_presets.py`.  Available presets:
 
 | Preset | Layers shown | Use case |

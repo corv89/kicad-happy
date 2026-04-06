@@ -120,6 +120,12 @@ def main() -> None:
     parser.add_argument('--config', default=None,
                         help='Path to .kicad-happy.json config '
                              '(for branding/theme)')
+    parser.add_argument('--emc', default=None,
+                        help='Path to EMC analysis JSON')
+    parser.add_argument('--thermal', default=None,
+                        help='Path to thermal analysis JSON')
+    parser.add_argument('--spice', default=None,
+                        help='Path to SPICE results JSON')
     args = parser.parse_args()
 
     # Load or generate spec
@@ -128,11 +134,15 @@ def main() -> None:
     else:
         spec = expand_type_to_spec('hdd')
 
-    # Load analysis
+    # Load analysis and merge supplemental data
     analysis = {}
     if args.analysis:
         with open(args.analysis) as f:
             analysis = json.load(f)
+    for path in (args.emc, args.thermal, args.spice):
+        if path:
+            with open(path) as f:
+                analysis.update(json.load(f))
 
     # Load config
     config = None

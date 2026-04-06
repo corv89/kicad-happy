@@ -97,35 +97,32 @@ python3 skills/kidoc/scripts/kidoc_spec.py --list
 
 The `--spec` flag also works with `kidoc_generate.py` (uses the spec title as fallback project name).
 
-## Schematic Rendering
+## Schematic and PCB Rendering
+
+Rendering is integrated into the figure generation engine. The orchestrator and scaffold automatically render schematics and PCB views as part of document generation:
 
 ```bash
-# Full sheet render (root + all sub-sheets)
-python3 skills/kidoc/scripts/kidoc_render.py design.kicad_sch --output renders/
+# Generate all figures (diagrams + schematic/PCB renders) from analysis JSON
+python3 skills/kidoc/scripts/kidoc_diagrams.py --analysis schematic.json --output reports/figures/
 
-# Crop to subsystem bounding box
-python3 skills/kidoc/scripts/kidoc_render.py design.kicad_sch --crop R1,R2,C1 --output crop.svg
-
-# Dim everything except focused components (15% opacity)
-python3 skills/kidoc/scripts/kidoc_render.py design.kicad_sch --focus R1,R2 --output focus.svg
-
-# Highlight specific nets with color tracing via BFS
-python3 skills/kidoc/scripts/kidoc_render.py design.kicad_sch --highlight-nets VCC,GND --output nets.svg
-
-# Annotate pin-level net names at pin tips
-python3 skills/kidoc/scripts/kidoc_render.py design.kicad_sch --pin-nets pin_nets.json --output annotated.svg
+# Full orchestration with spec, analysis, and project files
+python3 skills/kidoc/scripts/kidoc_orchestrator.py --analysis schematic.json \
+    --project-dir . --output reports/figures/
 ```
 
-Options compose: `--crop`, `--focus`, `--highlight-nets`, and `--pin-nets` can all be used together. Recursive sub-sheet rendering is automatic.
+The figure generators support: full-sheet rendering (root + all sub-sheets), subsystem cropping (`focus_refs` in spec sections), net highlighting, pin-level net annotation, and all PCB layer presets. These options are configured in the document spec or passed through the analysis dict.
 
-## PCB Rendering
+Rendering features available through the generator framework:
+- **Crop**: Focus on a subsystem bounding box around specific component refs
+- **Focus/dim**: Show focused components at full opacity, dim the rest to 15%
+- **Highlight nets**: Color-trace specific nets via BFS
+- **Pin nets**: Annotate pin-level net names at pin tips
 
-```bash
-python3 skills/kidoc/scripts/pcb_render.py board.kicad_pcb --output renders/ --preset assembly-front
-python3 skills/kidoc/scripts/pcb_render.py board.kicad_pcb --output renders/ --preset routing-all \
-    --highlight-nets GND,+3V3
-python3 skills/kidoc/scripts/pcb_render.py board.kicad_pcb --output renders/ --preset power \
-    --crop-refs U1,R1
+For direct programmatic access, use `figures.renderers`:
+```python
+from figures.renderers import render_schematic, render_pcb
+render_schematic('design.kicad_sch', 'output/', crop_refs=['R1', 'R2'], highlight_nets=['VCC'])
+render_pcb('board.kicad_pcb', 'output/', preset_name='assembly-front')
 ```
 
 Layer presets:

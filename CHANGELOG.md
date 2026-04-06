@@ -2,7 +2,7 @@
 
 All notable changes to kicad-happy are documented here.
 
-This project follows [Semantic Versioning](https://semver.org/). Each release is validated against a [corpus of 1,036 real-world KiCad projects](VALIDATION.md) before tagging.
+This project follows [Semantic Versioning](https://semver.org/). Each release is validated against a [corpus of 5,800+ real-world KiCad projects](VALIDATION.md) before tagging.
 
 ---
 
