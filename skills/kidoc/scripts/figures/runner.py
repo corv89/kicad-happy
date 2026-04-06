@@ -12,6 +12,7 @@ Zero external dependencies — Python 3.8+ stdlib only.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -48,17 +49,26 @@ def run_all(analysis: dict, config: dict, output_dir: str,
     outputs: List[str] = []
 
     for entry in get_registry():
-        if not check_requires(entry):
-            continue
+        has_deps = check_requires(entry)
 
         try:
             data = entry.generator_cls.prepare(analysis, config)
         except Exception as exc:
-            print(f"  [{entry.name}] prepare failed: {exc}",
-                  file=sys.stderr)
+            if has_deps:
+                print(f"  [{entry.name}] prepare failed: {exc}",
+                      file=sys.stderr)
             continue
 
         if data is None:
+            continue
+
+        if not has_deps:
+            missing = [m for m in entry.requires
+                       if importlib.util.find_spec(m) is None]
+            print(f"  WARNING: {entry.name} figure has data but cannot "
+                  f"render — missing {', '.join(missing)}. "
+                  f"Run from the reports venv to generate.",
+                  file=sys.stderr)
             continue
 
         if entry.multi_output:
