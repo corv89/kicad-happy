@@ -47,7 +47,7 @@ Creates `reports/.venv/` automatically on first run (PDF/DOCX/ODT only — HTML 
 
 1. **Generate scaffold** — `kidoc_scaffold.py` auto-runs all available analyses, renders schematics, generates diagrams, and writes the markdown scaffold.
 2. **Fill narratives** — The agent reads the scaffold and writes engineering prose for each `<!-- NARRATIVE: section_name -->` placeholder. The engineer reviews and edits.
-3. **Regenerate** — On re-run, data sections between `<!-- AUTO-START -->` / `<!-- AUTO-END -->` markers update from fresh analysis; user-written narrative content is preserved.
+3. **Regenerate** — On re-run, data sections between `<!-- GENERATED: section_id -->` markers update from fresh analysis; user-written narrative content is preserved.
 4. **Render output** — `kidoc_generate.py` produces PDF, HTML, DOCX, or ODT.
 
 ## Document Types

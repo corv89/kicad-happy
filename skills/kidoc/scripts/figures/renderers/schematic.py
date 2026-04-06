@@ -22,23 +22,19 @@ import os
 import sys
 from pathlib import Path
 
-# Cross-skill imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
-if os.path.isdir(_kicad_scripts):
-    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+from ._path_setup import setup_kicad_imports
+setup_kicad_imports()
 
-from sexp_parser import (parse_file, find_all, find_first, get_value,
+from sexp_parser import (parse_file, find_all, find_first, get_value,  # noqa: E402
                           get_at, get_property, get_properties)
-from svg_builder import SvgBuilder, three_point_arc, _f
-from sch_graphics import (
+from figures.lib.svg_builder import SvgBuilder, three_point_arc, _f  # noqa: E402
+from .sch_graphics import (  # noqa: E402
     extract_symbol_graphics, parse_stroke, parse_fill, parse_effects,
     StrokeStyle, FillStyle, TextEffects, SymbolGraphics,
     RectGraphic, CircleGraphic, ArcGraphic, PolylineGraphic,
     BezierGraphic, TextGraphic, PinGraphic,
 )
-from color_theme import (
+from figures.lib.color_theme import (  # noqa: E402
     WIRE_COLOR, BUS_COLOR, JUNCTION_COLOR, NO_CONNECT_COLOR,
     COMPONENT_OUTLINE_COLOR, COMPONENT_FILL_COLOR, PIN_COLOR,
     PIN_NAME_COLOR, PIN_NUMBER_COLOR,
@@ -360,7 +356,7 @@ def _render_net_annotation(svg: SvgBuilder, tip: tuple[float, float],
     dy = tip[1] - body[1]
     dist = math.hypot(dx, dy)
 
-    font_size = 1.27 * FONT_SCALE
+    font_size = JUNCTION_LABEL_FONT_MM * FONT_SCALE
     gap = font_size * 0.3
 
     if dist > 0.01:
@@ -610,10 +606,12 @@ def _render_pin(svg: SvgBuilder, pin: PinGraphic,
                          other_visible=names_visible and bool(pin.name) and pin.name != '~')
 
 
-# Margin between pin line and text, matching KiCad's PIN_TEXT_MARGIN (4 mils)
-PIN_TEXT_MARGIN_MM = 0.1016
-# KiCad Hershey stroke font uses 4/3 height-to-em conversion for SVG text
-FONT_SCALE = 4 / 3
+from figures.lib.schematic_constants import (  # noqa: E402
+    FONT_SCALE, PIN_TEXT_MARGIN_MM, PIN_LABEL_GAP_FACTOR,
+    JUNCTION_LABEL_FONT_MM, GRID_BORDER_FONT_MM,
+    TITLE_BLOCK_BODY_FONT_MM, TITLE_BLOCK_TITLE_FONT_MM,
+    DEFAULT_PAGE_MARGIN_MM, GRID_STEP_MM, TICK_LENGTH_MM,
+)
 
 
 def _render_pin_text(svg: SvgBuilder, text: str,
@@ -802,31 +800,23 @@ def _render_properties(svg: SvgBuilder, comp: dict) -> None:
 # Drawing sheet (border, grid labels, title block)
 # ======================================================================
 
-def _render_drawing_sheet(svg: SvgBuilder, root: list,
-                          paper_w: float, paper_h: float,
-                          sch_filename: str = '') -> None:
-    """Render the drawing sheet border, grid labels, and title block."""
-    margin = 10.0
-    inner_x = margin
-    inner_y = margin
-    inner_w = paper_w - 2 * margin
-    inner_h = paper_h - 2 * margin
+def _render_sheet_border(svg: SvgBuilder,
+                         inner_x: float, inner_y: float,
+                         inner_w: float, inner_h: float) -> None:
+    """Render the inner border rectangle with grid labels and tick marks."""
+    grid_font = GRID_BORDER_FONT_MM * FONT_SCALE
+    grid_color = DRAWING_SHEET_COLOR
+    tick_len = TICK_LENGTH_MM
+    grid_step = GRID_STEP_MM
 
     # Inner border
     svg.rect(inner_x, inner_y, inner_w, inner_h,
-             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.15)
-
-    # Grid labels — match KiCad's default 50mm grid division
-    grid_font = 1.3 * FONT_SCALE
-    grid_color = DRAWING_SHEET_COLOR
-    tick_len = 2.0  # 2mm tick marks on inner border
-    grid_step = 50.0  # KiCad uses a fixed 50mm grid step
+             stroke=grid_color, fill='none', stroke_width=0.15)
 
     n_cols = round(inner_w / grid_step)
     n_rows = round(inner_h / grid_step)
 
-    # Column labels and tick marks — fixed 50mm spacing from inner_x
-    # Label y-positions: just inside the inner border (matches KiCad reference)
+    # Column labels and tick marks
     col_label_y_top = inner_y + 1.7
     col_label_y_bot = inner_y + inner_h - 0.3
     for i in range(n_cols):
@@ -836,7 +826,6 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
         svg.text(cx, col_label_y_bot, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
-        # Tick marks at column boundaries (skip first = inner border edge)
         if i > 0:
             bx = inner_x + grid_step * i
             svg.line(bx, inner_y, bx, inner_y + tick_len,
@@ -844,8 +833,7 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
             svg.line(bx, inner_y + inner_h - tick_len, bx, inner_y + inner_h,
                      stroke=grid_color, stroke_width=0.15)
 
-    # Row labels and tick marks — fixed 50mm spacing from inner_y
-    # Label x-positions: just inside the inner border (matches KiCad reference)
+    # Row labels and tick marks
     row_label_x_left = inner_x + 1.0
     row_label_x_right = inner_x + inner_w - 1.0
     for i in range(n_rows):
@@ -855,7 +843,6 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
         svg.text(row_label_x_right, cy, label, font_size=grid_font,
                  fill=grid_color, anchor='middle', dominant_baseline='central')
-        # Tick marks at row boundaries (skip first = inner border edge)
         if i > 0:
             by = inner_y + grid_step * i
             svg.line(inner_x, by, inner_x + tick_len, by,
@@ -863,20 +850,15 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
             svg.line(inner_x + inner_w - tick_len, by, inner_x + inner_w, by,
                      stroke=grid_color, stroke_width=0.15)
 
-    # Title block (lower-right corner)
-    # KiCad standard drawing sheet: 108mm wide x 32mm tall, flush with
-    # inner border right and bottom edges.
-    #
-    # Horizontal dividers (offsets from tb_y):
-    #   +15.5  separates comment rows from Sheet/File area
-    #   +21.5  separates Sheet/File from Title row
-    #   +25.5  separates Title from Date-Rev / Size row
-    #   +28.5  separates Date-Rev / Size from KiCad / Id row
-    #
-    # Vertical dividers (offsets from tb_x):
-    #   +20   Date | Rev  (from y+25.5 to y+28.5)
-    #   +84   left | right columns  (from y+25.5 to y+32)
 
+def _render_title_block(svg: SvgBuilder, root: list,
+                        paper_w: float, paper_h: float,
+                        sch_filename: str = '') -> None:
+    """Render the KiCad title block in the lower-right corner.
+
+    Standard drawing sheet: 108 mm wide x 32 mm tall, flush with the
+    inner (12 mm) border on right and bottom edges.
+    """
     tb = find_first(root, 'title_block')
     title = ''
     date = ''
@@ -888,11 +870,11 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
         rev = get_value(tb, 'rev') or ''
         company = get_value(tb, 'company') or ''
 
-    # Get paper size name
+    # Paper size name
     paper_node = find_first(root, 'paper')
     paper_name = paper_node[1] if paper_node and len(paper_node) >= 2 else 'A4'
 
-    # Get generator info
+    # Generator info
     gen_node = find_first(root, 'generator')
     gen_version = find_first(root, 'generator_version')
     kicad_ver = ''
@@ -901,8 +883,7 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
     elif gen_node and len(gen_node) >= 2:
         kicad_ver = str(gen_node[1])
 
-    # KiCad has two border lines: outer at 10mm, inner at 12mm.
-    # The title block is flush with the inner (12mm) border.
+    # Title block position (flush with inner 12 mm border)
     inner2_margin = 12.0
     inner2_right = paper_w - inner2_margin
     inner2_bottom = paper_h - inner2_margin
@@ -911,68 +892,69 @@ def _render_drawing_sheet(svg: SvgBuilder, root: list,
     tb_x = inner2_right - tb_w
     tb_y = inner2_bottom - tb_h
 
-    # Outer rectangle
-    svg.rect(tb_x, tb_y, tb_w, tb_h,
-             stroke=DRAWING_SHEET_COLOR, fill='none', stroke_width=0.2)
-
-    # Horizontal dividers (full-width)
-    for dy in (15.5, 21.5, 25.5, 28.5):
-        svg.line(tb_x, tb_y + dy, tb_x + tb_w, tb_y + dy,
-                 stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
-
-    # Vertical dividers
-    # Date | Rev separator (row 25.5–28.5 only)
-    svg.line(tb_x + 20, tb_y + 25.5, tb_x + 20, tb_y + 28.5,
-             stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
-    # Left | Right column separator (rows 25.5–32)
-    svg.line(tb_x + 84, tb_y + 25.5, tb_x + 84, tb_y + tb_h,
-             stroke=DRAWING_SHEET_COLOR, stroke_width=0.15)
-
-    # --- Title block text ---
-    # Font sizes match KiCad reference: 2.0 for fields, 2.6666 for title
-    tb_font = 1.5 * FONT_SCALE        # 1.5mm stored → 2.0mm rendered
-    tb_title_font = 2.0 * FONT_SCALE   # 2.0mm stored → 2.6666mm rendered
     c = DRAWING_SHEET_COLOR
 
-    # Comment rows (top section, 5 slots at 3mm each from y+2.75)
-    # KiCad renders comment1..comment4 here; we skip for now (empty in most files)
+    # Outer rectangle
+    svg.rect(tb_x, tb_y, tb_w, tb_h,
+             stroke=c, fill='none', stroke_width=0.2)
 
-    # Sheet: / (in the Sheet/File area, offset 17.75 from tb_y)
+    # Horizontal dividers
+    for dy in (15.5, 21.5, 25.5, 28.5):
+        svg.line(tb_x, tb_y + dy, tb_x + tb_w, tb_y + dy,
+                 stroke=c, stroke_width=0.15)
+
+    # Vertical dividers
+    svg.line(tb_x + 20, tb_y + 25.5, tb_x + 20, tb_y + 28.5,
+             stroke=c, stroke_width=0.15)
+    svg.line(tb_x + 84, tb_y + 25.5, tb_x + 84, tb_y + tb_h,
+             stroke=c, stroke_width=0.15)
+
+    # Text fields
+    tb_font = TITLE_BLOCK_BODY_FONT_MM * FONT_SCALE
+    tb_title_font = TITLE_BLOCK_TITLE_FONT_MM * FONT_SCALE
+
     svg.text(tb_x + 1, tb_y + 17.75, "Sheet: /",
              font_size=tb_font, fill=c)
 
-    # File: <filename> (offset 20.45 from tb_y)
     file_text = f"File: {sch_filename}" if sch_filename else "File:"
     svg.text(tb_x + 1, tb_y + 20.45, file_text,
              font_size=tb_font, fill=c)
 
-    # Title (offset 24.30 from tb_y, larger font)
     title_text = f"Title: {title}" if title else "Title:"
     svg.text(tb_x + 1, tb_y + 24.30, title_text,
              font_size=tb_title_font, fill=c)
 
-    # Date (offset 27.85 from tb_y, in left sub-column after +20 divider)
     date_text = f"Date: {date}" if date else "Date:"
     svg.text(tb_x + 23, tb_y + 27.85, date_text,
              font_size=tb_font, fill=c)
 
-    # Rev (offset 27.85 from tb_y, in right column after +84 divider)
     rev_text = f"Rev: {rev}" if rev else "Rev:"
     svg.text(tb_x + 86, tb_y + 27.85, rev_text,
              font_size=tb_font, fill=c)
 
-    # Size (offset 27.85 from tb_y, in leftmost sub-column)
     svg.text(tb_x + 1, tb_y + 27.85, f"Size: {paper_name}",
              font_size=tb_font, fill=c)
 
-    # KiCad version (offset 30.65 from tb_y, left column)
     if kicad_ver:
         svg.text(tb_x + 1, tb_y + 30.65, kicad_ver,
                  font_size=tb_font, fill=c)
 
-    # Id (offset 30.65 from tb_y, right column)
     svg.text(tb_x + 86, tb_y + 30.65, "Id: 1/1",
              font_size=tb_font, fill=c)
+
+
+def _render_drawing_sheet(svg: SvgBuilder, root: list,
+                          paper_w: float, paper_h: float,
+                          sch_filename: str = '') -> None:
+    """Render the drawing sheet border, grid labels, and title block."""
+    margin = DEFAULT_PAGE_MARGIN_MM
+    inner_x = margin
+    inner_y = margin
+    inner_w = paper_w - 2 * margin
+    inner_h = paper_h - 2 * margin
+
+    _render_sheet_border(svg, inner_x, inner_y, inner_w, inner_h)
+    _render_title_block(svg, root, paper_w, paper_h, sch_filename)
 
 
 # ======================================================================

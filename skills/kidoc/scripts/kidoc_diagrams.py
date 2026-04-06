@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Block diagram generator for engineering documentation.
+"""Figure generator CLI for engineering documentation.
 
-Generates power tree, bus topology, and architecture block diagrams
-from schematic analysis JSON.  Output is SVG via svg_builder.
+Generates all registered figures (power tree, bus topology, architecture,
+pinouts, thermal/EMC/SPICE/Monte Carlo charts) from analysis JSON.
+
+Should be run from the reports venv (``reports/.venv/``) so that
+matplotlib-based generators can render.  SVG-only generators work
+without the venv but chart generators will be skipped.
 
 Usage:
-    python3 kidoc_diagrams.py --analysis schematic.json --all --output reports/figures/diagrams/
-    python3 kidoc_diagrams.py --analysis schematic.json --power-tree --output diagrams/
-    python3 kidoc_diagrams.py --analysis schematic.json --bus-topology --output diagrams/
-    python3 kidoc_diagrams.py --analysis schematic.json --architecture --output diagrams/
-
-Zero external dependencies — Python 3.8+ stdlib only.
+    python3 kidoc_diagrams.py --analysis schematic.json --output reports/figures/
+    python3 kidoc_diagrams.py --analysis schematic.json --output figures/ --config .kicad-happy.json
+    python3 kidoc_diagrams.py --analysis schematic.json --output figures/ --force
 """
 
 from __future__ import annotations
@@ -23,53 +24,36 @@ import sys
 # Ensure this script's directory is on sys.path so figures/ is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from figures import (  # noqa: E402
-    generate_power_tree,
-    generate_bus_topology,
-    generate_architecture,
-    generate_all,
-)
+from figures import run_all, FigureTheme  # noqa: E402
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate block diagrams from analysis JSON')
+    parser = argparse.ArgumentParser(
+        description='Generate figures from analysis JSON')
     parser.add_argument('--analysis', '-a', required=True,
                         help='Path to schematic analysis JSON')
     parser.add_argument('--output', '-o', required=True,
-                        help='Output directory for SVGs')
-    parser.add_argument('--power-tree', action='store_true',
-                        help='Generate power tree diagram')
-    parser.add_argument('--bus-topology', action='store_true',
-                        help='Generate bus topology diagram')
-    parser.add_argument('--architecture', action='store_true',
-                        help='Generate architecture block diagram')
-    parser.add_argument('--all', action='store_true',
-                        help='Generate all applicable diagrams')
+                        help='Output directory for figures')
+    parser.add_argument('--config', default=None,
+                        help='Path to .kicad-happy.json config '
+                             '(for branding/theme)')
+    parser.add_argument('--force', action='store_true',
+                        help='Force regeneration (ignore cache)')
     args = parser.parse_args()
 
     with open(args.analysis) as f:
         analysis = json.load(f)
 
-    os.makedirs(args.output, exist_ok=True)
-    generated = []
+    config = {}
+    if args.config:
+        with open(args.config) as f:
+            config = json.load(f)
 
-    if args.all or args.power_tree:
-        path = generate_power_tree(analysis, os.path.join(args.output, 'power_tree.svg'))
-        if path:
-            generated.append(path)
-
-    if args.all or args.bus_topology:
-        path = generate_bus_topology(analysis, os.path.join(args.output, 'bus_topology.svg'))
-        if path:
-            generated.append(path)
-
-    if args.all or args.architecture:
-        path = generate_architecture(analysis, os.path.join(args.output, 'architecture.svg'))
-        if path:
-            generated.append(path)
+    generated = run_all(analysis, config, args.output, force=args.force)
 
     if not generated:
-        print("No diagrams generated (no applicable data found)", file=sys.stderr)
+        print("No figures generated (no applicable data found)",
+              file=sys.stderr)
     else:
         for p in generated:
             print(p, file=sys.stderr)

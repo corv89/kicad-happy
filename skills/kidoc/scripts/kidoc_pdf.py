@@ -37,7 +37,7 @@ from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate, Frame,
 # Add kidoc scripts to path for the markdown parser and SVG embed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kidoc_md_parser import parse_markdown, parse_inline
-from kidoc_svg_embed import svg_to_flowable
+from figures.lib.svg_embed import svg_to_flowable
 
 
 # ======================================================================

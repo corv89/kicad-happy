@@ -24,23 +24,19 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-# Cross-skill imports -- same pattern as kidoc_render.py
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
-if os.path.isdir(_kicad_scripts):
-    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+from ._path_setup import setup_kicad_imports
+setup_kicad_imports()
 
-from svg_builder import SvgBuilder, three_point_arc, _f
-from pcb_graphics import (
+from figures.lib.svg_builder import SvgBuilder, three_point_arc, _f  # noqa: E402
+from .pcb_graphics import (  # noqa: E402
     extract_pcb, BoardOutline, FootprintInfo, PadInfo,
     TrackInfo, ArcTrackInfo, ViaInfo, ZoneOutline, FpGraphic,
 )
-from layer_presets import (
+from figures.lib.layer_presets import (  # noqa: E402
     LayerPreset, LayerStyle, PRESETS, get_preset,
     layer_visible, layer_style,
 )
-from color_theme import (
+from figures.lib.color_theme import (  # noqa: E402
     PCB_PAD_COLOR, PCB_VIA_COLOR, PCB_DRILL_COLOR,
 )
 
@@ -63,7 +59,7 @@ _ANNOTATION_FONT_SIZE = 0.8 # mm
 # ---------------------------------------------------------------------------
 
 def compute_pcb_crop(footprints: List[FootprintInfo], refs: List[str],
-                     padding: float = 5.0) -> Optional[Tuple[float, float, float, float]]:
+                     padding: float = _DEFAULT_MARGIN) -> Optional[Tuple[float, float, float, float]]:
     """Compute a crop bbox around the specified component references.
 
     Uses footprint positions and courtyard bounding boxes to determine the

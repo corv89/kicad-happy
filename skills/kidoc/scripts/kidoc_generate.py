@@ -96,73 +96,32 @@ def _find_markdown_files(project_dir: str) -> list[str]:
     )
 
 
-def _generate_html(md_path: str, output_path: str,
-                    config: dict) -> bool:
-    """Generate HTML — zero-dep, runs with system Python."""
+def _run_format_generator(format_name: str, python: str, script: str,
+                          md_path: str, output_path: str,
+                          config: dict) -> bool:
+    """Run a document format generator as a subprocess.
+
+    Args:
+        format_name: Human label for error messages (e.g. "PDF").
+        python: Python interpreter (system or venv).
+        script: Generator script name (e.g. 'kidoc_pdf.py').
+        md_path: Input markdown path.
+        output_path: Output file path.
+        config: Project config dict (serialized as JSON arg).
+
+    Returns True on success.
+    """
     cmd = [
-        sys.executable,
-        os.path.join(SCRIPTS_DIR, 'kidoc_html.py'),
+        python,
+        os.path.join(SCRIPTS_DIR, script),
         '--input', md_path,
         '--output', output_path,
         '--config', json.dumps(config),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"HTML generation failed: {result.stderr}", file=sys.stderr)
-        return False
-    return True
-
-
-def _generate_pdf(venv_py: str, md_path: str, output_path: str,
-                   config: dict) -> bool:
-    """Dispatch PDF generation to the venv."""
-    config_json = json.dumps(config)
-    cmd = [
-        venv_py,
-        os.path.join(SCRIPTS_DIR, 'kidoc_pdf.py'),
-        '--input', md_path,
-        '--output', output_path,
-        '--config', config_json,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"PDF generation failed: {result.stderr}", file=sys.stderr)
-        return False
-    return True
-
-
-def _generate_docx(venv_py: str, md_path: str, output_path: str,
-                    config: dict) -> bool:
-    """Dispatch DOCX generation to the venv."""
-    config_json = json.dumps(config)
-    cmd = [
-        venv_py,
-        os.path.join(SCRIPTS_DIR, 'kidoc_docx.py'),
-        '--input', md_path,
-        '--output', output_path,
-        '--config', config_json,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"DOCX generation failed: {result.stderr}", file=sys.stderr)
-        return False
-    return True
-
-
-def _generate_odt(venv_py: str, md_path: str, output_path: str,
-                   config: dict) -> bool:
-    """Dispatch ODT generation to the venv."""
-    config_json = json.dumps(config)
-    cmd = [
-        venv_py,
-        os.path.join(SCRIPTS_DIR, 'kidoc_odt.py'),
-        '--input', md_path,
-        '--output', output_path,
-        '--config', config_json,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"ODT generation failed: {result.stderr}", file=sys.stderr)
+        print(f"{format_name} generation failed: {result.stderr}",
+              file=sys.stderr)
         return False
     return True
 
@@ -214,35 +173,28 @@ def generate_documents(project_dir: str, formats: list[str],
         # e.g. "SacMap Rev2 - Hardware Design Description Rev 2.0.pdf"
         base_name = _build_filename(stem, proj_name, rev)
 
-        if 'html' in formats or 'all' in formats:
-            html_path = os.path.join(output_dir, f"{base_name}.html")
-            print(f"Generating HTML: {html_path}", file=sys.stderr)
-            if _generate_html(md_path, html_path, config):
-                outputs.append(html_path)
-                print(f"  -> {html_path}", file=sys.stderr)
+        # Format → (label, script, needs_venv)
+        _FORMAT_SCRIPTS = {
+            'html': ('HTML', 'kidoc_html.py', False),
+            'pdf':  ('PDF',  'kidoc_pdf.py',  True),
+            'docx': ('DOCX', 'kidoc_docx.py', True),
+            'odt':  ('ODT',  'kidoc_odt.py',  True),
+        }
 
-        if 'pdf' in formats or 'all' in formats:
-            pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
-            print(f"Generating PDF: {pdf_path}", file=sys.stderr)
-            if venv_py is None:
-                venv_py = ensure_venv(project_dir)
-            if _generate_pdf(venv_py, md_path, pdf_path, config):
-                outputs.append(pdf_path)
-                print(f"  -> {pdf_path}", file=sys.stderr)
-
-        if 'docx' in formats or 'all' in formats:
-            docx_path = os.path.join(output_dir, f"{base_name}.docx")
-            print(f"Generating DOCX: {docx_path}", file=sys.stderr)
-            if _generate_docx(venv_py, md_path, docx_path, config):
-                outputs.append(docx_path)
-                print(f"  -> {docx_path}", file=sys.stderr)
-
-        if 'odt' in formats or 'all' in formats:
-            odt_path = os.path.join(output_dir, f"{base_name}.odt")
-            print(f"Generating ODT: {odt_path}", file=sys.stderr)
-            if _generate_odt(venv_py, md_path, odt_path, config):
-                outputs.append(odt_path)
-                print(f"  -> {odt_path}", file=sys.stderr)
+        for fmt, (label, script, needs) in _FORMAT_SCRIPTS.items():
+            if fmt not in formats and 'all' not in formats:
+                continue
+            out_path = os.path.join(output_dir, f"{base_name}.{fmt}")
+            print(f"Generating {label}: {out_path}", file=sys.stderr)
+            py = sys.executable
+            if needs:
+                if venv_py is None:
+                    venv_py = ensure_venv(project_dir)
+                py = venv_py
+            if _run_format_generator(label, py, script,
+                                     md_path, out_path, config):
+                outputs.append(out_path)
+                print(f"  -> {out_path}", file=sys.stderr)
 
     return outputs
 

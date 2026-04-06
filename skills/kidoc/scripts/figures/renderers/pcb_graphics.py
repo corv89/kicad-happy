@@ -21,12 +21,8 @@ import os
 import sys
 from typing import Any, List, NamedTuple, Optional, Tuple
 
-# Cross-skill imports -- same pattern as kidoc_render.py
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
-if os.path.isdir(_kicad_scripts):
-    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+from ._path_setup import setup_kicad_imports
+setup_kicad_imports()
 
 from sexp_parser import (parse_file, find_all, find_first, get_value,
                           get_at, get_property)
