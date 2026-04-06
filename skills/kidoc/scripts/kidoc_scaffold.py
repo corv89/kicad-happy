@@ -359,37 +359,33 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
             except subprocess.TimeoutExpired:
                 results['thermal'] = False
 
-    # Diagrams (requires schematic analysis JSON)
+    # Figures (diagrams + pinouts from schematic analysis JSON)
     diagrams_dir = os.path.join(os.path.normpath(figures_dir), 'diagrams')
-    if os.path.isfile(sch_json) and not os.path.isdir(diagrams_dir):
-        diagram_script = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), 'kidoc_diagrams.py')
-        if os.path.isfile(diagram_script):
+    if os.path.isfile(sch_json):
+        try:
+            from figures import run_all
+            with open(sch_json) as f:
+                sch_analysis = json.load(f)
             os.makedirs(diagrams_dir, exist_ok=True)
-            try:
-                result = subprocess.run(
-                    [sys.executable, diagram_script,
-                     '--analysis', sch_json, '--all', '--output', diagrams_dir],
-                    capture_output=True, text=True, timeout=60)
-                results['diagrams'] = result.returncode == 0
-            except subprocess.TimeoutExpired:
-                results['diagrams'] = False
+            paths = run_all(sch_analysis, {}, diagrams_dir)
+            results['diagrams'] = bool(paths)
+        except Exception as exc:
+            print(f"  Warning: figure generation failed: {exc}",
+                  file=sys.stderr)
+            results['diagrams'] = False
 
     # Schematic SVG renders (requires .kicad_sch)
     sch_cache_dir = os.path.join(os.path.normpath(figures_dir), 'schematics')
     if sch_path and not os.path.isdir(sch_cache_dir):
-        render_script = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), 'kidoc_render.py')
-        if os.path.isfile(render_script):
+        try:
+            from figures.renderers import render_schematic
             os.makedirs(sch_cache_dir, exist_ok=True)
-            try:
-                result = subprocess.run(
-                    [sys.executable, render_script, sch_path,
-                     '--output', sch_cache_dir],
-                    capture_output=True, text=True, timeout=120)
-                results['renders'] = result.returncode == 0
-            except subprocess.TimeoutExpired:
-                results['renders'] = False
+            paths = render_schematic(sch_path, sch_cache_dir)
+            results['renders'] = bool(paths)
+        except Exception as exc:
+            print(f"  Warning: schematic render failed: {exc}",
+                  file=sys.stderr)
+            results['renders'] = False
 
     return results
 
