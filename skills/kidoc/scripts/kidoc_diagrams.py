@@ -9,6 +9,7 @@ Usage:
     python3 kidoc_diagrams.py --analysis schematic.json --power-tree --output diagrams/
     python3 kidoc_diagrams.py --analysis schematic.json --bus-topology --output diagrams/
     python3 kidoc_diagrams.py --analysis schematic.json --architecture --output diagrams/
+    python3 kidoc_diagrams.py --analysis schematic.json --all --output diagrams/ --config .kicad-happy.json
 
 Zero external dependencies — Python 3.8+ stdlib only.
 """
@@ -24,6 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from figures import (  # noqa: E402
+    FigureTheme,
     generate_power_tree,
     generate_bus_topology,
     generate_architecture,
@@ -37,6 +39,9 @@ def main():
                         help='Path to schematic analysis JSON')
     parser.add_argument('--output', '-o', required=True,
                         help='Output directory for SVGs')
+    parser.add_argument('--config', default=None,
+                        help='Path to .kicad-happy.json config '
+                             '(for branding/theme)')
     parser.add_argument('--power-tree', action='store_true',
                         help='Generate power tree diagram')
     parser.add_argument('--bus-topology', action='store_true',
@@ -50,23 +55,39 @@ def main():
     with open(args.analysis) as f:
         analysis = json.load(f)
 
+    # Build theme from config if provided
+    theme = FigureTheme()
+    if args.config:
+        with open(args.config) as f:
+            config = json.load(f)
+        theme = FigureTheme.from_config(config)
+
     os.makedirs(args.output, exist_ok=True)
     generated = []
 
-    if args.all or args.power_tree:
-        path = generate_power_tree(analysis, os.path.join(args.output, 'power_tree.svg'))
-        if path:
-            generated.append(path)
+    if args.all:
+        generated = generate_all(analysis, args.output, theme=theme)
+    else:
+        if args.power_tree:
+            path = generate_power_tree(
+                analysis, os.path.join(args.output, 'power_tree.svg'),
+                theme=theme)
+            if path:
+                generated.append(path)
 
-    if args.all or args.bus_topology:
-        path = generate_bus_topology(analysis, os.path.join(args.output, 'bus_topology.svg'))
-        if path:
-            generated.append(path)
+        if args.bus_topology:
+            path = generate_bus_topology(
+                analysis, os.path.join(args.output, 'bus_topology.svg'),
+                theme=theme)
+            if path:
+                generated.append(path)
 
-    if args.all or args.architecture:
-        path = generate_architecture(analysis, os.path.join(args.output, 'architecture.svg'))
-        if path:
-            generated.append(path)
+        if args.architecture:
+            path = generate_architecture(
+                analysis, os.path.join(args.output, 'architecture.svg'),
+                theme=theme)
+            if path:
+                generated.append(path)
 
     if not generated:
         print("No diagrams generated (no applicable data found)", file=sys.stderr)

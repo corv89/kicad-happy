@@ -2,8 +2,8 @@
 """Markdown scaffold generator for engineering documentation.
 
 Reads analysis JSONs and .kicad-happy.json config to produce a structured
-markdown document with AUTO-START/AUTO-END markers for regeneratable content
-and NARRATIVE placeholders for Claude/user prose.
+markdown document with `<!-- GENERATED: section_id -->` markers for
+regeneratable content and narrative placeholders for Claude/user prose.
 
 Usage:
     python3 kidoc_scaffold.py --project-dir . --type hdd --output reports/HDD.md

@@ -87,21 +87,56 @@ def _try_svglib(svg_path: str) -> Optional[Drawing]:
 # Tier 2: custom converter for kidoc SVG subset
 # ======================================================================
 
+def _parse_gradient_defs(root: ET.Element) -> dict:
+    """Parse ``<defs>`` for gradient definitions.
+
+    Returns a dict mapping gradient ID to its first stop color (hex).
+    Used as a graceful degradation when svglib is not available:
+    gradients fall back to a single representative color.
+    """
+    gradient_colors: dict[str, str] = {}
+    for defs in root.iter(SVG_NS + 'defs'):
+        for grad in defs:
+            tag = grad.tag.replace(SVG_NS, '')
+            if tag not in ('linearGradient', 'radialGradient'):
+                continue
+            grad_id = grad.get('id', '')
+            if not grad_id:
+                continue
+            # Use the first stop color as the representative color
+            for stop in grad:
+                stop_tag = stop.tag.replace(SVG_NS, '')
+                if stop_tag == 'stop':
+                    color = stop.get('stop-color', '')
+                    if color:
+                        gradient_colors[grad_id] = color
+                        break
+    return gradient_colors
+
+
+# Module-level gradient lookup, populated per SVG parse
+_gradient_lookup: dict[str, str] = {}
+
+
 def _try_custom(svg_path: str) -> Optional[Drawing]:
     """Parse our SVG subset with xml.etree and build a ReportLab Drawing.
 
     Handles: line, rect, circle, ellipse, polyline, polygon, text, g.
     Coordinates are in mm (from svg_builder's viewBox), converted to points.
     Y-axis is flipped (SVG is top-down, ReportLab is bottom-up).
+    Gradients degrade to their first stop color.
     """
+    global _gradient_lookup
     try:
         tree = ET.parse(svg_path)
         root = tree.getroot()
 
+        # Build gradient fallback lookup from <defs>
+        _gradient_lookup = _parse_gradient_defs(root)
+
         # Parse dimensions from viewBox
         viewbox = root.get('viewBox', '')
         if not viewbox:
-            # Try width/height attributes
             w_str = root.get('width', '297mm')
             h_str = root.get('height', '210mm')
             vb_w = _parse_dim(w_str)
@@ -138,6 +173,10 @@ def _convert_element(elem: ET.Element, group: Group, dh: float,
         vb_h: viewBox height in mm
     """
     tag = elem.tag.replace(SVG_NS, '')
+
+    # Skip <defs> — definitions (gradients etc.), not drawn elements
+    if tag == 'defs':
+        return
 
     if tag == 'g':
         g = Group()
@@ -441,12 +480,25 @@ def _parse_dim(dim_str: str) -> float:
 def _parse_color(color_str: Optional[str]) -> Optional[Color]:
     """Parse SVG color string to ReportLab Color.
 
-    Handles hex (#rrggbb, #rgb), 'none', and named colors via toColor.
+    Handles hex (#rrggbb, #rgb), 'none', ``url(#id)`` gradient
+    references (degraded to first stop color), and named colors
+    via toColor.
     """
     if not color_str or color_str.strip().lower() == 'none':
         return None
 
     color_str = color_str.strip()
+
+    # Gradient reference: url(#grad_1) -> resolve to first stop color
+    if color_str.startswith('url(#'):
+        grad_id = color_str[5:].rstrip(')')
+        fallback = _gradient_lookup.get(grad_id)
+        if fallback:
+            try:
+                return HexColor(fallback)
+            except Exception:
+                return None
+        return None
 
     # Hex colors
     if color_str.startswith('#'):

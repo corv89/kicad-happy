@@ -1,8 +1,10 @@
 """Lightweight SVG builder using xml.etree.ElementTree.
 
 Produces svglib-compatible SVGs (inline styles only, no CSS classes,
-no gradients, no masks, no <use> elements).  This ensures downstream
-PDF embedding via ReportLab works correctly.
+no masks, no <use> elements).  Supports ``<linearGradient>`` and
+``<radialGradient>`` definitions (svglib 0.9+ handles these natively;
+the Tier-2 custom converter in kidoc_svg_embed falls back to the
+first stop color for graceful degradation).
 
 Zero external dependencies — Python stdlib only.
 """
@@ -32,6 +34,9 @@ class SvgBuilder:
         self._height = height_mm
         # Stack of current parent elements (<svg> or <g>).
         self._stack: list[Element] = [self._root]
+        # Gradient definitions (lazy-created <defs> block).
+        self._defs: Element | None = None
+        self._gradient_count: int = 0
 
     # ------------------------------------------------------------------
     # Properties
@@ -76,7 +81,8 @@ class SvgBuilder:
     def rect(self, x: float, y: float, w: float, h: float,
              stroke: str = "none", fill: str = "none",
              stroke_width: float = 0.254, rx: float = 0,
-             dash: str | None = None) -> Element:
+             dash: str | None = None,
+             opacity: float | None = None) -> Element:
         """Draw a rectangle.  *x, y* is the top-left corner."""
         attrs = {
             "x": _f(x), "y": _f(y),
@@ -88,6 +94,8 @@ class SvgBuilder:
             attrs["rx"] = _f(rx)
         if dash:
             attrs["stroke-dasharray"] = dash
+        if opacity is not None and opacity < 1.0:
+            attrs["opacity"] = _f(opacity)
         return SubElement(self._parent, "rect", attrs)
 
     def circle(self, cx: float, cy: float, r: float,
@@ -213,6 +221,94 @@ class SvgBuilder:
         elem = SubElement(self._parent, "text", attrs)
         elem.text = content
         return elem
+
+    # ------------------------------------------------------------------
+    # Gradient definitions
+    # ------------------------------------------------------------------
+
+    def _ensure_defs(self) -> Element:
+        """Create ``<defs>`` element if it doesn't exist yet.
+
+        Inserted as the first child of ``<svg>`` so gradient
+        definitions precede any references.
+        """
+        if self._defs is None:
+            self._defs = Element("defs")
+            self._root.insert(0, self._defs)
+        return self._defs
+
+    def linear_gradient(self, color1: str, color2: str,
+                        x1: str = "0%", y1: str = "0%",
+                        x2: str = "0%", y2: str = "100%",
+                        grad_id: str | None = None) -> str:
+        """Define a linear gradient and return its CSS ``url(#id)`` ref.
+
+        Default direction is top-to-bottom (y1=0%, y2=100%).
+
+        Parameters:
+            color1: Start color (hex string).
+            color2: End color (hex string).
+            x1, y1, x2, y2: Gradient vector as percentages.
+            grad_id: Optional explicit ID.  Auto-generated if *None*.
+
+        Returns:
+            ``"url(#grad_N)"`` string suitable for *fill* or *stroke*.
+        """
+        defs = self._ensure_defs()
+        if grad_id is None:
+            self._gradient_count += 1
+            grad_id = f"grad_{self._gradient_count}"
+        grad = SubElement(defs, "linearGradient", {
+            "id": grad_id, "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        })
+        SubElement(grad, "stop", {"offset": "0%", "stop-color": color1})
+        SubElement(grad, "stop", {"offset": "100%", "stop-color": color2})
+        return f"url(#{grad_id})"
+
+    def radial_gradient(self, center_color: str, edge_color: str,
+                        cx: str = "50%", cy: str = "50%", r: str = "50%",
+                        grad_id: str | None = None) -> str:
+        """Define a radial gradient and return its CSS ``url(#id)`` ref."""
+        defs = self._ensure_defs()
+        if grad_id is None:
+            self._gradient_count += 1
+            grad_id = f"grad_{self._gradient_count}"
+        grad = SubElement(defs, "radialGradient", {
+            "id": grad_id, "cx": cx, "cy": cy, "r": r,
+        })
+        SubElement(grad, "stop", {"offset": "0%", "stop-color": center_color})
+        SubElement(grad, "stop", {"offset": "100%", "stop-color": edge_color})
+        return f"url(#{grad_id})"
+
+    def multi_stop_gradient(self, stops: list[tuple[str, str]],
+                            direction: str = "vertical",
+                            grad_id: str | None = None) -> str:
+        """Define a multi-stop linear gradient.
+
+        Parameters:
+            stops: List of ``(offset_percent, color)`` tuples,
+                   e.g. ``[("0%", "#fff"), ("50%", "#aaa"), ("100%", "#fff")]``.
+            direction: ``"vertical"`` (top→bottom) or ``"horizontal"``
+                       (left→right).
+            grad_id: Optional explicit ID.
+
+        Returns:
+            ``"url(#grad_N)"`` reference string.
+        """
+        defs = self._ensure_defs()
+        if grad_id is None:
+            self._gradient_count += 1
+            grad_id = f"grad_{self._gradient_count}"
+        if direction == "horizontal":
+            attrs = {"id": grad_id, "x1": "0%", "y1": "0%",
+                     "x2": "100%", "y2": "0%"}
+        else:
+            attrs = {"id": grad_id, "x1": "0%", "y1": "0%",
+                     "x2": "0%", "y2": "100%"}
+        grad = SubElement(defs, "linearGradient", attrs)
+        for offset, color in stops:
+            SubElement(grad, "stop", {"offset": offset, "stop-color": color})
+        return f"url(#{grad_id})"
 
     # ------------------------------------------------------------------
     # Grouping

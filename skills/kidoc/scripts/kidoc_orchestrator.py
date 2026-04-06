@@ -28,7 +28,7 @@ from kidoc_spec import load_spec, expand_type_to_spec, SECTION_DEFAULTS
 from kicad_cli import find_kicad_cli, export_sch_svg, export_pcb_svg
 from kidoc_render import render_schematic
 from pcb_render import render_pcb
-from figures import generate_all, generate_pinouts
+from figures import generate_all, generate_pinouts, FigureTheme
 
 
 # ======================================================================
@@ -210,11 +210,12 @@ def _render_pcb_views(pcb_path: str, output_dir: str,
     return paths
 
 
-def _generate_diagrams(analysis: dict, output_dir: str) -> List[str]:
+def _generate_diagrams(analysis: dict, output_dir: str,
+                       theme: Optional[FigureTheme] = None) -> List[str]:
     """Generate all block diagrams. Returns list of SVG paths."""
     os.makedirs(output_dir, exist_ok=True)
     try:
-        return generate_all(analysis, output_dir)
+        return generate_all(analysis, output_dir, theme=theme)
     except Exception as exc:
         print(f"  Warning: diagram generation failed: {exc}",
               file=sys.stderr)
@@ -222,11 +223,12 @@ def _generate_diagrams(analysis: dict, output_dir: str) -> List[str]:
 
 
 def _generate_pinout_figures(analysis: dict,
-                             output_dir: str) -> List[str]:
+                             output_dir: str,
+                             theme: Optional[FigureTheme] = None) -> List[str]:
     """Generate connector pinout SVGs. Returns list of SVG paths."""
     os.makedirs(output_dir, exist_ok=True)
     try:
-        return generate_pinouts(analysis, output_dir)
+        return generate_pinouts(analysis, output_dir, theme=theme)
     except Exception as exc:
         print(f"  Warning: pinout generation failed: {exc}",
               file=sys.stderr)
@@ -241,7 +243,8 @@ def orchestrate_renders(spec: dict, project_dir: str,
                         analysis: dict,
                         figures_dir: str,
                         sch_path: Optional[str] = None,
-                        pcb_path: Optional[str] = None
+                        pcb_path: Optional[str] = None,
+                        config: Optional[dict] = None
                         ) -> Dict[str, List[str]]:
     """Generate all figures for a report based on the document spec.
 
@@ -257,6 +260,9 @@ def orchestrate_renders(spec: dict, project_dir: str,
         dict mapping section_id -> list of generated figure paths
     """
     result: Dict[str, List[str]] = {}
+
+    # Build figure theme from branding config
+    theme = FigureTheme.from_config(config) if config else FigureTheme()
 
     # Auto-detect project files
     if not sch_path:
@@ -351,7 +357,8 @@ def orchestrate_renders(spec: dict, project_dir: str,
         if (section_type in _PINOUT_SECTION_TYPES and analysis
                 and not pinouts_done):
             print(f"  [{section_id}] pinout figures", file=sys.stderr)
-            paths = _generate_pinout_figures(analysis, pinouts_dir)
+            paths = _generate_pinout_figures(analysis, pinouts_dir,
+                                                     theme=theme)
             if paths:
                 result.setdefault(section_id, []).extend(paths)
                 pinouts_done = True
@@ -359,7 +366,8 @@ def orchestrate_renders(spec: dict, project_dir: str,
     # ---- Always generate diagrams from analysis data ----
     if analysis:
         print("  [diagrams] generating block diagrams", file=sys.stderr)
-        diagram_paths = _generate_diagrams(analysis, diagrams_dir)
+        diagram_paths = _generate_diagrams(analysis, diagrams_dir,
+                                                  theme=theme)
         if diagram_paths:
             result['_diagrams'] = diagram_paths
 
@@ -386,6 +394,9 @@ def main() -> None:
                         help='Path to .kicad_sch (auto-detected if omitted)')
     parser.add_argument('--pcb', default=None,
                         help='Path to .kicad_pcb (auto-detected if omitted)')
+    parser.add_argument('--config', default=None,
+                        help='Path to .kicad-happy.json config '
+                             '(for branding/theme)')
     args = parser.parse_args()
 
     # Load or generate spec
@@ -405,9 +416,15 @@ def main() -> None:
     project_dir = os.path.abspath(args.project_dir)
 
     print(f"Orchestrating renders into {figures_dir}", file=sys.stderr)
+    # Load config if provided
+    config = None
+    if args.config:
+        with open(args.config) as f:
+            config = json.load(f)
+
     result = orchestrate_renders(
         spec, project_dir, analysis, figures_dir,
-        sch_path=args.sch, pcb_path=args.pcb,
+        sch_path=args.sch, pcb_path=args.pcb, config=config,
     )
 
     # Report
