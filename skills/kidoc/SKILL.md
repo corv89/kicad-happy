@@ -195,6 +195,45 @@ Report settings live in `.kicad-happy.json` under the `"reports"` key. Config fi
 }
 ```
 
+## Writing Narratives
+
+After generating a scaffold, fill the narrative placeholder sections with engineering prose.
+
+### Workflow
+
+1. Run the context builder to get focused data for each section:
+   ```bash
+   python3 skills/kidoc/scripts/kidoc_narrative.py \
+     --analysis reports/cache/analysis/schematic.json \
+     --section power_design
+   ```
+   Or build contexts for all narrative sections at once:
+   ```bash
+   python3 skills/kidoc/scripts/kidoc_narrative.py \
+     --analysis reports/cache/analysis/schematic.json \
+     --report reports/HDD.md
+   ```
+
+2. For each section, read the context and write prose that:
+   - Explains **why**, not just **what** — engineering rationale, tradeoffs
+   - References specific component values and part numbers
+   - Uses quantitative language ("2.3ms hold-up time" not "adequate capacitance")
+   - Flags deviations from datasheet recommendations
+   - References SPICE validation results when available
+
+3. Replace the italic placeholder `*[...]*` in the markdown with real prose.
+
+4. On regeneration, data tables update automatically. Review narratives for consistency with any changed data.
+
+### Style Guide
+
+Write as a senior EE explaining to a peer:
+- Lead with the key finding or decision
+- Support with specific numbers from the analysis
+- Note any risks or deviations
+- Keep paragraphs to 3-5 sentences
+- Don't repeat data that's already in tables
+
 ## Requirements
 
 - **Python 3.9+** with `python3-venv` (for PDF/DOCX/ODT generation)
