@@ -15,12 +15,43 @@ from kicad_utils import is_ground_name, is_power_net_name, parse_value
 
 @dataclass
 class AnalysisContext:
-    """Shared state passed between all analysis functions.
+    """Shared state passed to all 40+ signal and domain detector functions.
 
-    Built once in analyze_schematic() after nets and pin_net are ready.
-    Replaces ~10 `comp_lookup = {c["reference"]: c for c in components}` rebuilds,
-    2 duplicate `get_two_pin_nets` closure definitions, and repeated
-    `known_power_rails` construction.
+    Built once in ``analyze_schematic()`` after components, nets, and pin_net
+    are fully resolved.  Provides indexed lookups and helper methods so
+    detectors don't rebuild these structures individually.
+
+    Attributes:
+        components: All placed components (excluding power symbols/flags).
+            Each dict has: reference, value, type, lib_id, footprint,
+            properties, pins, and optionally mpn, datasheet.
+        nets: Net connectivity graph.  ``{net_name: {"pins": [{"component": ref,
+            "pin_number": num, "pin_name": name, "x": float, "y": float}], ...}}``.
+        lib_symbols: Library symbol definitions extracted from the schematic's
+            embedded ``lib_symbols`` section.  ``{lib_id: {value, pins, ...}}``.
+        pin_net: Pin-to-net mapping.  ``{(ref, pin_number): (net_name, pin_info)}``.
+            Covers every pin on every placed component.
+        comp_lookup: Quick component lookup by reference.  ``{ref: component_dict}``.
+            Auto-built from *components* in ``__post_init__``.
+        parsed_values: Parsed SI values (ohms, farads, henries) per component.
+            ``{ref: float}``.  Only components whose value string parses
+            successfully are included.  Auto-built in ``__post_init__``.
+        known_power_rails: Net names connected to power symbols (``#PWR``, ``#FLG``).
+            Used by ``is_power_net()`` to distinguish power rails from signal nets.
+        ref_pins: Per-component pin map.  ``{ref: {pin_number: (net_name, pin_info)}}``.
+            Derived from *pin_net* for quick per-component pin enumeration.
+        no_connects: List of no-connect markers from the schematic.
+        generator_version: KiCad version string (e.g., ``"9.0.1"``).
+        nq: Optional high-performance ``NetlistQueries`` object for multi-hop
+            net tracing.  Initialized separately when available.
+
+    Methods:
+        is_power_net(name): True if *name* is a known power rail or matches
+            common power net name patterns (VCC, +3V3, VBUS, etc.).
+        is_ground(name): True if *name* matches ground patterns (GND, VSS, etc.).
+        get_two_pin_nets(ref): Returns ``(net1, net2)`` for a 2-pin component.
+            Handles standard "1"/"2" numbering and falls back to enumerating
+            all pins for non-standard numbering (Eagle imports, diodes A/K).
     """
 
     components: list[dict]
