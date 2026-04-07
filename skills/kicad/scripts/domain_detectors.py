@@ -467,6 +467,64 @@ def detect_ethernet_interfaces(ctx: AnalysisContext) -> list[dict]:
             if not found_connectors:
                 found_connectors = eth_connectors
 
+            # Bob Smith termination: ~75Ω from transformer center tap via cap to chassis GND
+            # Reduces common-mode noise on Ethernet cable for EMC compliance
+            bob_smith = None
+            for mag in found_magnetics:
+                if bob_smith:
+                    break
+                mag_ref = mag["reference"]
+                # Check all nets this transformer connects to
+                for (ref, pnum), (net_name, _) in ctx.pin_net.items():
+                    if ref != mag_ref or not net_name:
+                        continue
+                    if ctx.is_power_net(net_name) or ctx.is_ground(net_name):
+                        continue
+                    if net_name not in ctx.nets:
+                        continue
+                    # Look for a ~75Ω resistor on this net
+                    for p in ctx.nets[net_name]["pins"]:
+                        rc = ctx.comp_lookup.get(p["component"])
+                        if not rc or rc["type"] != "resistor":
+                            continue
+                        r_val = ctx.parsed_values.get(p["component"])
+                        if not r_val or not (60 <= r_val <= 100):  # 75Ω ±33%
+                            continue
+                        # Check if the other end goes to ground (direct or via cap)
+                        rn1, rn2 = ctx.get_two_pin_nets(p["component"])
+                        r_other = rn2 if rn1 == net_name else rn1
+                        if not r_other:
+                            continue
+                        if ctx.is_ground(r_other):
+                            bob_smith = {
+                                "resistor_ref": p["component"],
+                                "resistor_value": rc.get("value", ""),
+                                "ohms": r_val,
+                                "transformer_ref": mag_ref,
+                            }
+                            break
+                        # Check for cap in between (R → cap → GND)
+                        if r_other in ctx.nets:
+                            for cp in ctx.nets[r_other]["pins"]:
+                                cc = ctx.comp_lookup.get(cp["component"])
+                                if cc and cc["type"] == "capacitor":
+                                    cn1, cn2 = ctx.get_two_pin_nets(cp["component"])
+                                    c_other = cn2 if cn1 == r_other else cn1
+                                    if c_other and ctx.is_ground(c_other):
+                                        bob_smith = {
+                                            "resistor_ref": p["component"],
+                                            "resistor_value": rc.get("value", ""),
+                                            "ohms": r_val,
+                                            "cap_ref": cp["component"],
+                                            "cap_value": cc.get("value", ""),
+                                            "transformer_ref": mag_ref,
+                                        }
+                                        break
+                        if bob_smith:
+                            break
+                    if bob_smith:
+                        break
+
             ethernet_interfaces.append({
                 "phy_reference": phy["reference"],
                 "phy_value": phy["value"],
@@ -479,6 +537,7 @@ def detect_ethernet_interfaces(ctx: AnalysisContext) -> list[dict]:
                     {"reference": c["reference"], "value": c["value"]}
                     for c in found_connectors
                 ],
+                "bob_smith_termination": bob_smith,
             })
     return ethernet_interfaces
 
