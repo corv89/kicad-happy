@@ -7650,6 +7650,8 @@ def main():
                         help="Root .kicad_sch for hierarchy context (auto-discovered if omitted)")
     parser.add_argument("--no-hierarchy", action="store_true",
                         help="Disable hierarchy auto-discovery (treat file as standalone root)")
+    parser.add_argument("--lifecycle", action="store_true",
+                        help="Run lifecycle/obsolescence audit (requires network + API keys)")
     args = parser.parse_args()
 
     if args.schema:
@@ -7678,6 +7680,21 @@ def main():
     project = config.get("project", {})
     if project:
         result["project_config"] = project
+
+    if args.lifecycle:
+        try:
+            from lifecycle_audit import audit_bom
+            project_dir = str(Path(args.schematic).parent)
+            lifecycle = audit_bom(result, project_dir=project_dir)
+            if lifecycle and lifecycle.get("components_checked", 0) > 0:
+                result["lifecycle_audit"] = lifecycle
+                print(f"Lifecycle: {lifecycle.get('lifecycle_summary', {})}", file=sys.stderr)
+            else:
+                print("Lifecycle: no components with MPNs to check", file=sys.stderr)
+        except ImportError:
+            print("Warning: lifecycle_audit.py not found", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: lifecycle audit failed: {e}", file=sys.stderr)
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
