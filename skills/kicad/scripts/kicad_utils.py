@@ -866,6 +866,54 @@ def load_kicad_pro(file_path: str) -> dict | None:
     return None
 
 
+def discover_root_schematic(target_path: str) -> str | None:
+    """Find the root .kicad_sch for a sub-sheet file.
+
+    Returns the root schematic path, or None if the target appears to be
+    the root or no root can be found.
+
+    Strategy:
+    1. Look for .kicad_pro in the same directory — its stem matches the
+       root .kicad_sch stem (KiCad convention).
+    2. Scan sibling .kicad_sch files for (sheet ...) blocks whose
+       Sheetfile property references the target filename.
+    3. Return None if neither succeeds.
+    """
+    target = os.path.abspath(target_path)
+    parent_dir = os.path.dirname(target)
+    target_basename = os.path.basename(target)
+
+    try:
+        entries = os.listdir(parent_dir)
+    except OSError:
+        return None
+
+    # Tier 1: .kicad_pro stem match
+    for fname in entries:
+        if fname.endswith('.kicad_pro'):
+            stem = fname[:-len('.kicad_pro')]
+            candidate = os.path.join(parent_dir, stem + '.kicad_sch')
+            if os.path.isfile(candidate) and os.path.abspath(candidate) != target:
+                return candidate
+
+    # Tier 2: scan sibling .kicad_sch files for (sheet ...) blocks
+    # referencing target_basename
+    siblings = [f for f in entries
+                if f.endswith('.kicad_sch') and f != target_basename]
+    for fname in siblings:
+        candidate = os.path.join(parent_dir, fname)
+        try:
+            with open(candidate, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read(256_000)  # read first 256KB — sheets are near top
+            # Quick string check before expensive parsing
+            if target_basename in content:
+                return candidate
+        except OSError:
+            continue
+
+    return None
+
+
 def extract_pro_net_classes(pro: dict) -> list[dict]:
     """Extract net classes from .kicad_pro ``net_settings``.
 

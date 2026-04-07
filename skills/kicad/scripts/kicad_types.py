@@ -44,6 +44,12 @@ class AnalysisContext:
         generator_version: KiCad version string (e.g., ``"9.0.1"``).
         nq: Optional high-performance ``NetlistQueries`` object for multi-hop
             net tracing.  Initialized separately when available.
+        hierarchy_context: Cross-sheet context for sub-sheet analysis.  None when
+            analyzing a root schematic or when hierarchy discovery is disabled.
+            When present, contains: root_schematic, target_sheet, sheets_in_project,
+            cross_sheet_nets (per hierarchical label: external components, power rail
+            status, connected sheets), project_power_rails, and
+            reference_corrections_applied.
 
     Methods:
         is_power_net(name): True if *name* is a known power rail or matches
@@ -65,6 +71,7 @@ class AnalysisContext:
     no_connects: list[dict] = field(default_factory=list)
     generator_version: str = "unknown"
     nq: 'NetlistQueries | None' = field(default=None, repr=False)
+    hierarchy_context: dict | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.comp_lookup:
