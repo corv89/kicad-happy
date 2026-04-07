@@ -3653,6 +3653,29 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
                 if bus_id in ("0", "") or bus_id in nu.replace("_", ""):
                     cs_nets.append(net_name)
         spi_entry["chip_select_count"] = len(cs_nets)
+        # SPI CS conflict: find cases where multiple ICs share the same CS net
+        cs_device_map = {}  # net_name -> [device_refs]
+        for net_name in cs_nets:
+            if net_name not in nets:
+                continue
+            devices_on_cs = []
+            for p in nets[net_name]["pins"]:
+                comp = comp_lookup.get(p["component"])
+                if comp and comp["type"] == "ic":
+                    devices_on_cs.append(p["component"])
+            if len(devices_on_cs) > 1:
+                cs_device_map[net_name] = devices_on_cs
+
+        if cs_device_map:
+            spi_entry["cs_conflicts"] = [
+                {
+                    "net": net_name,
+                    "devices": devices,
+                    "message": (f"CS net {net_name} shared by {len(devices)} devices "
+                                f"({', '.join(devices)}) — cannot address independently"),
+                }
+                for net_name, devices in cs_device_map.items()
+            ]
         has_mosi = "MOSI" in sigs
         has_miso = "MISO" in sigs
         if has_mosi and has_miso:
