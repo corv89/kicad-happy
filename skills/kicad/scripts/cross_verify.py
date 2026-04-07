@@ -103,8 +103,98 @@ def cross_verify(sch: dict, pcb: dict,
 
 
 def check_component_matching(sch: dict, pcb: dict) -> dict:
-    """Check 1: Bidirectional component reference matching."""
-    return {"matched": 0, "orphans": [], "missing": [], "value_mismatches": [], "dnp_conflicts": []}
+    """Check 1: Bidirectional component reference matching.
+
+    Compares schematic component refs against PCB footprint refs.
+    Detects orphans, missing components, value mismatches, and DNP conflicts.
+    """
+    # Build schematic ref lookup (exclude power symbols and flags)
+    sch_comps = {}
+    dnp_refs = set()
+    for c in sch.get("components", []):
+        ref = c.get("reference", "")
+        if not ref or ref.startswith("#"):
+            continue
+        sch_comps[ref] = {
+            "value": c.get("value", ""),
+            "type": c.get("type", ""),
+            "footprint": c.get("footprint", ""),
+        }
+        if c.get("dnp"):
+            dnp_refs.add(ref)
+
+    # Build PCB ref lookup
+    pcb_fps = {}
+    for fp in pcb.get("footprints", []):
+        ref = fp.get("reference", "")
+        if not ref or ref.startswith("#"):
+            continue
+        pcb_fps[ref] = {
+            "value": fp.get("value", ""),
+            "lib_id": fp.get("lib_id", ""),
+        }
+
+    sch_refs = set(sch_comps.keys())
+    pcb_refs = set(pcb_fps.keys())
+
+    matched = sch_refs & pcb_refs
+    orphans = []  # in PCB but not schematic
+    missing = []  # in schematic but not PCB
+    value_mismatches = []
+    dnp_conflicts = []
+
+    # Orphans: in PCB but not in schematic
+    for ref in sorted(pcb_refs - sch_refs):
+        orphans.append({
+            "ref": ref,
+            "pcb_value": pcb_fps[ref]["value"],
+            "status": "fail",
+            "message": f"{ref} in PCB but not in schematic (stale placement?)",
+        })
+
+    # Missing: in schematic but not in PCB
+    for ref in sorted(sch_refs - pcb_refs):
+        if ref in dnp_refs:
+            continue  # DNP components are expected to be absent from PCB
+        sc = sch_comps[ref]
+        missing.append({
+            "ref": ref,
+            "sch_value": sc["value"],
+            "sch_type": sc["type"],
+            "status": "fail",
+            "message": f"{ref} ({sc['value']}) in schematic but not placed in PCB",
+        })
+
+    # Value mismatches on matched refs
+    for ref in sorted(matched):
+        sv = sch_comps[ref]["value"]
+        pv = pcb_fps[ref]["value"]
+        if sv and pv and sv.lower() != pv.lower():
+            value_mismatches.append({
+                "ref": ref,
+                "sch_value": sv,
+                "pcb_value": pv,
+                "status": "warning",
+                "message": f"{ref}: schematic says '{sv}', PCB says '{pv}'",
+            })
+
+    # DNP conflicts: marked DNP but placed in PCB
+    for ref in sorted(dnp_refs & pcb_refs):
+        dnp_conflicts.append({
+            "ref": ref,
+            "status": "warning",
+            "message": f"{ref} marked DNP in schematic but placed in PCB",
+        })
+
+    return {
+        "schematic_count": len(sch_comps),
+        "pcb_count": len(pcb_fps),
+        "matched": len(matched),
+        "orphans": orphans,
+        "missing": missing,
+        "value_mismatches": value_mismatches,
+        "dnp_conflicts": dnp_conflicts,
+    }
 
 
 def check_diff_pair_routing(sch: dict, pcb: dict) -> list[dict]:
