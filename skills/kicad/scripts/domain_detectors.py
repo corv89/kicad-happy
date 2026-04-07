@@ -2427,6 +2427,89 @@ def detect_power_path(ctx: AnalysisContext) -> list[dict]:
             entry["cc_nets"] = cc_nets
             entry["sbu_nets"] = sbu_nets
 
+            # USB-C CC resistor validation
+            # UFP (sink) requires 5.1kΩ ±10% pull-down on each CC pin to GND
+            # DFP (source) uses 56kΩ (default USB), 22kΩ (1.5A), or 10kΩ (3A)
+            # PD controller IC on CC nets means discrete resistors not required
+            cc_resistor_findings = []
+            has_pd_controller = bool(entry.get("pd_controller"))
+
+            if cc_nets and not has_pd_controller:
+                for cc_net in cc_nets:
+                    if cc_net not in ctx.nets:
+                        continue
+                    cc_resistors = []
+                    for pin in ctx.nets[cc_net].get("pins", []):
+                        comp = ctx.comp_lookup.get(pin["component"])
+                        if not comp or comp["type"] != "resistor":
+                            continue
+                        r_val = ctx.parsed_values.get(pin["component"])
+                        if r_val is None:
+                            continue
+                        # Check which net the other pin connects to
+                        n1, n2 = ctx.get_two_pin_nets(pin["component"])
+                        other_net = n2 if n1 == cc_net else n1
+                        if other_net and ctx.is_ground(other_net):
+                            cc_resistors.append({
+                                "ref": pin["component"],
+                                "ohms": r_val,
+                                "value": comp.get("value", ""),
+                                "to_net": other_net,
+                            })
+
+                    if not cc_resistors:
+                        cc_resistor_findings.append({
+                            "net": cc_net,
+                            "status": "missing",
+                            "message": f"No pull-down resistor on {cc_net} — "
+                                       f"required for USB-C sink (UFP) role",
+                        })
+                    else:
+                        for cr in cc_resistors:
+                            r = cr["ohms"]
+                            # 5.1kΩ ±10% for sink (UFP)
+                            if 4590 <= r <= 5610:
+                                cc_resistor_findings.append({
+                                    "net": cc_net,
+                                    "ref": cr["ref"],
+                                    "ohms": r,
+                                    "status": "correct_sink",
+                                    "message": f"{cr['ref']} ({cr['value']}) on {cc_net} — "
+                                               f"correct for UFP/sink role",
+                                })
+                            elif 50400 <= r <= 61600:  # 56kΩ ±10% = default USB
+                                cc_resistor_findings.append({
+                                    "net": cc_net, "ref": cr["ref"], "ohms": r,
+                                    "status": "source_default",
+                                    "message": f"{cr['ref']} ({cr['value']}) — "
+                                               f"DFP source, default USB current",
+                                })
+                            elif 19800 <= r <= 24200:  # 22kΩ ±10% = 1.5A
+                                cc_resistor_findings.append({
+                                    "net": cc_net, "ref": cr["ref"], "ohms": r,
+                                    "status": "source_1_5A",
+                                    "message": f"{cr['ref']} ({cr['value']}) — "
+                                               f"DFP source, 1.5A advertisement",
+                                })
+                            elif 9000 <= r <= 11000:  # 10kΩ ±10% = 3A
+                                cc_resistor_findings.append({
+                                    "net": cc_net, "ref": cr["ref"], "ohms": r,
+                                    "status": "source_3A",
+                                    "message": f"{cr['ref']} ({cr['value']}) — "
+                                               f"DFP source, 3A advertisement",
+                                })
+                            else:
+                                cc_resistor_findings.append({
+                                    "net": cc_net, "ref": cr["ref"], "ohms": r,
+                                    "status": "unexpected_value",
+                                    "message": f"{cr['ref']} ({cr['value']}) = {r:.0f}Ω on {cc_net} — "
+                                               f"not a standard USB-C CC value "
+                                               f"(expected 5.1kΩ sink or 56k/22k/10k source)",
+                                })
+
+            if cc_resistor_findings:
+                entry["cc_resistor_check"] = cc_resistor_findings
+
         results.append(entry)
 
     return results
