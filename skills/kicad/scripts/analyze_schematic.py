@@ -3295,7 +3295,7 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
 
             if devices:  # Skip connector-only routing with no ICs
                 load_count = len(devices)
-                results.append({
+                entry = {
                     "net": net_name,
                     "line": bus_type,
                     "devices": devices,
@@ -3303,7 +3303,54 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
                     "estimated_bus_capacitance_pF": load_count * 5,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
-                })
+                }
+
+                # I2C rise time validation
+                # EQ-089: t_r = 0.8473 * R_pullup * C_bus (RC time constant to 70% VDD)
+                # I2C spec limits: Standard 1000ns, Fast 300ns, Fast+ 120ns, HS 50ns
+                if entry.get("pull_ups") and entry.get("estimated_bus_capacitance_pF"):
+                    pullup_ohms = [pu["ohms"] for pu in entry["pull_ups"] if pu.get("ohms")]
+                    if pullup_ohms:
+                        # Parallel combination if multiple pull-ups on same line
+                        if len(pullup_ohms) == 1:
+                            r_eff = pullup_ohms[0]
+                        else:
+                            r_eff = 1.0 / sum(1.0 / r for r in pullup_ohms)
+
+                        c_bus_f = entry["estimated_bus_capacitance_pF"] * 1e-12
+                        rise_time_ns = 0.8473 * r_eff * c_bus_f * 1e9
+
+                        entry["rise_time_ns"] = round(rise_time_ns, 1)
+                        entry["effective_pullup_ohms"] = round(r_eff, 1)
+
+                        # Determine maximum supported speed mode
+                        _I2C_MODES = [
+                            ("HS",         50),
+                            ("Fast-mode+", 120),
+                            ("Fast-mode",  300),
+                            ("Standard",  1000),
+                        ]
+                        max_mode = "Standard"
+                        for mode_name, limit_ns in _I2C_MODES:
+                            if rise_time_ns <= limit_ns:
+                                max_mode = mode_name
+                                break
+
+                        entry["max_speed_mode"] = max_mode
+
+                        # Warning if rise time is marginal (within 20% of limit)
+                        for mode_name, limit_ns in _I2C_MODES:
+                            if rise_time_ns <= limit_ns:
+                                margin_pct = (limit_ns - rise_time_ns) / limit_ns * 100
+                                if margin_pct < 20:
+                                    entry["rise_time_warning"] = (
+                                        f"Rise time {rise_time_ns:.0f}ns is within 20% of "
+                                        f"{mode_name} limit ({limit_ns}ns) — "
+                                        f"margin {margin_pct:.0f}%"
+                                    )
+                                break
+
+                results.append(entry)
 
     return results
 
