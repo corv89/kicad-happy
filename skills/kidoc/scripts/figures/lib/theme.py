@@ -125,12 +125,12 @@ class FigureTheme:
     pt_arrow_color: str = "#4a6fa5"
     pt_enable_color: str = "#888888"
     pt_output_colors: Tuple[ColorTriple, ...] = (
-        ("#e8f5e9", "#43a047", "#2e7d32"),
-        ("#fff3e0", "#ef6c00", "#e65100"),
-        ("#e3f2fd", "#1565c0", "#0d47a1"),
-        ("#f3e5f5", "#7b1fa2", "#4a148c"),
-        ("#fff8e1", "#f9a825", "#f57f17"),
-        ("#fce4ec", "#c62828", "#b71c1c"),
+        ("#a5d6a7", "#2e7d32", "#1b5e20"),
+        ("#ffcc80", "#e65100", "#bf360c"),
+        ("#90caf9", "#0d47a1", "#0a3474"),
+        ("#ce93d8", "#6a1b9a", "#4a148c"),
+        ("#fff176", "#f57f17", "#e65100"),
+        ("#ef9a9a", "#c62828", "#b71c1c"),
     )
 
     # -- Pinout palette --

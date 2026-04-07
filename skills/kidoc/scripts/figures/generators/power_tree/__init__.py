@@ -37,6 +37,43 @@ from figures.lib import (
 # Helpers
 # ======================================================================
 
+_UUID_RE = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+    re.IGNORECASE,
+)
+
+
+def _is_bad_rail(name) -> bool:
+    """Return True for rail names that should be filtered from the diagram."""
+    if name is None or name == '?':
+        return True
+    s = str(name)
+    if s.startswith('__unnamed_') or s.startswith('__unnamed-'):
+        return True
+    if _UUID_RE.search(s):
+        return True
+    # Tuple-like strings from upstream bugs: "(4.5, 40)Vin"
+    if s.startswith('(') and ')' in s:
+        return True
+    return False
+
+
+def _clean_rail_name(name) -> str:
+    """Sanitize a rail name for display.
+
+    Strips hierarchical path prefixes (``/uuid/.../RailName`` → ``RailName``)
+    and other upstream artifacts.
+    """
+    if name is None:
+        return '?'
+    s = str(name)
+    # Strip hierarchical path prefixes containing UUIDs
+    if '/' in s and _UUID_RE.search(s):
+        # Take the last path segment
+        s = s.rsplit('/', 1)[-1]
+    return s
+
+
 def _infer_voltage(rail_name: str) -> str:
     """Extract a voltage hint from a rail name like '+3V3', 'VBUS'."""
     if not rail_name:
@@ -112,13 +149,25 @@ class PowerTreeGenerator:
             if ref:
                 comp_lookup[ref] = comp
 
-        # Build regulator entries
+        # Build regulator entries, filtering out bad rails
         regulators = []
         input_rail_set = set()
         output_rail_set = set()
         for reg in regs_raw:
             in_rail = reg.get('input_rail', '?')
             out_rail = reg.get('output_rail', '?')
+            # Skip regulators where both rails are bad (unnamed, None, ?, etc.)
+            if _is_bad_rail(in_rail) and _is_bad_rail(out_rail):
+                continue
+            # Clean individual rail names for display
+            in_rail = _clean_rail_name(in_rail) if not _is_bad_rail(in_rail) else in_rail
+            out_rail = _clean_rail_name(out_rail) if not _is_bad_rail(out_rail) else out_rail
+            # Skip regulators where the output is unnamed (nothing useful to show)
+            if _is_bad_rail(out_rail):
+                continue
+            # If only input is bad, label it generically
+            if _is_bad_rail(in_rail):
+                in_rail = 'VIN'
             input_rail_set.add(in_rail)
             output_rail_set.add(out_rail)
 
@@ -409,9 +458,24 @@ class PowerTreeGenerator:
                 ref = regs_for_rail[0]['ref']
                 if ref in reg_box_pos:
                     rx, ry, rw, rh = reg_box_pos[ref]
-                    _draw_arrow(svg, in_rx + 2, in_cy, rx - 2, ry + rh / 2,
-                                color=theme.pt_arrow_color,
-                                width=arrow_width, head=arrow_head)
+                    rcy = ry + rh / 2
+                    if abs(in_cy - rcy) < 0.5:
+                        # Aligned — single horizontal arrow
+                        _draw_arrow(svg, in_rx + 2, in_cy, rx - 2, in_cy,
+                                    color=theme.pt_arrow_color,
+                                    width=arrow_width, head=arrow_head)
+                    else:
+                        # Misaligned — orthogonal L-route
+                        mid_x = in_rx + (rx - in_rx) * 0.5
+                        svg.line(in_rx + 2, in_cy, mid_x, in_cy,
+                                 stroke=theme.pt_arrow_color,
+                                 stroke_width=arrow_width)
+                        svg.line(mid_x, in_cy, mid_x, rcy,
+                                 stroke=theme.pt_arrow_color,
+                                 stroke_width=arrow_width)
+                        _draw_arrow(svg, mid_x, rcy, rx - 2, rcy,
+                                    color=theme.pt_arrow_color,
+                                    width=arrow_width, head=arrow_head)
             else:
                 trunk_x = in_rx + (reg_col_x - in_rx) * 0.35
                 reg_ys = []
@@ -445,10 +509,25 @@ class PowerTreeGenerator:
                     ref = gregs[0]['ref']
                     if ref in reg_box_pos:
                         rx, ry, rw, rh = reg_box_pos[ref]
-                        _draw_arrow(svg, rx + rw + 2, ry + rh / 2,
-                                    olx - 2, ocy,
-                                    color=theme.pt_arrow_color,
-                                    width=arrow_width, head=arrow_head)
+                        rcy = ry + rh / 2
+                        if abs(rcy - ocy) < 0.5:
+                            # Aligned — single horizontal arrow
+                            _draw_arrow(svg, rx + rw + 2, rcy,
+                                        olx - 2, rcy,
+                                        color=theme.pt_arrow_color,
+                                        width=arrow_width, head=arrow_head)
+                        else:
+                            # Misaligned — orthogonal L-route
+                            mid_x = rx + rw + (olx - rx - rw) * 0.5
+                            svg.line(rx + rw + 2, rcy, mid_x, rcy,
+                                     stroke=theme.pt_arrow_color,
+                                     stroke_width=arrow_width)
+                            svg.line(mid_x, rcy, mid_x, ocy,
+                                     stroke=theme.pt_arrow_color,
+                                     stroke_width=arrow_width)
+                            _draw_arrow(svg, mid_x, ocy, olx - 2, ocy,
+                                        color=theme.pt_arrow_color,
+                                        width=arrow_width, head=arrow_head)
                 else:
                     trunk_x = reg_col_x + reg_col_w + (output_col_x - reg_col_x - reg_col_w) * 0.65
                     reg_ys = []
