@@ -3435,6 +3435,48 @@ def _detect_uart_buses(ctx: AnalysisContext) -> list[dict]:
                 "pin_count": len(net_info["pins"]),
             }
 
+    # UART TX→RX crossover verification
+    # For each TX net, check if it connects to a pin named RX on the other device (correct)
+    # or a pin named TX (incorrect — TX wired to TX)
+    _tx_pins = {"TX", "TXD", "UART_TX", "UART_TXD", "U_TX", "TXD0", "TXD1"}
+    _rx_pins = {"RX", "RXD", "UART_RX", "UART_RXD", "U_RX", "RXD0", "RXD1"}
+
+    for entry in uart_nets.values():
+        net_name = entry["net"]
+        nu = net_name.upper()
+        # Determine if this is a TX or RX net from its name
+        is_tx_net = any(kw in nu for kw in ("_TX", "TXD", "UART_TX")) and not any(kw in nu for kw in ("_RX", "RXD"))
+        is_rx_net = any(kw in nu for kw in ("_RX", "RXD", "UART_RX")) and not any(kw in nu for kw in ("_TX", "TXD"))
+
+        if not (is_tx_net or is_rx_net) or net_name not in nets:
+            continue
+
+        # Check pin names of connected ICs
+        tx_pin_count = 0
+        rx_pin_count = 0
+        for p in nets[net_name]["pins"]:
+            comp = comp_lookup.get(p["component"])
+            if not comp or comp["type"] != "ic":
+                continue
+            pname = p.get("pin_name", "").upper()
+            if pname in _tx_pins:
+                tx_pin_count += 1
+            elif pname in _rx_pins:
+                rx_pin_count += 1
+
+        # A TX net should connect to at least one RX pin (crossover)
+        # If it connects to 2+ TX pins and no RX pins, that's TX→TX (wrong)
+        if is_tx_net and tx_pin_count >= 2 and rx_pin_count == 0:
+            entry["crossover_warning"] = (
+                f"TX net {net_name} connects to {tx_pin_count} TX pins and "
+                f"no RX pins — possible missing TX→RX crossover"
+            )
+        elif is_rx_net and rx_pin_count >= 2 and tx_pin_count == 0:
+            entry["crossover_warning"] = (
+                f"RX net {net_name} connects to {rx_pin_count} RX pins and "
+                f"no TX pins — possible missing TX→RX crossover"
+            )
+
     return list(uart_nets.values())
 
 
