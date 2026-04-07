@@ -3487,6 +3487,144 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
     return result
 
 
+def analyze_design_rule_compliance(
+    tracks: dict, vias: dict,
+    project_settings: dict,
+) -> dict | None:
+    """Check layout against project-defined design rules.
+
+    Compares actual track widths, via sizes, and drill diameters against
+    the designer's own rules from ``.kicad_pro`` (global minimums) and
+    ``.kicad_dru`` (per-context constraints).  Returns None if no
+    project rules are available.
+
+    This is separate from DFM analysis — DFM checks fab capabilities
+    (can this be manufactured?), while this checks design intent
+    (did I follow my own rules?).
+    """
+    design_rules = project_settings.get('design_rules', {})
+    custom_rules = project_settings.get('custom_rules', [])
+    net_classes = project_settings.get('net_classes', [])
+
+    if not design_rules and not custom_rules and not net_classes:
+        return None
+
+    violations = []
+    rules_checked = 0
+
+    # --- Compute actual layout metrics ---
+    all_widths = []
+    for seg in tracks.get("segments", []):
+        all_widths.append(seg["width"])
+    for arc in tracks.get("arcs", []):
+        all_widths.append(arc["width"])
+    min_track_width = min(all_widths) if all_widths else None
+
+    all_vias = vias.get("vias", [])
+    via_diameters = [v["size"] for v in all_vias if v.get("size", 0) > 0]
+    via_drills = [v["drill"] for v in all_vias if v.get("drill", 0) > 0]
+    min_via_diameter = min(via_diameters) if via_diameters else None
+    min_via_drill = min(via_drills) if via_drills else None
+
+    # --- Check .kicad_pro global minimums ---
+    checks = [
+        ('min_track_width', min_track_width, design_rules.get('min_track_width')),
+        ('min_via_diameter', min_via_diameter, design_rules.get('min_via_diameter')),
+        ('min_via_drill', min_via_drill,
+         design_rules.get('min_through_hole_diameter')
+         or design_rules.get('min_via_drill')),
+    ]
+    for rule_name, actual, required in checks:
+        if actual is None or required is None:
+            continue
+        rules_checked += 1
+        if actual < required - 0.001:  # 1µm tolerance for float comparison
+            violations.append({
+                'rule': rule_name,
+                'source': 'project',
+                'required_mm': round(required, 4),
+                'actual_mm': round(actual, 4),
+                'message': (f"{rule_name.replace('_', ' ').title()} "
+                            f"{actual:.3f}mm violates project minimum "
+                            f"({required:.3f}mm)"),
+            })
+
+    # --- Net class summary (informational) ---
+    net_class_summary = []
+    for nc in net_classes:
+        name = nc.get('name', '')
+        if not name or name == 'Default':
+            continue
+        entry = {'name': name}
+        if nc.get('track_width') is not None:
+            entry['track_width_mm'] = nc['track_width']
+        if nc.get('clearance') is not None:
+            entry['clearance_mm'] = nc['clearance']
+        if nc.get('diff_pair_width') is not None:
+            entry['diff_pair_width_mm'] = nc['diff_pair_width']
+        if nc.get('diff_pair_gap') is not None:
+            entry['diff_pair_gap_mm'] = nc['diff_pair_gap']
+        nets = nc.get('nets', [])
+        if nets:
+            entry['nets_matched'] = len(nets)
+        net_class_summary.append(entry)
+
+    # --- Custom rules summary (advisory) ---
+    # We don't evaluate condition expressions, but we can check
+    # unconditional global constraints from .kicad_dru
+    if custom_rules:
+        for rule in custom_rules:
+            for constraint in rule.get('constraints', []):
+                ctype = constraint.get('type', '')
+                cmin = constraint.get('min')
+                if cmin is None:
+                    continue
+
+                # Only check constraints we can verify globally
+                actual = None
+                if ctype == 'track_width' and min_track_width is not None:
+                    actual = min_track_width
+                elif ctype == 'hole_size' and min_via_drill is not None:
+                    actual = min_via_drill
+                elif ctype == 'annular_width':
+                    # Compute from via data
+                    if all_vias:
+                        rings = [(v.get("size", 0) - v.get("drill", 0)) / 2.0
+                                 for v in all_vias
+                                 if v.get("size", 0) > 0 and v.get("drill", 0) > 0]
+                        if rings:
+                            actual = min(rings)
+
+                if actual is not None:
+                    rules_checked += 1
+                    if actual < cmin - 0.001:
+                        violations.append({
+                            'rule': f"custom:{rule.get('name', ctype)}",
+                            'source': 'kicad_dru',
+                            'required_mm': round(cmin, 4),
+                            'actual_mm': round(actual, 4),
+                            'constraint_type': ctype,
+                            'message': (f"Custom rule \"{rule.get('name', '')}\" "
+                                        f"requires {ctype} >= {cmin:.3f}mm, "
+                                        f"actual {actual:.3f}mm"),
+                        })
+
+    result: dict = {
+        'compliant': len(violations) == 0,
+        'rules_checked': rules_checked,
+    }
+    if project_settings.get('source'):
+        result['rules_source'] = project_settings['source']
+    if violations:
+        result['violations'] = violations
+    if net_class_summary:
+        result['net_class_summary'] = net_class_summary
+    if custom_rules:
+        result['custom_rules_count'] = len(custom_rules)
+
+    return result
+
+
 def analyze_tombstoning_risk(footprints: list[dict], tracks: dict,
                              vias: dict,
                              zones: list[dict] | None = None) -> list[dict]:
@@ -4248,6 +4386,13 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["net_classes"] = net_classes
     if project_settings:
         result["project_settings"] = project_settings
+
+    # Design rule compliance (project rules vs actual layout)
+    if project_settings:
+        design_compliance = analyze_design_rule_compliance(
+            tracks, vias, project_settings)
+        if design_compliance:
+            result["design_rule_compliance"] = design_compliance
 
     # Manufacturing and assembly analysis
     if dfm:
