@@ -5,6 +5,7 @@ Contains component classification, value parsing, net name classification,
 and other helpers extracted from analyze_schematic.py.
 """
 
+import os
 import re
 
 
@@ -835,3 +836,216 @@ def estimate_cap_esl(package):
     if esl_nh is None:
         return None
     return esl_nh * 1e-9  # Convert nH to H
+
+
+# ======================================================================
+# .kicad_pro project file parsing
+# ======================================================================
+
+def load_kicad_pro(file_path: str) -> dict | None:
+    """Load .kicad_pro from the same directory as a .kicad_sch or .kicad_pcb file.
+
+    Scans the directory for a ``*.kicad_pro`` file (there should be exactly one).
+    Returns the parsed JSON dict, or None if not found, not valid JSON, or a
+    KiCad 5 ``.pro`` file (which uses a different, non-JSON format).
+    """
+    import json as _json
+    parent = os.path.dirname(os.path.abspath(file_path))
+    try:
+        entries = os.listdir(parent)
+    except OSError:
+        return None
+    for fname in entries:
+        if fname.endswith('.kicad_pro'):
+            pro_path = os.path.join(parent, fname)
+            try:
+                with open(pro_path) as f:
+                    return _json.load(f)
+            except (ValueError, OSError):
+                return None
+    return None
+
+
+def extract_pro_net_classes(pro: dict) -> list[dict]:
+    """Extract net classes from .kicad_pro ``net_settings``.
+
+    Returns list of dicts with: name, clearance, track_width, via_diameter,
+    via_drill, diff_pair_width, diff_pair_gap.  Net assignments are merged
+    from both ``netclass_patterns`` and ``netclass_assignments``.
+    """
+    ns = pro.get('net_settings', {})
+    raw_classes = ns.get('classes', [])
+    patterns = ns.get('netclass_patterns', [])
+    assignments = ns.get('netclass_assignments') or {}
+
+    # Build pattern-based net lists per class
+    class_nets: dict[str, list[str]] = {}
+    for p in patterns:
+        nc_name = p.get('netclass', '')
+        pattern = p.get('pattern', '')
+        if nc_name and pattern:
+            class_nets.setdefault(nc_name, []).append(pattern)
+
+    # Add direct assignments
+    for net_name, nc_name in assignments.items():
+        if nc_name:
+            class_nets.setdefault(nc_name, []).append(net_name)
+
+    result = []
+    for c in raw_classes:
+        name = c.get('name', '')
+        entry = {
+            'name': name,
+            'clearance': c.get('clearance'),
+            'track_width': c.get('track_width'),
+            'via_diameter': c.get('via_diameter'),
+            'via_drill': c.get('via_drill'),
+            'diff_pair_width': c.get('diff_pair_width'),
+            'diff_pair_gap': c.get('diff_pair_gap'),
+        }
+        # Remove None values
+        entry = {k: v for k, v in entry.items() if v is not None}
+        nets = class_nets.get(name, [])
+        if nets:
+            entry['nets'] = nets
+        result.append(entry)
+    return result
+
+
+def extract_pro_design_rules(pro: dict) -> dict:
+    """Extract board design rules from .kicad_pro.
+
+    Returns dict with min_clearance, min_track_width, min_via_diameter, etc.
+    Values are in mm (KiCad native unit).
+    """
+    rules = pro.get('board', {}).get('design_settings', {}).get('rules', {})
+    if not rules:
+        return {}
+    # Extract the most useful rules
+    return {k: v for k, v in rules.items()
+            if isinstance(v, (int, float)) and k.startswith('min_')}
+
+
+def extract_pro_text_variables(pro: dict) -> dict:
+    """Extract text variables from .kicad_pro.
+
+    Text variables are user-defined key-value pairs used in schematic and
+    PCB text fields via ``${VARIABLE_NAME}`` syntax.
+    """
+    return pro.get('text_variables', {}) or {}
+
+
+def load_kicad_dru(file_path: str) -> list[dict] | None:
+    """Load custom design rules from ``.kicad_dru`` adjacent to a KiCad file.
+
+    Returns list of rule dicts::
+
+        {"name": "Track width, outer",
+         "layer": "outer",
+         "condition": "A.Type == 'track'",
+         "constraints": [{"type": "track_width", "min": 0.127}]}
+
+    Conditions are kept as raw strings — not evaluated.
+    Returns None if no ``.kicad_dru`` found.
+    """
+    from sexp_parser import parse as _sexp_parse, find_all, find_first, get_value
+
+    parent = os.path.dirname(os.path.abspath(file_path))
+    dru_path = None
+    try:
+        for fname in os.listdir(parent):
+            if fname.endswith('.kicad_dru'):
+                dru_path = os.path.join(parent, fname)
+                break
+    except OSError:
+        return None
+    if not dru_path:
+        return None
+
+    try:
+        with open(dru_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+    except OSError:
+        return None
+
+    # .kicad_dru has multiple top-level forms — wrap in synthetic root
+    try:
+        tree = _sexp_parse(f'(dru_root {content})')
+    except (ValueError, IndexError):
+        return None
+
+    rules = []
+    for r in find_all(tree, 'rule'):
+        name = r[1] if len(r) > 1 and isinstance(r[1], str) else ''
+
+        layer_node = find_first(r, 'layer')
+        layer = (layer_node[1]
+                 if layer_node and len(layer_node) > 1
+                 else None)
+
+        condition = get_value(r, 'condition')
+
+        constraints = []
+        for c in find_all(r, 'constraint'):
+            if len(c) < 2:
+                continue
+            ctype = c[1]
+            entry: dict = {'type': ctype}
+            for key in ('min', 'max', 'opt'):
+                val = get_value(c, key)
+                if val is not None:
+                    # Strip 'mm' suffix if present
+                    val_str = str(val).rstrip('m').rstrip('m')
+                    try:
+                        entry[key] = float(val_str)
+                    except ValueError:
+                        entry[key] = val
+            constraints.append(entry)
+
+        rule_dict: dict = {'name': name}
+        if layer:
+            rule_dict['layer'] = layer
+        if condition:
+            rule_dict['condition'] = condition
+        if constraints:
+            rule_dict['constraints'] = constraints
+        rules.append(rule_dict)
+
+    return rules if rules else None
+
+
+def load_lib_tables(file_path: str) -> dict:
+    """Load ``fp-lib-table`` and ``sym-lib-table`` from a KiCad project directory.
+
+    Scans the directory containing *file_path* for library table files.
+
+    Returns ``{'symbol_libs': [...], 'footprint_libs': [...]}``.
+    Each lib entry is ``{'name': str, 'type': str, 'uri': str, 'descr': str}``.
+    """
+    from sexp_parser import parse_file as _sexp_parse_file, find_all, get_value
+
+    parent = os.path.dirname(os.path.abspath(file_path))
+    result: dict = {'symbol_libs': [], 'footprint_libs': []}
+
+    for table_file, key in (('sym-lib-table', 'symbol_libs'),
+                             ('fp-lib-table', 'footprint_libs')):
+        table_path = os.path.join(parent, table_file)
+        if not os.path.isfile(table_path):
+            continue
+        try:
+            tree = _sexp_parse_file(table_path)
+        except (ValueError, OSError):
+            continue
+
+        for lib in find_all(tree, 'lib'):
+            entry = {
+                'name': get_value(lib, 'name') or '',
+                'type': get_value(lib, 'type') or '',
+                'uri': get_value(lib, 'uri') or '',
+            }
+            descr = get_value(lib, 'descr')
+            if descr:
+                entry['descr'] = descr
+            result[key].append(entry)
+
+    return result

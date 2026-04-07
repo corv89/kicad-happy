@@ -39,14 +39,64 @@ from kicad_utils import (
     _MIL_MM,
     _OUTPUT_DRIVE_KEYWORDS,
     classify_component,
+    extract_pro_text_variables,
     format_frequency as _format_frequency,
+    load_lib_tables,
     is_ground_name as _is_ground_name,
     is_power_net_name as _is_power_net_name,
+    load_kicad_pro,
     parse_value,
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
     snap_to_mil_grid as _snap_mil,
 )
 from kicad_types import AnalysisContext
+from signal_detectors import (
+    detect_bridge_circuits,
+    detect_crystal_circuits,
+    detect_current_sense,
+    detect_decoupling,
+    detect_design_observations,
+    detect_integrated_ldos,
+    detect_lc_filters,
+    detect_led_drivers,
+    detect_opamp_circuits,
+    detect_power_regulators,
+    detect_protection_devices,
+    detect_rc_filters,
+    detect_transistor_circuits,
+    detect_voltage_dividers,
+    postfilter_vd_and_dedup,
+    _merge_series_dividers,
+)
+from domain_detectors import (
+    audit_esd_protection,
+    audit_led_circuits,
+    detect_adc_circuits,
+    detect_addressable_leds,
+    detect_audio_circuits,
+    detect_battery_chargers,
+    detect_bms_systems,
+    detect_buzzer_speakers,
+    detect_clock_distribution,
+    detect_debug_interfaces,
+    detect_display_interfaces,
+    detect_ethernet_interfaces,
+    detect_hdmi_dvi_interfaces,
+    detect_isolation_barriers,
+    detect_key_matrices,
+    detect_led_driver_ics,
+    detect_level_shifters,
+    detect_memory_interfaces,
+    detect_motor_drivers,
+    detect_power_path,
+    detect_reset_supervisors,
+    detect_rf_chains,
+    detect_rf_matching,
+    detect_rtc_circuits,
+    detect_sensor_interfaces,
+    detect_thermocouple_rtd,
+    validate_power_sequencing,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -488,54 +538,6 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     Orchestrator that calls individual detector functions from signal_detectors.py.
     Each detector takes an AnalysisContext and returns its detection results.
     """
-    from signal_detectors import (
-        detect_bridge_circuits,
-        detect_crystal_circuits,
-        detect_current_sense,
-        detect_decoupling,
-        detect_design_observations,
-        detect_integrated_ldos,
-        detect_lc_filters,
-        detect_led_drivers,
-        detect_opamp_circuits,
-        detect_power_regulators,
-        detect_protection_devices,
-        detect_rc_filters,
-        detect_transistor_circuits,
-        detect_voltage_dividers,
-        postfilter_vd_and_dedup,
-        _merge_series_dividers,
-    )
-    from domain_detectors import (
-        audit_esd_protection,
-        audit_led_circuits,
-        detect_adc_circuits,
-        detect_addressable_leds,
-        detect_audio_circuits,
-        detect_battery_chargers,
-        detect_bms_systems,
-        detect_buzzer_speakers,
-        detect_clock_distribution,
-        detect_debug_interfaces,
-        detect_display_interfaces,
-        detect_ethernet_interfaces,
-        detect_hdmi_dvi_interfaces,
-        detect_isolation_barriers,
-        detect_key_matrices,
-        detect_led_driver_ics,
-        detect_level_shifters,
-        detect_memory_interfaces,
-        detect_motor_drivers,
-        detect_power_path,
-        detect_reset_supervisors,
-        detect_rf_chains,
-        detect_rf_matching,
-        detect_rtc_circuits,
-        detect_sensor_interfaces,
-        detect_thermocouple_rtd,
-        validate_power_sequencing,
-    )
-
     nets = ctx.nets
 
     # Run detectors in dependency order
@@ -7044,6 +7046,26 @@ def analyze_schematic(path: str) -> dict:
         "signal_analysis.power_regulators": "heuristic",  # mixed; per-item vref_source overrides
     }
 
+    # Load .kicad_pro for project metadata (KiCad 6+)
+    pro = load_kicad_pro(str(path))
+    project_settings = {}
+    if pro:
+        text_vars = extract_pro_text_variables(pro)
+        if text_vars:
+            project_settings['text_variables'] = text_vars
+            # Enrich title block with text variables where empty
+            if root_title_block:
+                for tb_key, var_name in (('title', 'TITLE'),
+                                          ('company', 'COMPANY'),
+                                          ('revision', 'REVISION')):
+                    if not root_title_block.get(tb_key) and var_name in text_vars:
+                        root_title_block[tb_key] = text_vars[var_name]
+
+    # Library tables
+    lib_tables = load_lib_tables(str(path))
+    if lib_tables.get('symbol_libs'):
+        project_settings['symbol_libs'] = lib_tables['symbol_libs']
+
     result = {
         "analyzer_type": "schematic",
         "confidence_map": confidence_map,
@@ -7117,6 +7139,8 @@ def analyze_schematic(path: str) -> dict:
 
     if len(sheets_parsed) > 1:
         result["sheets"] = sheets_parsed
+    if project_settings:
+        result["project_settings"] = project_settings
 
     # --- Missing information section ---
     # Aggregates data gaps so downstream consumers can separate

@@ -10,10 +10,12 @@ Each detector takes an AnalysisContext (ctx) and returns its detection results.
 """
 
 import re
+from collections import Counter
 
 from kicad_types import AnalysisContext
 from kicad_utils import lookup_regulator_vref, parse_value, parse_voltage_from_net_name
 from signal_detectors import _get_net_components
+from detector_helpers import get_components_by_type, index_two_pin_components, match_ic_keywords
 
 
 def detect_buzzer_speakers(ctx: AnalysisContext, transistor_circuits: list[dict]) -> list[dict]:
@@ -188,7 +190,6 @@ def detect_key_matrices(ctx: AnalysisContext) -> list[dict]:
                 # KH-197c: Resolve ambiguous nets that appear in both sets
                 ambiguous = topo_row_nets & topo_col_nets
                 if ambiguous:
-                    from collections import Counter
                     row_votes = Counter(p["row_net"] for p in switch_diode_pairs)
                     col_votes = Counter(p["col_net"] for p in switch_diode_pairs)
                     for net in ambiguous:

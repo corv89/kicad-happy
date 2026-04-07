@@ -17,6 +17,7 @@ from kicad_utils import (
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
 )
 from kicad_types import AnalysisContext
+from detector_helpers import index_two_pin_components, get_components_by_type
 
 
 # ---------------------------------------------------------------------------
@@ -118,18 +119,8 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
 
     # ---- Voltage Dividers ----
     # Two resistors in series between different nets, with a mid-point net
-    resistors = [c for c in ctx.components if c["type"] == "resistor" and c["reference"] in ctx.parsed_values]
-
-    # Index resistors by their nets for O(n) pair-finding instead of O(n²)
-    resistor_nets = {}  # ref -> (net1, net2)
-    net_to_resistors = {}  # net_name -> [refs]
-    for r in resistors:
-        n1, n2 = ctx.get_two_pin_nets(r["reference"])
-        if not n1 or not n2 or n1 == n2:
-            continue
-        resistor_nets[r["reference"]] = (n1, n2)
-        net_to_resistors.setdefault(n1, []).append(r["reference"])
-        net_to_resistors.setdefault(n2, []).append(r["reference"])
+    resistors = get_components_by_type(ctx, "resistor", with_parsed_values=True)
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, resistors)
 
     # Check pairs of resistors that share a net (potential dividers)
     vd_seen = set()  # track (r1, r2) pairs to avoid duplicates
@@ -238,17 +229,8 @@ def _merge_series_dividers(voltage_dividers: list[dict], ctx: AnalysisContext) -
     it, combining series resistances.
     """
     # Build resistor-net index
-    resistor_nets = {}  # ref -> (net1, net2)
-    net_to_resistors = {}  # net_name -> [refs]
-    for c in ctx.components:
-        if c["type"] != "resistor" or c["reference"] not in ctx.parsed_values:
-            continue
-        n1, n2 = ctx.get_two_pin_nets(c["reference"])
-        if not n1 or not n2 or n1 == n2:
-            continue
-        resistor_nets[c["reference"]] = (n1, n2)
-        net_to_resistors.setdefault(n1, []).append(c["reference"])
-        net_to_resistors.setdefault(n2, []).append(c["reference"])
+    all_resistors = get_components_by_type(ctx, "resistor", with_parsed_values=True)
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, all_resistors)
 
     def _is_passthrough(net_name):
         """A pass-through node connects exactly 2 resistors and no active components."""
@@ -350,15 +332,8 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
     """Detect RC filters. Takes voltage_dividers/crystal_circuits/opamp_circuits to exclude."""
     results_rc: list[dict] = []
 
-    resistors = [c for c in ctx.components if c["type"] == "resistor" and c["reference"] in ctx.parsed_values]
-
-    # Index resistors by their nets
-    resistor_nets = {}
-    for r in resistors:
-        n1, n2 = ctx.get_two_pin_nets(r["reference"])
-        if not n1 or not n2 or n1 == n2:
-            continue
-        resistor_nets[r["reference"]] = (n1, n2)
+    resistors = get_components_by_type(ctx, "resistor", with_parsed_values=True)
+    resistor_nets, _ = index_two_pin_components(ctx, resistors)
 
     # ---- RC Filters ----
     # R and C must share a SIGNAL net (not power/ground) to form a real filter.
@@ -396,21 +371,11 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
         elif isinstance(fb, str) and fb:
             crystal_refs.add(fb)
 
-    capacitors = [c for c in ctx.components if c["type"] == "capacitor" and c["reference"] in ctx.parsed_values]
+    capacitors = get_components_by_type(ctx, "capacitor", with_parsed_values=True)
+    cap_nets, net_to_caps = index_two_pin_components(ctx, capacitors)
 
     # KH-121: Track seen R-C pairs to prevent bidirectional duplicates
     seen_rc_pairs: set[frozenset[str]] = set()
-
-    # Index capacitors by net for O(n) RC pair-finding instead of O(R*C)
-    cap_nets = {}  # ref -> (net1, net2)
-    net_to_caps = {}  # net_name -> [refs]
-    for cap in capacitors:
-        cn1, cn2 = ctx.get_two_pin_nets(cap["reference"])
-        if not cn1 or not cn2 or cn1 == cn2:
-            continue
-        cap_nets[cap["reference"]] = (cn1, cn2)
-        net_to_caps.setdefault(cn1, []).append(cap["reference"])
-        net_to_caps.setdefault(cn2, []).append(cap["reference"])
 
     for res in resistors:
         if res["reference"] in vd_resistor_refs:
@@ -553,9 +518,8 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
 
 def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
     """Detect LC filters."""
-    capacitors = [c for c in ctx.components if c["type"] == "capacitor" and c["reference"] in ctx.parsed_values]
-    inductors = [c for c in ctx.components if c["type"] in ("inductor", "ferrite_bead")
-                 and c["reference"] in ctx.parsed_values]
+    capacitors = get_components_by_type(ctx, "capacitor", with_parsed_values=True)
+    inductors = get_components_by_type(ctx, ("inductor", "ferrite_bead"), with_parsed_values=True)
 
     # Collect LC pairs grouped by (inductor, shared_net). Multiple caps on
     # the same inductor output node are parallel decoupling, not separate

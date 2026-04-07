@@ -50,6 +50,21 @@ SIGNAL_REGISTRY = {
 }
 
 
+def validate_signal_registry(sample_output: dict) -> list[str]:
+    """Check SIGNAL_REGISTRY keys exist in a sample analyzer output.
+
+    Returns list of warning strings for any registered detection type
+    whose key is not found under ``signal_analysis`` in the sample output.
+    Useful for catching stale registry entries after schema changes.
+    """
+    sa = sample_output.get("signal_analysis", {})
+    warnings = []
+    for key in SIGNAL_REGISTRY:
+        if key not in sa:
+            warnings.append(f"SIGNAL_REGISTRY key '{key}' not in signal_analysis")
+    return warnings
+
+
 # ---------------------------------------------------------------------------
 # Shared primitives
 # ---------------------------------------------------------------------------

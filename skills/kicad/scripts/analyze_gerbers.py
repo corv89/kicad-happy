@@ -554,7 +554,7 @@ def parse_job_file(path: str) -> dict | None:
     try:
         with open(path, "r") as f:
             data = json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError):
         return None
 
     result = {}
@@ -1139,7 +1139,7 @@ def _is_excellon_file(path: Path) -> bool:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             head = f.read(1024)
         return "M48" in head or re.search(r"T\d+C\d", head) is not None
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return False
 
 

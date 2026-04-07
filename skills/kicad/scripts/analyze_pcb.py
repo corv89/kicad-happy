@@ -17,6 +17,7 @@ Usage:
 import heapq
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -31,31 +32,15 @@ from sexp_parser import (
     get_value,
     parse_file,
 )
-from kicad_utils import is_ground_name, is_power_net_name
+from kicad_utils import (is_ground_name, is_power_net_name,
+                         load_kicad_pro, extract_pro_net_classes,
+                         extract_pro_design_rules, extract_pro_text_variables,
+                         load_kicad_dru, load_lib_tables)
 
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
-
-def _shoelace_area(pts_node: list) -> float:
-    """Compute polygon area from a (pts (xy x y) ...) node using shoelace formula.
-
-    Returns positive area in mm². Operates directly on parsed S-expression
-    nodes to avoid allocating an intermediate coordinate list.
-    """
-    xys = find_all(pts_node, "xy")
-    n = len(xys)
-    if n < 3:
-        return 0.0
-    area = 0.0
-    for i in range(n):
-        j = (i + 1) % n
-        x_i, y_i = float(xys[i][1]), float(xys[i][2])
-        x_j, y_j = float(xys[j][1]), float(xys[j][2])
-        area += x_i * y_j - x_j * y_i
-    return abs(area) / 2.0
-
 
 def _extract_polygon_coords(pts_node: list) -> list[tuple[float, float]]:
     """Extract (x, y) coordinate tuples from a (pts (xy x y) ...) node."""
@@ -72,6 +57,14 @@ def _shoelace_area_from_coords(coords: list[tuple[float, float]]) -> float:
         j = (i + 1) % n
         area += coords[i][0] * coords[j][1] - coords[j][0] * coords[i][1]
     return abs(area) / 2.0
+
+
+def _shoelace_area(pts_node: list) -> float:
+    """Compute polygon area from a (pts (xy x y) ...) S-expression node.
+
+    Returns positive area in mm².
+    """
+    return _shoelace_area_from_coords(_extract_polygon_coords(pts_node))
 
 
 def _point_in_polygon(px: float, py: float,
@@ -4096,12 +4089,46 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     # Groups (designer-defined component/routing groupings)
     groups = extract_groups(root)
 
-    # Net classes (KiCad 5 legacy — stored in PCB file)
-    net_classes = extract_net_classes(root)
+    # Net classes — try .kicad_pro first (KiCad 6+), fall back to PCB file (KiCad 5)
+    pro = load_kicad_pro(str(path))
+    project_settings = {}
+    if pro:
+        pro_net_classes = extract_pro_net_classes(pro)
+        if pro_net_classes:
+            net_classes = pro_net_classes
+        else:
+            net_classes = extract_net_classes(root)
+        pro_rules = extract_pro_design_rules(pro)
+        pro_text_vars = extract_pro_text_variables(pro)
+        project_settings = {
+            'source': os.path.basename(
+                next((os.path.join(os.path.dirname(str(path)), f)
+                      for f in os.listdir(os.path.dirname(str(path)))
+                      if f.endswith('.kicad_pro')), '')),
+        }
+        if pro_net_classes:
+            project_settings['net_classes'] = pro_net_classes
+        if pro_rules:
+            project_settings['design_rules'] = pro_rules
+        if pro_text_vars:
+            project_settings['text_variables'] = pro_text_vars
+    else:
+        net_classes = extract_net_classes(root)
+
+    # Custom design rules (.kicad_dru)
+    custom_rules = load_kicad_dru(str(path))
+    if custom_rules:
+        project_settings['custom_rules'] = custom_rules
+
+    # Library tables
+    lib_tables = load_lib_tables(str(path))
+    if lib_tables.get('footprint_libs'):
+        project_settings['footprint_libs'] = lib_tables['footprint_libs']
 
     # DFM (Design for Manufacturing) scoring
-    dfm = analyze_dfm(footprints, tracks, vias, outline,
-                       setup.get("design_rules"))
+    design_rules = (project_settings.get('design_rules')
+                    or setup.get("design_rules"))
+    dfm = analyze_dfm(footprints, tracks, vias, outline, design_rules)
 
     # Tombstoning risk assessment for small passives
     tombstoning = analyze_tombstoning_risk(footprints, tracks, vias, zones)
@@ -4219,6 +4246,8 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["groups"] = groups
     if net_classes:
         result["net_classes"] = net_classes
+    if project_settings:
+        result["project_settings"] = project_settings
 
     # Manufacturing and assembly analysis
     if dfm:
