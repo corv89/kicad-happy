@@ -440,6 +440,10 @@ For advanced layout analysis beyond what the PCB analyzer script provides — im
 
 Most routine PCB analysis (via types, annular ring, placement, connectivity, thermal vias, current capacity, signal integrity, DFM scoring, tombstoning risk, thermal pad vias) is handled automatically by `analyze_pcb.py`. Use the reference for deeper manual investigation.
 
+### Design Intent
+
+For interpreting auto-detected design intent and calibrating review severity by product class and target market (hobby vs consumer vs industrial vs medical vs automotive vs aerospace), read `references/design-intent.md`. Check the `design_intent` object in analysis output to understand the design context.
+
 ### Quick Review Checklists
 
 **Schematic** — verify: decoupling caps on every IC VCC/GND pair, I2C pull-ups, reset pin circuits, unconnected pins have no-connect markers, consistent net naming across sheets, ESD protection on external connectors, power sequencing (EN/PG), adequate bulk capacitance.

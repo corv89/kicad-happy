@@ -7746,6 +7746,21 @@ def main():
     if project:
         result["project_config"] = project
 
+    # Resolve design intent for downstream consumers
+    try:
+        from project_config import resolve_design_intent
+        sch_data_for_intent = {}
+        if 'components' in result:
+            sch_data_for_intent['components'] = result['components']
+        if 'metadata' in result:
+            sch_data_for_intent['title_block'] = result['metadata'].get(
+                'title_block', {})
+        intent = resolve_design_intent(config,
+                                        schematic_data=sch_data_for_intent)
+        result['design_intent'] = intent
+    except ImportError:
+        pass
+
     if args.lifecycle:
         try:
             from lifecycle_audit import audit_bom

@@ -3249,7 +3249,9 @@ def _extract_package_code(footprint_name: str) -> str:
 
 
 def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
-                board_outline: dict, design_rules: dict | None = None) -> dict:
+                board_outline: dict, design_rules: dict | None = None,
+                net_classes: list[dict] | None = None,
+                design_intent: dict | None = None) -> dict:
     """Design for Manufacturing scoring against common fab capabilities.
 
     Compares actual design parameters against JLCPCB standard and advanced
@@ -3263,6 +3265,9 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
         vias: Extracted via data.
         board_outline: Board outline with bounding_box.
         design_rules: Optional design rules from setup extraction.
+        net_classes: Optional net class definitions for class-aware DFM checks.
+        design_intent: Optional resolved design intent (product_class, ipc_class,
+            etc.) for intent-aware limit selection.
     """
     # EQ-049: d = √(Δx²+Δy²) (DFM clearance measurement)
     # JLCPCB standard process limits (mm)
@@ -3285,38 +3290,107 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
         "min_annular_ring": 0.1,       # JLCPCB advanced tier
     }
 
+    # IPC class thresholds (design quality ceiling)
+    # Source: IPC-6012 Rev E, verified against industry guidelines
+    IPC_CLASS_LIMITS = {
+        1: {
+            'min_annular_ring_via': 0.10,    # mm
+            'min_annular_ring_pth': 0.10,    # mm
+            'via_in_pad_fill_required': False,
+        },
+        2: {
+            'min_annular_ring_via': 0.125,   # mm
+            'min_annular_ring_pth': 0.175,   # mm
+            'via_in_pad_fill_required': False,
+        },
+        3: {
+            'min_annular_ring_via': 0.15,    # mm
+            'min_annular_ring_pth': 0.25,    # mm
+            'via_in_pad_fill_required': True,
+            'annular_ring_breakout_allowed': False,
+        },
+    }
+
+    # Determine active IPC class
+    ipc_class = 2  # default
+    if design_intent and design_intent.get('ipc_class') in (1, 2, 3):
+        ipc_class = design_intent['ipc_class']
+    ipc_limits = IPC_CLASS_LIMITS[ipc_class]
+
+    # Build net name -> net class lookup for net-class-aware checks
+    _net_class_lookup: dict[str, dict] = {}  # net_name -> class constraints
+    if net_classes:
+        for nc in net_classes:
+            nc_name = nc.get('name', '')
+            if nc_name == 'Default':
+                continue
+            constraints = {
+                'name': nc_name,
+                'trace_width': nc.get('track_width'),
+                'clearance': nc.get('clearance'),
+                'diff_pair_width': nc.get('diff_pair_width'),
+                'diff_pair_gap': nc.get('diff_pair_gap'),
+            }
+            for net_name in nc.get('nets', []):
+                _net_class_lookup[net_name] = constraints
+
     violations = []
     metrics: dict = {}
 
-    # --- Track width analysis ---
+    # --- Track width analysis (net-class-aware) ---
     all_widths = []
+    narrowest_non_class = float('inf')  # narrowest trace NOT covered by net class
     for seg in tracks.get("segments", []):
-        all_widths.append(seg["width"])
+        w = seg["width"]
+        all_widths.append(w)
+        seg_net_name = seg.get("net_name", "")
+        nc = _net_class_lookup.get(seg_net_name)
+        if nc and nc.get('trace_width') is not None:
+            if w < LIMITS_ADV["min_track_width"]:
+                narrowest_non_class = min(narrowest_non_class, w)
+        else:
+            narrowest_non_class = min(narrowest_non_class, w)
+
     for arc in tracks.get("arcs", []):
-        all_widths.append(arc["width"])
+        w = arc["width"]
+        all_widths.append(w)
+        arc_net_name = arc.get("net_name", "")
+        nc = _net_class_lookup.get(arc_net_name)
+        if nc and nc.get('trace_width') is not None:
+            if w < LIMITS_ADV["min_track_width"]:
+                narrowest_non_class = min(narrowest_non_class, w)
+        else:
+            narrowest_non_class = min(narrowest_non_class, w)
 
     if all_widths:
         min_width = min(all_widths)
         metrics["min_track_width_mm"] = min_width
-        if min_width < LIMITS_ADV["min_track_width"]:
+
+        check_width = (narrowest_non_class
+                       if narrowest_non_class < float('inf')
+                       else min_width)
+
+        if check_width < LIMITS_ADV["min_track_width"]:
             violations.append({
                 "parameter": "track_width",
-                "actual_mm": min_width,
+                "actual_mm": check_width,
                 "standard_limit_mm": LIMITS_STD["min_track_width"],
                 "advanced_limit_mm": LIMITS_ADV["min_track_width"],
                 "tier_required": "challenging",
-                "message": f"Track width {min_width}mm is below advanced process "
-                           f"minimum ({LIMITS_ADV['min_track_width']}mm)",
+                "message": f"Track width {check_width}mm is below advanced "
+                           f"process minimum "
+                           f"({LIMITS_ADV['min_track_width']}mm)",
             })
-        elif min_width < LIMITS_STD["min_track_width"]:
+        elif check_width < LIMITS_STD["min_track_width"]:
             violations.append({
                 "parameter": "track_width",
-                "actual_mm": min_width,
+                "actual_mm": check_width,
                 "standard_limit_mm": LIMITS_STD["min_track_width"],
                 "advanced_limit_mm": LIMITS_ADV["min_track_width"],
                 "tier_required": "advanced",
-                "message": f"Track width {min_width}mm requires advanced process "
-                           f"(standard minimum: {LIMITS_STD['min_track_width']}mm)",
+                "message": f"Track width {check_width}mm requires advanced "
+                           f"process (standard minimum: "
+                           f"{LIMITS_STD['min_track_width']}mm)",
             })
 
     # --- Track spacing analysis (approximate from segment proximity) ---
@@ -3404,8 +3478,8 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 })
 
     # --- Annular ring analysis ---
+    rings = []
     if all_vias:
-        rings = []
         for v in all_vias:
             size = v.get("size", 0)
             drill = v.get("drill", 0)
@@ -3434,6 +3508,46 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "message": f"Annular ring {min_ring}mm requires advanced process "
                                f"(standard: {LIMITS_STD['min_annular_ring']}mm)",
                 })
+
+    # --- IPC class annular ring compliance ---
+    ipc_violations = []
+    if rings:
+        ipc_min_via = ipc_limits['min_annular_ring_via']
+        if min_ring < ipc_min_via:
+            ipc_violations.append({
+                'parameter': 'annular_ring_via',
+                'actual_mm': min_ring,
+                'class_minimum_mm': ipc_min_via,
+                'ipc_class': ipc_class,
+                'message': (f'Via annular ring {min_ring}mm below '
+                            f'IPC Class {ipc_class} minimum '
+                            f'{ipc_min_via}mm'),
+            })
+
+    # Class 3: check for breakout (annular ring <= 0 means breakout)
+    if ipc_class == 3 and rings:
+        breakout_count = sum(1 for r in rings if r <= 0.001)
+        if breakout_count > 0:
+            ipc_violations.append({
+                'parameter': 'annular_ring_breakout',
+                'count': breakout_count,
+                'ipc_class': 3,
+                'message': (f'{breakout_count} vias with annular ring '
+                            f'breakout — not allowed for IPC Class 3'),
+            })
+
+    # Class 3: via-in-pad fill requirement
+    if ipc_class == 3 and ipc_limits.get('via_in_pad_fill_required'):
+        vip_vias = [v for v in all_vias if v.get('in_pad', False)]
+        if vip_vias:
+            ipc_violations.append({
+                'parameter': 'via_in_pad_fill',
+                'count': len(vip_vias),
+                'ipc_class': 3,
+                'message': (f'{len(vip_vias)} via-in-pad instances — '
+                            f'IPC Class 3 requires filled and '
+                            f'plated-over via-in-pad'),
+            })
 
     # --- Board dimensions assessment ---
     bbox = board_outline.get("bounding_box")
@@ -3483,6 +3597,21 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
         result["violation_count"] = len(violations)
     else:
         result["violation_count"] = 0
+
+    if ipc_violations:
+        result['ipc_class_compliance'] = {
+            'detected_class': ipc_class,
+            'detection_source': (design_intent or {}).get(
+                'source', {}).get('ipc_class', 'default'),
+            'violations': ipc_violations,
+        }
+    elif ipc_class != 2:  # Report class even if no violations
+        result['ipc_class_compliance'] = {
+            'detected_class': ipc_class,
+            'detection_source': (design_intent or {}).get(
+                'source', {}).get('ipc_class', 'default'),
+            'violations': [],
+        }
 
     return result
 
@@ -3569,6 +3698,81 @@ def analyze_design_rule_compliance(
             entry['nets_matched'] = len(nets)
         net_class_summary.append(entry)
 
+    # --- Net class compliance validation ---
+    # Check that traces on nets in each class meet class constraints
+    net_class_violations = []
+    if net_classes:
+        # Build net name -> class lookup
+        nc_by_net: dict[str, dict] = {}
+        for nc in net_classes:
+            nc_name = nc.get('name', '')
+            if nc_name == 'Default':
+                continue
+            for net_name in nc.get('nets', []):
+                nc_by_net[net_name] = nc
+
+        # Check trace widths per net class
+        for seg in tracks.get('segments', []):
+            net_name = seg.get('net_name', '')
+            nc = nc_by_net.get(net_name)
+            if not nc:
+                continue
+            required_width = nc.get('track_width')
+            if required_width is None:
+                continue
+            actual_width = seg['width']
+            if actual_width < required_width - 0.001:
+                net_class_violations.append({
+                    'net_class': nc['name'],
+                    'parameter': 'trace_width',
+                    'net': net_name,
+                    'actual_mm': round(actual_width, 4),
+                    'class_minimum_mm': round(required_width, 4),
+                    'message': (f'Trace on {net_name} is '
+                                f'{actual_width:.3f}mm, net class '
+                                f'{nc["name"]} requires '
+                                f'{required_width:.3f}mm'),
+                })
+
+        # Check via sizes per net class
+        for v in vias.get('vias', []):
+            net_name = v.get('net_name', '')
+            nc = nc_by_net.get(net_name)
+            if not nc:
+                continue
+            required_dia = nc.get('via_diameter')
+            if required_dia is not None:
+                actual_dia = v.get('size', 0)
+                if actual_dia > 0 and actual_dia < required_dia - 0.001:
+                    net_class_violations.append({
+                        'net_class': nc['name'],
+                        'parameter': 'via_diameter',
+                        'net': net_name,
+                        'actual_mm': round(actual_dia, 4),
+                        'class_minimum_mm': round(required_dia, 4),
+                        'message': (f'Via on {net_name} is '
+                                    f'{actual_dia:.3f}mm, net class '
+                                    f'{nc["name"]} requires '
+                                    f'{required_dia:.3f}mm'),
+                    })
+
+    # Deduplicate: keep one violation per (net_class, parameter, net)
+    seen_nc_violations: set[tuple] = set()
+    unique_nc_violations = []
+    for v in net_class_violations:
+        key = (v['net_class'], v['parameter'], v['net'])
+        if key not in seen_nc_violations:
+            seen_nc_violations.add(key)
+            unique_nc_violations.append(v)
+            rules_checked += 1
+            violations.append({
+                'rule': f"net_class:{v['net_class']}:{v['parameter']}",
+                'source': 'net_class',
+                'required_mm': v['class_minimum_mm'],
+                'actual_mm': v['actual_mm'],
+                'message': v['message'],
+            })
+
     # --- Custom rules summary (advisory) ---
     # We don't evaluate condition expressions, but we can check
     # unconditional global constraints from .kicad_dru
@@ -3619,6 +3823,8 @@ def analyze_design_rule_compliance(
         result['violations'] = violations
     if net_class_summary:
         result['net_class_summary'] = net_class_summary
+    if unique_nc_violations:
+        result['net_class_violations'] = unique_nc_violations
     if custom_rules:
         result['custom_rules_count'] = len(custom_rules)
 
@@ -4266,7 +4472,8 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     # DFM (Design for Manufacturing) scoring
     design_rules = (project_settings.get('design_rules')
                     or setup.get("design_rules"))
-    dfm = analyze_dfm(footprints, tracks, vias, outline, design_rules)
+    dfm = analyze_dfm(footprints, tracks, vias, outline, design_rules,
+                       net_classes=net_classes, design_intent=None)
 
     # Tombstoning risk assessment for small passives
     tombstoning = analyze_tombstoning_risk(footprints, tracks, vias, zones)
@@ -4496,6 +4703,31 @@ def main():
     project = config.get("project", {})
     if project:
         result["project_config"] = project
+
+    # Resolve and attach design intent
+    try:
+        from project_config import resolve_design_intent
+        pcb_data_for_intent = {}
+        if 'silkscreen' in result:
+            pcb_data_for_intent['text_items'] = result['silkscreen'].get(
+                'fab_texts', [])
+        if 'layers' in result:
+            pcb_data_for_intent['layers'] = result['layers']
+        if 'design_rule_compliance' in result:
+            drc = result['design_rule_compliance']
+            if drc and 'net_class_summary' in drc:
+                pcb_data_for_intent['net_classes'] = drc['net_class_summary']
+        pcb_data_for_intent['footprints'] = result.get('footprints', [])
+        pcb_data_for_intent['metadata'] = result.get('metadata', {})
+        pcb_data_for_intent['net_names'] = {}
+        bbox = result.get('board_outline', {}).get('bounding_box')
+        if bbox:
+            pcb_data_for_intent['board_area_mm2'] = (
+                bbox.get('width', 0) * bbox.get('height', 0))
+        intent = resolve_design_intent(config, pcb_data=pcb_data_for_intent)
+        result['design_intent'] = intent
+    except ImportError:
+        pass
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
