@@ -102,6 +102,22 @@ from domain_detectors import (
 # ---------------------------------------------------------------------------
 # Case-insensitive distributor / MPN property helpers
 # ---------------------------------------------------------------------------
+_UUID_RE = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+    re.IGNORECASE,
+)
+
+
+def _clean_hierarchical_name(name: str) -> str:
+    """Strip UUID path prefixes from hierarchical net/rail names.
+
+    ``/201ab4ae-...-c6b37cf9a2b1/VIN`` → ``VIN``
+    """
+    if '/' in name and _UUID_RE.search(name):
+        return name.rsplit('/', 1)[-1]
+    return name
+
+
 # KiCad lets users name fields however they like — "Digikey", "DigiKey",
 # "DIGIKEY", "Digi-Key Part Number" are all common.  Rather than maintaining
 # an ever-growing list of explicit variants, build a lowercase property dict
@@ -1097,16 +1113,6 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
             k = add_point(nc["x"], nc["y"], {"source": "no_connect"}, sheet)
             union_with_overlapping_wires(k, nc["x"], nc["y"], sheet)
 
-    # Union component pins that land mid-wire (rare but possible)
-    for comp in components:
-        if comp.get("value") == "PWR_FLAG" or comp.get("type") == "power_flag":
-            continue
-        sheet = comp.get("_sheet", 0)
-        for pin in comp.get("pins", []):
-            k = key(pin["x"], pin["y"], sheet)
-            if k in parent:
-                union_with_overlapping_wires(k, pin["x"], pin["y"], sheet)
-
     # Build net groups
     net_groups: dict[tuple, list[tuple]] = {}
     for k in parent:
@@ -1267,14 +1273,17 @@ def compute_statistics(components: list[dict], nets: dict, bom: list[dict],
         comp["value"] for comp in components if comp["type"] == "power_symbol"
     ))
     for net_name in nets:
-        if _is_power_net_name(net_name) and net_name not in power_rail_names:
-            power_rail_names.append(net_name)
+        if _is_power_net_name(net_name):
+            clean = _clean_hierarchical_name(net_name)
+            if clean not in power_rail_names:
+                power_rail_names.append(clean)
     power_rail_names = sorted(set(power_rail_names))
 
     power_rails = []
     for name in power_rail_names:
-        v = _parse_voltage_from_net_name(name)
-        power_rails.append({"name": name, "voltage": v})
+        clean = _clean_hierarchical_name(name)
+        v = _parse_voltage_from_net_name(clean)
+        power_rails.append({"name": clean, "voltage": v})
 
     # Missing properties
     missing_mpn = [c["reference"] for c in non_power
