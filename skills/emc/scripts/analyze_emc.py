@@ -309,8 +309,31 @@ def main():
                         help='Use SPICE simulation for improved PDN/filter analysis (requires ngspice/LTspice/Xyce)')
     parser.add_argument('--config', default=None,
                         help='Path to .kicad-happy.json project config file')
+    parser.add_argument('--schema', action='store_true',
+                        help='Print JSON output schema and exit')
 
     args = parser.parse_args()
+
+    if args.schema:
+        schema = {
+            "analyzer_type": "string — always 'emc'",
+            "standard": "string — target EMC standard (e.g. 'fcc-class-b')",
+            "analysis_time_s": "float",
+            "summary": {
+                "total_findings": "int",
+                "by_severity": "{critical: int, high: int, medium: int, low: int, info: int}",
+                "risk_score": "float (0-100)",
+                "risk_level": "string (low|moderate|elevated|high|critical)",
+                "categories_checked": "int",
+            },
+            "findings": "[{rule_id, category, severity, description, components: [string], nets: [string], recommendation, confidence}]",
+            "test_plan": "[{test: string, standard_clause, equipment, procedure, expected_result}]",
+            "regulatory_coverage": "{standard: {applicable_clauses: int, covered: int, coverage_pct: float}}",
+            "category_breakdown": "{category: {count: int, max_severity}}",
+            "suppressed_findings": "[{rule_id, reason}] — from .kicad-happy.json suppressions",
+        }
+        print(json.dumps(schema, indent=2))
+        sys.exit(0)
 
     if not args.schematic and not args.pcb:
         parser.error('At least one of --schematic or --pcb is required')

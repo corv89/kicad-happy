@@ -110,11 +110,11 @@ Custom library symbols (e.g., `sacmap:TPS61023`) are highest priority for datash
 [Shunt values, sense amplifier, measurement range]
 
 ### Simulation Verification
-[**Include when ngspice is available.** Run `simulate_subcircuits.py` on the analyzer JSON output (from the `spice` skill). Present results as a summary table grouped by status:]
+[**Include when ngspice is available.** Run `simulate_subcircuits.py` on the analyzer JSON output (from the `spice` skill). The output JSON has top-level key `simulation_results` (list). Each entry has `reference` (e.g. "R5/C3"), `components` (list), `subcircuit_type`, `status`, `expected` (dict of metric values like `cutoff_hz`), `simulated` (dict of measured values), and `delta` (dict of error percentages). Use `summary` for totals. Present results as a summary table grouped by status:]
 
 [Summary line: "ngspice verified N subcircuits in X.Xs. N pass, N warn, N fail, N skip."]
 
-[**Pass** — one line each, grouped: "RC filter R5/C3 (fc=15.9kHz): confirmed, <0.3% error." These confirm the analyzer's calculations are correct.]
+[**Pass** — one line each, grouped: "RC filter R5/C3 (fc=15.9kHz): confirmed, <0.3% error." Build this from `result['reference']`, `result['expected']['cutoff_hz']`, and `result['delta']`.]
 
 [**Warn** — explain context: "Opamp U4A (inverting, gain=-10): gain confirmed at 20.0dB. Bandwidth 98.8kHz (ideal model). Note: LM358 GBW is ~1MHz — actual bandwidth ~100kHz." Opamp and transistor results always carry model fidelity caveats.]
 

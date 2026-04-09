@@ -1115,6 +1115,11 @@ def build_report(simulation_runs):
     Returns:
         Report dict with summary statistics and individual results
     """
+    # Add 'reference' convenience field (e.g. "R5/C3") from components list
+    for run in simulation_runs:
+        if "reference" not in run and "components" in run:
+            run["reference"] = "/".join(run["components"])
+
     counts = {"pass": 0, "warn": 0, "fail": 0, "skip": 0}
     for run in simulation_runs:
         status = run.get("status", "skip")

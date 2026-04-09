@@ -4499,6 +4499,10 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     footprint_summary = []
     for fp in footprints:
         fp_summary = {k: v for k, v in fp.items() if k != "pads"}
+        # Alias: 'footprint' mirrors 'library' for cross-analyzer consistency
+        # (schematic analyzer uses 'footprint', PCB uses 'library' for same data)
+        if "library" in fp_summary and "footprint" not in fp_summary:
+            fp_summary["footprint"] = fp_summary["library"]
         # Per-pad net mapping (pad number → net name + pin function)
         pad_nets = {}
         fp_nets = set()
@@ -4637,14 +4641,15 @@ def _get_schema():
         },
         "layers": "[{name, type, index: int}]",
         "setup": "object — design rules, pad_to_mask_clearance, etc.",
-        "nets": "{net_name: net_index_int}",
+        "nets": "{str(net_id): net_name}",
+        "net_name_to_id": "{net_name: int (net ID)} — reverse of nets",
         "board_outline": {
             "bounding_box": "{x_min, y_min, x_max, y_max, width, height: float}",
             "outline_type": "string (rectangle|complex_polygon|...)",
             "segments": "[{x1, y1, x2, y2: float, layer}]",
         },
         "component_groups": "{prefix: {count: int, type, examples: [ref]}}",
-        "footprints": "[{reference, value, library, layer, x: float, y: float, angle: float, type: smd|through_hole|mixed, mpn, manufacturer, description, exclude_from_bom: bool, exclude_from_pos: bool, dnp: bool, pad_nets: {pad_number: {net, pin}}, connected_nets: [string]}]",
+        "footprints": "[{reference, value, library (lib:footprint path), footprint (alias of library), layer, x: float, y: float, angle: float, type: smd|through_hole|mixed, mpn, manufacturer, description, exclude_from_bom: bool, exclude_from_pos: bool, dnp: bool, pad_nets: {pad_number: {net: string, pin: string}}, connected_nets: [string]}]",
         "tracks": {
             "segment_count": "int", "arc_count": "int",
             "width_distribution": "{width_mm_str: count}",
@@ -4656,7 +4661,7 @@ def _get_schema():
             "_analysis": "via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}, via_current: [warning]",
             "_with_full_flag": "vias: [{x, y: float, layers: [string], size, drill: float, net: int|null}]",
         },
-        "zones": "[{net, priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool}]",
+        "zones": "[{net: int (net ID), net_name: string (net name), priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool}]",
         "connectivity": {"routing_complete": "bool", "unrouted_count": "int", "unconnected_pads": "[{reference, pad, expected_net}]"},
         "net_lengths": "{net_name: {track_length_mm: float, via_count: int, layer_transitions: int}}",
         "_optional_sections": "power_net_routing, decoupling_placement, ground_domains, current_capacity, thermal_analysis, placement_analysis, trace_proximity (--proximity), dfm, tombstoning_risk, thermal_pad_vias, copper_presence",
