@@ -506,3 +506,28 @@ When producing a design review report, read `references/report-generation.md` fo
 
 ### Design Comparison
 When comparing two designs, diff: component counts/types, net classes/design rules, track widths/via sizes, board dimensions/layer count, power supply topology, KiCad version differences.
+
+## Security Architecture
+
+All analysis scripts process untrusted input (user-provided KiCad files,
+third-party PDF datasheets, distributor API responses). The parsing architecture
+mitigates prompt injection and code execution risks:
+
+- **Deterministic parsers**: S-expression files (`.kicad_sch`, `.kicad_pcb`) are
+  parsed by a dedicated recursive-descent parser (`sexp_parser.py`) — not
+  `eval()`, `exec()`, or any code execution primitive. The parser produces
+  Python lists/strings only.
+- **Structured JSON boundary**: All analyzer output is structured JSON with a
+  fixed schema. External content (component values, net names, datasheet text)
+  is treated as data fields, never as instructions or code.
+- **PDF processing**: Datasheet PDFs are processed by `pdftotext` (external
+  binary, list-based args — no shell injection) and page content is passed to
+  the LLM for structured extraction. Extracted data is validated against a
+  5-dimension quality rubric before caching.
+- **No shell commands from input**: No analyzer constructs shell commands from
+  file content. Subprocess calls use list-based arguments exclusively.
+- **Read-only by default**: Analysis scripts never modify input files. BOM
+  write-back requires an explicit `--write` flag.
+- **Distributor API scope**: Network requests are limited to known distributor
+  APIs (DigiKey, Mouser, LCSC, element14) for datasheet downloads and component
+  lookups. Only MPNs are sent — no design data leaves the local machine.
