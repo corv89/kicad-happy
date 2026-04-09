@@ -126,6 +126,9 @@ def main() -> None:
                         help='Path to thermal analysis JSON')
     parser.add_argument('--spice', default=None,
                         help='Path to SPICE results JSON')
+    parser.add_argument('--analyze', action='store_true',
+                        help='Run KiCad analysis scripts if no analysis data '
+                             'exists.')
     args = parser.parse_args()
 
     # Load or generate spec
@@ -139,6 +142,35 @@ def main() -> None:
     if args.analysis:
         with open(args.analysis) as f:
             analysis = json.load(f)
+
+    # If no explicit analysis path, try manifest
+    if not args.analysis:
+        try:
+            _kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          '..', '..', 'kicad', 'scripts')
+            if os.path.isdir(_kicad_scripts):
+                import sys as _sys
+                _sys.path.insert(0, os.path.abspath(_kicad_scripts))
+            from project_config import load_config
+            _config = load_config(args.project_dir)
+            _analysis_dir = os.path.join(
+                args.project_dir,
+                _config.get('analysis', {}).get('output_dir', 'analysis'))
+            _manifest_path = os.path.join(_analysis_dir, 'manifest.json')
+            if os.path.isfile(_manifest_path):
+                with open(_manifest_path) as f:
+                    _manifest = json.load(f)
+                _current_id = _manifest.get('current')
+                if _current_id:
+                    _sch_path = os.path.join(_analysis_dir, _current_id,
+                                             'schematic.json')
+                    if os.path.isfile(_sch_path):
+                        args.analysis = _sch_path
+                        with open(_sch_path) as f:
+                            analysis = json.load(f)
+        except (ImportError, json.JSONDecodeError, OSError):
+            pass
+
     for path in (args.emc, args.thermal, args.spice):
         if path:
             with open(path) as f:

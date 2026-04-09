@@ -69,6 +69,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     'version': 1,
     'project': {},
     'suppressions': [],
+    'analysis': {
+        'output_dir': 'analysis',
+        'retention': 5,
+        'auto_diff': True,
+        'track_in_git': False,
+        'diff_threshold': 'major',
+    },
 }
 
 

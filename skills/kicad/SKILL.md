@@ -146,18 +146,43 @@ All scripts output JSON to stdout by default. Use `--output file.json` to write 
 
 ### Generated Files
 
-The analysis workflow creates files in the project tree. Analyzer JSON and design review reports use user-chosen filenames, so track what you create:
+Analysis outputs are stored in `analysis/` with timestamped run folders managed by `analysis_cache.py`. The manifest (`analysis/manifest.json`) tracks all runs.
 
-1. **Tell the user** what files were created and where
-2. **Record them** in the project's agent instructions file (e.g., `CLAUDE.md`, `AGENTS.md`, or equivalent) under a "Generated files" section so future sessions can find or clean them up
-3. **When the user asks to clean up**, remove generated reports and analyzer JSON. Check the project instructions file for the file list — filenames vary per session.
+| File Type | Location | Regenerable? | Commit to git? |
+|-----------|----------|-------------|----------------|
+| Analyzer JSON | `analysis/<timestamp>/*.json` | Yes (expensive) | Configured by `track_in_git` in `.kicad-happy.json` (default: no) |
+| Manifest | `analysis/manifest.json` | Yes | Always (tracked by default) |
+| Design review report | User-chosen path | Yes | Optional |
 
-| File Type | Example | Regenerable? | Commit to git? |
-|-----------|---------|-------------|----------------|
-| Analyzer JSON (`--output`) | `schematic_analysis.json` | Yes (expensive) | No |
-| Design review report | `review.md`, `power_tree_review.md` | Yes | Optional — user may want to keep for reference |
+When creating design reviews, check the manifest for prior runs. If `auto_diff` is enabled and prior runs exist, automatically diff current vs previous using `diff_analysis.py` and include the delta in the "Previous Review Delta" section.
 
 See also the `bom` skill's cleanup section for datasheets, order CSVs, and backups.
+
+### Analysis Cache Configuration
+
+The `analysis` section in `.kicad-happy.json` controls the shared analysis output directory:
+
+```json
+{
+  "analysis": {
+    "output_dir": "analysis",
+    "retention": 5,
+    "auto_diff": true,
+    "track_in_git": false,
+    "diff_threshold": "major"
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `output_dir` | `"analysis"` | Analysis directory path, relative to project root |
+| `retention` | `5` | Max unpinned runs to keep. `0` = unlimited |
+| `auto_diff` | `true` | Auto-include delta section in design reviews |
+| `track_in_git` | `false` | When false, JSONs gitignored but manifest tracked |
+| `diff_threshold` | `"major"` | Severity that triggers new timestamped folder: `minor`, `major`, `breaking` |
+
+All fields are optional. Missing fields use defaults.
 
 ### Output JSON Schema Quick Reference
 
@@ -202,7 +227,14 @@ board_dimensions, gerbers, drills
 **Workflow:** When analyzing a KiCad project, scan the project directory for all available file types and run every applicable analyzer — not just the one the user mentioned. A complete analysis uses all the data available:
 
 1. **Scan the project directory** for `.kicad_sch`, `.kicad_pcb`, `.kicad_pro`, gerber directories, and `.net`/`.xml` netlist files
-2. **Check for prior design reviews** — scan the project directory for existing review files (`*review*.md`, `*design-review*.md`). If found, read the most recent one. Also check for prior analyzer JSON outputs (`*_analysis.json`, `*_report.json`). If prior JSON exists, run `diff_analysis.py old.json new.json` to generate a structured diff. Include results in the Previous Review Delta section of the report.
+1b. **Initialize analysis cache.** Read `.kicad-happy.json` for `analysis` config (defaults apply if absent). Check for `analysis/manifest.json`:
+    - If present, read current run's `source_hashes` to determine which analyzers need re-running.
+    - If absent, initialize with `ensure_analysis_dir()` from `analysis_cache.py`.
+
+    Run analyzers with `--output` targeting a temporary directory. After all analyzers complete, use the analysis cache module to decide: create new run (meaningful changes) or overwrite current (cosmetic changes only). The module handles copy-forward of unchanged outputs, manifest updates, and retention pruning.
+
+    Write outputs using canonical filenames: `schematic.json`, `pcb.json`, `gerber.json`, `spice.json`, `emc.json`, `thermal.json`, `lifecycle.json`.
+2. **Check for prior design reviews** — scan the project directory for existing review files (`*review*.md`, `*design-review*.md`). If found, read the most recent one. Check the analysis manifest for prior runs. If `auto_diff` is enabled and prior runs exist, run `diff_analysis.py` on current vs previous run and include the delta in the "Previous Review Delta" section of the report.
 3. **Run all applicable scripts** — if the schematic exists, run `analyze_schematic.py`. If the PCB exists, run `analyze_pcb.py`. If gerbers exist, run `analyze_gerbers.py`. Run them in parallel when possible.
 3. **Sync datasheets** (see Datasheet Acquisition below) — this step is a prerequisite for verification, not optional. Without datasheets, all subsequent verification is reduced to internal consistency checks — confirming the design agrees with itself, not that it's correct. Run the sync before reading any analyzer output. If sync fails or no API keys are available, use fallback methods (Datasheet property URLs, individual downloads via `digikey` skill, ask the user). If critical IC datasheets can't be obtained, note this prominently in the report as a verification gap.
 4. **Read the `.kicad_pro`** project file directly (it's JSON) for design rules, net classes, and DRC/ERC settings
