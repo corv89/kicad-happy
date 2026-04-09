@@ -230,7 +230,7 @@ def _extract_analog_data(analysis: dict, **kwargs) -> str:
                 c = f.get('capacitor', {})
                 r_ref = r.get('ref', '?') if isinstance(r, dict) else str(r)
                 c_ref = c.get('ref', '?') if isinstance(c, dict) else str(c)
-                fc = f.get('cutoff_hz') or f.get('fc_hz')
+                fc = f.get('cutoff_hz')
                 fc_str = _format_freq(fc) if fc else '?'
                 parts.append(
                     f"  - {f.get('type', '?')}: {r_ref} + {c_ref}, "

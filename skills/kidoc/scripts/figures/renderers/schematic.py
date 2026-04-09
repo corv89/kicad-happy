@@ -1343,7 +1343,7 @@ def _format_detection_text(det_type: str, det: dict) -> str:
         if vout:
             return f"Vout={vout:.2f}V"
     elif det_type in ('rc_filters', 'lc_filters'):
-        fc = det.get('fc_hz') or det.get('cutoff_hz')
+        fc = det.get('cutoff_hz')
         if fc:
             if fc >= 1e6:
                 return f"fc={fc/1e6:.1f}MHz"

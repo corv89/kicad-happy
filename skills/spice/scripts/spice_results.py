@@ -72,7 +72,7 @@ def evaluate_rc_filter(det, sim_results):
         "components": [det["resistor"]["ref"], det["capacitor"]["ref"]],
         "filter_type": det.get("type", "low-pass"),
         "expected": {
-            "fc_hz": expected_fc,
+            "cutoff_hz": expected_fc,
             "type": det.get("type", "low-pass"),
         },
         "simulated": {},
@@ -89,7 +89,7 @@ def evaluate_rc_filter(det, sim_results):
         result["note"] = "expected cutoff frequency is 0 Hz — detection may be invalid"
         return result
 
-    result["simulated"]["fc_hz"] = sim_fc
+    result["simulated"]["cutoff_hz"] = sim_fc
     if phase_fc is not None:
         result["simulated"]["phase_at_fc_deg"] = phase_fc
 

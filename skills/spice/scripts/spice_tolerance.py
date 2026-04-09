@@ -36,7 +36,7 @@ _VALUE_KEYS = {
 
 # Primary output metric per subcircuit type (used for sensitivity analysis)
 PRIMARY_METRIC = {
-    "rc_filter": "fc_hz",
+    "rc_filter": "cutoff_hz",
     "lc_filter": "resonant_hz",
     "voltage_divider": "vout_V",
     "opamp_circuit": "gain_dB",

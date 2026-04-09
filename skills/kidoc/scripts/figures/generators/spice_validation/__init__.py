@@ -30,7 +30,7 @@ class SpiceValidationGenerator:
             simulated = r.get('simulated', {})
             stype = r.get('subcircuit_type', 'unknown')
 
-            for metric in ('fc_hz', 'ratio', 'gain_db'):
+            for metric in ('cutoff_hz', 'ratio', 'gain_db'):
                 exp_val = expected.get(metric)
                 sim_val = simulated.get(metric)
                 if exp_val is not None and sim_val is not None:

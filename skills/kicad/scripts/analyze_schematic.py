@@ -2721,6 +2721,20 @@ def parse_legacy_schematic(path: str) -> dict:
     ]
     annotation_issues = check_annotation_completeness(real_components)
 
+    # Enrich components with pin-to-net mapping (legacy path)
+    _pin_nets_l: dict[str, dict[str, str]] = {}
+    for _net_name, _net_info in nets.items():
+        if _net_name.startswith('__unnamed_'):
+            continue
+        if isinstance(_net_info, dict):
+            for _p in _net_info.get('pins', []):
+                _comp_ref = _p.get('component', '')
+                _pin_num = _p.get('pin_number', '')
+                if _comp_ref and _pin_num:
+                    _pin_nets_l.setdefault(_comp_ref, {})[_pin_num] = _net_name
+    for _comp in all_components:
+        _comp['pin_nets'] = _pin_nets_l.get(_comp.get('reference', ''), {})
+
     return {
         "file": str(path),
         "kicad_version": "5 (legacy)",
@@ -3724,6 +3738,14 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
             spi_entry["bus_mode"] = "full_duplex"
         elif has_mosi or has_miso:
             spi_entry["bus_mode"] = "half_duplex"
+
+        # Add top-level devices list (aggregated from all signal entries)
+        # for schema consistency with I2C/UART/CAN which have flat devices[]
+        all_spi_devs: set[str] = set()
+        for sig_info in sigs.values():
+            if isinstance(sig_info, dict):
+                all_spi_devs.update(sig_info.get('devices', []))
+        spi_entry['devices'] = sorted(all_spi_devs)
 
     return buses
 
@@ -7529,6 +7551,20 @@ def analyze_schematic(path: str, project_root: str | None = None,
     lib_tables = load_lib_tables(str(path))
     if lib_tables.get('symbol_libs'):
         project_settings['symbol_libs'] = lib_tables['symbol_libs']
+
+    # Enrich components with pin-to-net mapping for downstream consumers
+    _pin_nets: dict[str, dict[str, str]] = {}
+    for _net_name, _net_info in nets.items():
+        if _net_name.startswith('__unnamed_'):
+            continue
+        if isinstance(_net_info, dict):
+            for _p in _net_info.get('pins', []):
+                _comp_ref = _p.get('component', '')
+                _pin_num = _p.get('pin_number', '')
+                if _comp_ref and _pin_num:
+                    _pin_nets.setdefault(_comp_ref, {})[_pin_num] = _net_name
+    for _comp in all_components:
+        _comp['pin_nets'] = _pin_nets.get(_comp.get('reference', ''), {})
 
     result = {
         "analyzer_type": "schematic",

@@ -4539,7 +4539,8 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         "statistics": stats,
         "layers": layers,
         "setup": setup,
-        "nets": {k: v for k, v in net_names.items() if v},  # net_id -> net_name
+        "nets": {str(k): v for k, v in net_names.items() if v},  # net_id -> net_name
+        "net_name_to_id": {v: k for k, v in net_names.items() if v},  # net_name -> net_id
         "board_outline": outline,
         "component_groups": component_groups,
         "footprints": footprint_summary,

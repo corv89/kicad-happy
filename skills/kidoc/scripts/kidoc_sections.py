@@ -363,7 +363,7 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
             lines.append("")
             rows = []
             for f in filters:
-                fc = f.get('cutoff_hz') or f.get('fc_hz')
+                fc = f.get('cutoff_hz')
                 rows.append([
                     f.get('type', '?'),
                     f.get('resistor', {}).get('ref', '?') if isinstance(f.get('resistor'), dict) else str(f.get('resistor', '?')),

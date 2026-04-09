@@ -190,6 +190,7 @@ class PowerTreeGenerator:
                 'topology': _format_topology(reg.get('topology', '')),
                 'inductor': ind_text,
                 'output_caps': cap_summary,
+                'cross_sheet_loads': reg.get('cross_sheet_loads', []),
             })
 
         # Input rails (roots: appear as input but not as another reg's output)
@@ -205,12 +206,44 @@ class PowerTreeGenerator:
             for r in root_inputs + cascade_inputs
         ]
 
+        # Build input rail voltage lookup (for regulator voltage conversion display)
+        # Maps rail name -> voltage (from regulators whose output is that rail)
+        rail_voltage: dict[str, float] = {}
+        for reg in regulators:
+            if reg['vout'] and reg['output_rail']:
+                rail_voltage[reg['output_rail']] = reg['vout']
+
+        # Resolve input voltage for each regulator
+        for reg in regulators:
+            vin = rail_voltage.get(reg['input_rail'])
+            if vin is None:
+                hint = _infer_voltage(reg['input_rail'])
+                m = re.match(r'(\d+\.?\d*)\s*V', hint)
+                if m:
+                    vin = float(m.group(1))
+            reg['vin'] = vin
+
         output_rails = []
         for r in sorted(output_rail_set):
             # Find voltage from regulators
             v = next((reg['vout'] for reg in regulators
                       if reg['output_rail'] == r and reg['vout']), None)
-            output_rails.append({'name': r, 'voltage': v})
+
+            # Collect load context for this rail
+            loads: list[str] = []
+            # Cascade: other regulators fed by this rail
+            for reg in regulators:
+                if reg['input_rail'] == r:
+                    loads.append(f"{reg['ref']} ({reg['topology']})")
+            # Cross-sheet loads from regulators that output to this rail
+            for reg in regulators:
+                if reg['output_rail'] == r:
+                    for load in reg.get('cross_sheet_loads', []):
+                        # Trim to just ref + value: "U3 (STM32, Sheet2)" -> "U3 (STM32)"
+                        trimmed = re.sub(r',\s*Sheet\d+\)', ')', str(load))
+                        loads.append(trimmed)
+
+            output_rails.append({'name': r, 'voltage': v, 'loads': loads})
 
         # Protection devices
         prot_raw = analysis.get('signal_analysis', {}).get('protection_devices', [])
@@ -383,11 +416,21 @@ class PowerTreeGenerator:
                 reg_box_h = row_h - 4.0
                 ref = reg['ref']
 
-                body_lines = [reg['topology']]
-                if reg.get('vout'):
-                    body_lines[0] += f" \u2022 {reg['vout']:.1f}V"
+                # Voltage conversion line (e.g. "5.0V → 3.3V" or "→ 3.3V")
+                body_lines = []
+                vin = reg.get('vin')
+                vout = reg.get('vout')
+                if vin and vout:
+                    body_lines.append(f"{vin:.1f}V \u2192 {vout:.1f}V")
+                elif vout:
+                    body_lines.append(f"\u2192 {vout:.1f}V")
+
+                # Topology + inductor
+                topo_line = reg['topology']
                 if reg.get('inductor'):
-                    body_lines.append(reg['inductor'])
+                    topo_line += f", {reg['inductor']}"
+                body_lines.append(topo_line)
+
                 if reg.get('output_caps'):
                     cap_text = f"Cout: {reg['output_caps']}"
                     if len(cap_text) > 35:
@@ -439,11 +482,27 @@ class PowerTreeGenerator:
                      out_box_y + out_box_h / 2 - 1.0,
                      oname, font_size=4.5, fill=out_text,
                      anchor='middle', dominant_baseline='central', bold=True)
+            # Voltage subtitle
+            subtitle_y = out_box_y + out_box_h / 2 + 3.5
             if v:
-                svg.text(output_col_x + output_col_w / 2,
-                         out_box_y + out_box_h / 2 + 3.5,
+                svg.text(output_col_x + output_col_w / 2, subtitle_y,
                          f"{v:.2f}V", font_size=3.0, fill=out_stroke,
                          anchor='middle', dominant_baseline='central')
+                subtitle_y += 4.0
+
+            # Load context subtitle (KH-202)
+            loads = out_rail.get('loads', [])
+            if loads:
+                if len(loads) <= 2:
+                    load_text = ', '.join(loads)
+                else:
+                    load_text = f"{loads[0]}, {loads[1]} (+{len(loads) - 2})"
+                if len(load_text) > 30:
+                    load_text = load_text[:28] + "\u2026"
+                svg.text(output_col_x + output_col_w / 2, subtitle_y,
+                         load_text, font_size=2.5, fill=out_stroke,
+                         anchor='middle', dominant_baseline='central')
+
             output_box_pos[oname] = (output_col_x, out_box_y + out_box_h / 2)
 
         # Arrows: input → regulators
@@ -572,9 +631,14 @@ class PowerTreeGenerator:
         if has_protection:
             items.append(("Protection", theme.pt_prot_fill, theme.pt_prot_stroke))
         if all_output_names:
-            of, os_, _ = output_color_map.get(all_output_names[0],
-                                               theme.pt_output_colors[0])
-            items.append(("Output Rail", of, os_))
+            if len(all_output_names) <= 5:
+                for oname in all_output_names:
+                    of, os_, _ = output_color_map.get(
+                        oname, theme.pt_output_colors[0])
+                    items.append((oname, of, os_))
+            else:
+                of, os_, _ = theme.pt_output_colors[0]
+                items.append(("Output Rails", of, os_))
 
         cx = margin
         for label, fill, stroke in items:

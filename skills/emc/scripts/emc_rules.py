@@ -1749,21 +1749,17 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
 # ---------------------------------------------------------------------------
 
 def _build_net_id_to_name(pcb: Dict) -> Dict[int, str]:
-    """Build mapping from numeric net ID to net name."""
+    """Build mapping from numeric net ID to net name.
+
+    PCB analyzer emits ``nets: {str(id): name}`` and
+    ``net_name_to_id: {name: int_id}``.  This helper handles the
+    string-key JSON round-trip.
+    """
     nets = pcb.get('nets', {})
     if not isinstance(nets, dict):
         return {}
-    result = {}
-    for k, v in nets.items():
-        # Canonical format: {int_id: name_str}
-        if isinstance(k, int):
-            result[k] = str(v)
-        elif isinstance(k, str) and k.isdigit():
-            result[int(k)] = str(v)
-        elif isinstance(v, int):
-            # Legacy format: {name: id} — invert
-            result[v] = str(k)
-    return result
+    return {int(k): str(v) for k, v in nets.items()
+            if v and str(k).isdigit()}
 
 
 def _build_net_length_map(pcb: Dict) -> Dict[str, Dict]:
