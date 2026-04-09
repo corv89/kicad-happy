@@ -1348,7 +1348,10 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                             "cp210", "ft232", "74lvc", "74hc",
                             # KH-100: WiFi/BT modules with filter inductors
                             "ap6212", "ap6236", "ap6256", "esp32", "esp8266",
-                            "cyw43", "wl18")
+                            "cyw43", "wl18",
+                            # KH-226: Dev board modules (not regulators)
+                            "nucleo", "arduino", "raspberry", "teensy",
+                            "feather", "pico")
         if any(k in _lib_val_check for k in _non_reg_exclude):
             continue
 
@@ -1450,10 +1453,14 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
 
         # Exclude power multiplexers/load switches/ideal diode controllers
         _power_mux_exclude = ("power_mux", "load_switch", "tps211", "tps212",
+                              "tps229", "tps205",  # KH-219: load switches
                               "ltc441", "ideal_diode",
                               # KH-108: Ideal diode OR controllers
                               "lm6620", "lm6610", "ltc435", "ltc430")
         if any(k in lib_val_lower for k in _power_mux_exclude):
+            continue
+        # KH-219: Exclude components with load/power switch descriptions
+        if any(k in desc_lower for k in ("load switch", "power switch", "power distribution switch")):
             continue
 
         if not fb_pin and not boot_pin:
@@ -1530,6 +1537,14 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 reg_info["topology"] = "switching"
             else:
                 reg_info["topology"] = "LDO"
+            # KH-225: Charge pumps — voltage converters, not LDOs
+            _charge_pump_kw = ("charge_pump", "charge pump", "voltage inverter",
+                               "voltage converter", "switched capacitor")
+            if any(k in desc_lower for k in _charge_pump_kw) or \
+               any(k in lib_val_lower for k in ("lm2664", "max660", "icl7660",
+                                                  "tc7660", "ltc1044", "ltc3261",
+                                                  "ltc1144")):
+                reg_info["topology"] = "charge_pump"
         elif fb_pin and not sw_pin:
             reg_info["topology"] = "unknown"
 
@@ -2281,7 +2296,17 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
         elif cf_ref and not rf_ref and ri_ref:
             config = "integrator"
         elif cf_ref and rf_ref:
-            config = "compensator"
+            # KH-221: Distinguish TIA from compensator.
+            # TIA: feedback R >> input R (transimpedance gain = Rf)
+            # Compensator: similar-value R+C for loop compensation
+            if ri_ref and ri_val and rf_val and ri_val > 0 and rf_val / ri_val > 10:
+                config = "transimpedance"
+            elif not ri_ref:
+                # No input resistor at all — classic TIA topology
+                # (photodiode or sensor connected directly to inverting input)
+                config = "transimpedance"
+            else:
+                config = "compensator"
         elif rf_ref and not ri_ref:
             config = "transimpedance_or_buffer"
         elif not rf_ref:

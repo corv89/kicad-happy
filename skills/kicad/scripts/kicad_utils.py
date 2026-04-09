@@ -82,6 +82,10 @@ _REGULATOR_VREF: dict[str, float] = {
     "ISL854": 0.6,      "ISL850": 0.8,                            # ISL85410 = 0.6V, ISL85003 = 0.8V (datasheets)
     # XL (XLSEMI)
     "XL70": 1.25,                                                  # XL7015 VFB = 1.25V (datasheet)
+    # TI misc
+    "TPS6291": 0.8,                                                # TPS62912 VFB = 0.8V (TI SLVSFQ1)
+    "TPS736": 1.204,                                               # TPS73601/TPS736xx VFB = 1.204V (TI SBVS042)
+    "LM2267": 1.285,                                               # LM22676 VFB = 1.285V (TI SNVS457)
     # Generic (well-established values)
     "LM317": 1.25,     "LM337": 1.25,
     "AMS1117": 1.25,   "AMS1085": 1.25,
@@ -370,7 +374,9 @@ def snap_to_e_series(value: float, series: str = "E96") -> tuple:
     return (snapped, round(error_pct, 2))
 
 
-def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False, footprint: str = "", in_bom: bool = False) -> str:
+def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False,
+                       footprint: str = "", in_bom: bool = False,
+                       description: str = "") -> str:
     """Classify component type from reference designator and library."""
     # Power symbols: trust the lib_symbol (power) flag unconditionally.
     # KH-080: Components in the power: library WITHOUT the (power) flag
@@ -467,6 +473,13 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
                 return "crystal"
             if has_osc:
                 return "oscillator"
+        # KH-220: Description-based oscillator detection for custom lib symbols
+        if result not in ("crystal", "oscillator"):
+            _desc_low = description.lower() if description else ""
+            if any(x in _desc_low for x in ("oscillator", "clock oscillator",
+                                              "mems oscillator", "tcxo", "vcxo", "ocxo")):
+                if "crystal" not in _desc_low:
+                    return "oscillator"
         if result == "varistor":
             if ("r_pot" in lib_low or "pot" in lib_low or "potentiometer" in lib_low
                     or "potentiometer" in val_low):
@@ -541,9 +554,15 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
     # X prefix: crystal or oscillator if value/lib suggests it, otherwise connector
     # Distinguish passive crystals (need load caps) from active MEMS/IC oscillators
     if prefix == "X":
+        desc_lower = description.lower() if description else ""
         # Active oscillator ICs (MEMS, TCXO, VCXO) — have VCC/GND/OUT, no load caps
         if any(x in lib_lower for x in ["oscillator"]) and not any(x in lib_lower for x in ["crystal", "xtal"]):
             return "oscillator"
+        # KH-220: Custom lib symbols with oscillator in description
+        if any(x in desc_lower for x in ("oscillator", "xo ", "xtal osc",
+                                          "clock osc", "mems osc")):
+            if "crystal" not in desc_lower:
+                return "oscillator"
         if any(x in val_lower for x in ["dsc6", "si5", "sg-", "asfl", "sit8", "asco"]):
             return "oscillator"
         # Passive crystals

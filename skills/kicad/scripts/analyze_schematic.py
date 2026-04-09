@@ -540,7 +540,8 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         # KH-083: Try lib_name first for correct lib_symbol lookup
         sym_def = (lib_symbols.get(lib_name) if lib_name else None) or lib_symbols.get(lib_id, {})
         is_power_sym = sym_def.get("is_power", False)
-        comp["type"] = classify_component(ref, lib_id, value, is_power_sym, footprint, in_bom=in_bom)
+        comp["type"] = classify_component(ref, lib_id, value, is_power_sym, footprint, in_bom=in_bom,
+                                          description=description)
         # Store ki_keywords for downstream analysis (e.g., P-channel detection)
         comp["keywords"] = sym_def.get("keywords", "")
         # Track power scope (global vs local) for connectivity
@@ -2507,7 +2508,8 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
             # Check value field for DNP indication
             if not comp["dnp"] and comp["value"].upper() in ("DNP", "DO NOT POPULATE", "DO NOT PLACE", "NP"):
                 comp["dnp"] = True
-            comp["type"] = classify_component(comp["reference"], comp["lib_id"], comp["value"], is_power, comp.get("footprint", ""))
+            comp["type"] = classify_component(comp["reference"], comp["lib_id"], comp["value"], is_power, comp.get("footprint", ""),
+                                              description=comp.get("description", ""))
             components.append(comp)
 
         # Hierarchical sheet block — extract subsheet filename
@@ -3049,11 +3051,17 @@ def _map_power_domains(ctx: AnalysisContext) -> dict:
                         "CSP", "CSN", "CS+", "CS-", "ISENSE", "IMON", "IOUT",
                         "SEN", "VS+", "VS-"}
     power_domains = {}
+    # KH-224: Accumulate rails/io_rails across all units of multi-unit ICs
+    _ref_rails: dict[str, set] = {}      # ref -> set of power rail nets
+    _ref_io_rails: dict[str, set] = {}   # ref -> set of IO rail nets
+    _ref_value: dict[str, str] = {}      # ref -> value (from first unit seen)
     ics = [c for c in components if c["type"] == "ic"]
     for ic in ics:
         ref = ic["reference"]
-        rails = set()
-        io_rails = set()
+        if ref not in _ref_value:
+            _ref_value[ref] = ic["value"]
+        rails = _ref_rails.setdefault(ref, set())
+        io_rails = _ref_io_rails.setdefault(ref, set())
         for pin in ic.get("pins", []):
             net_name, _ = pin_net.get((ref, pin["number"]), (None, None))
             if not net_name:
@@ -3070,9 +3078,11 @@ def _map_power_domains(ctx: AnalysisContext) -> dict:
                 rails.add(net_name)
                 if pname_upper in _io_pin_names:
                     io_rails.add(net_name)
+    for ref, rails in _ref_rails.items():
         if rails:
+            io_rails = _ref_io_rails.get(ref, set())
             power_domains[ref] = {
-                "value": ic["value"],
+                "value": _ref_value[ref],
                 "power_rails": sorted(rails),
                 "io_rails": sorted(io_rails) if io_rails else None,
             }
@@ -3081,11 +3091,15 @@ def _map_power_domains(ctx: AnalysisContext) -> dict:
     # Match IC power pin NAMES (VCC, VDD, etc.) against known_power_rails by string.
     _pwr_pin_to_rail = {"VCC", "VDD", "AVCC", "AVDD", "DVCC", "DVDD",
                         "VDDIO", "VIO", "VCCA", "VCCB", "VBUS"}
+    _fallback_rails: dict[str, set] = {}   # ref -> set of rails (aggregate across units)
+    _fallback_value: dict[str, str] = {}
     for ic in ics:
         ref = ic["reference"]
         if ref in power_domains:
             continue
-        rails = set()
+        if ref not in _fallback_value:
+            _fallback_value[ref] = ic["value"]
+        rails = _fallback_rails.setdefault(ref, set())
         for pin in ic.get("pins", []):
             pname = pin.get("name", "").upper()
             if pname not in _pwr_pin_to_rail:
@@ -3095,9 +3109,10 @@ def _map_power_domains(ctx: AnalysisContext) -> dict:
                 ru = rail.upper()
                 if pname == ru or pname in ru or ru.startswith(pname):
                     rails.add(rail)
+    for ref, rails in _fallback_rails.items():
         if rails:
             power_domains[ref] = {
-                "value": ic["value"],
+                "value": _fallback_value[ref],
                 "power_rails": sorted(rails),
                 "io_rails": None,
             }
@@ -5349,13 +5364,18 @@ def analyze_sleep_current(ctx: AnalysisContext,
     _get_two_pin_nets = ctx.get_two_pin_nets
 
     # --- Resistors between power and ground ---
+    _seen_refs = set()
     for comp in components:
         if comp["type"] != "resistor":
             continue
+        ref = comp["reference"]
+        if ref in _seen_refs:
+            continue
+        _seen_refs.add(ref)
         r_val = parse_value(comp.get("value", ""))
         if not r_val or r_val <= 0:
             continue
-        n1, n2 = _get_two_pin_nets(comp["reference"])
+        n1, n2 = _get_two_pin_nets(ref)
         if not n1 or not n2:
             continue
 
@@ -5371,7 +5391,7 @@ def analyze_sleep_current(ctx: AnalysisContext,
             if v_rail and v_rail > 0:
                 current_a = v_rail / r_val
                 entry = {
-                    "ref": comp["reference"],
+                    "ref": ref,
                     "value": comp["value"],
                     "type": "resistor_to_gnd",
                     "resistance_ohm": r_val,
@@ -5382,7 +5402,7 @@ def analyze_sleep_current(ctx: AnalysisContext,
                 if pwr_net in nets:
                     other_resistors = [
                         p["component"] for p in nets[pwr_net]["pins"]
-                        if p["component"] != comp["reference"]
+                        if p["component"] != ref
                         and comp_lookup.get(p["component"], {}).get("type") == "resistor"
                     ]
                     if other_resistors:
@@ -5403,7 +5423,7 @@ def analyze_sleep_current(ctx: AnalysisContext,
             # Pull-up: worst case current is V/R (pin driven low)
             current_a = v_rail / r_val
             rail_currents.setdefault(pwr_net, []).append({
-                "ref": comp["reference"],
+                "ref": ref,
                 "value": comp["value"],
                 "type": "pull_up",
                 "resistance_ohm": r_val,
@@ -5413,10 +5433,14 @@ def analyze_sleep_current(ctx: AnalysisContext,
             })
 
     # --- LEDs with series resistors ---
+    _seen_led_refs = set()
     for comp in components:
         if comp["type"] != "led":
             continue
         ref = comp["reference"]
+        if ref in _seen_led_refs:
+            continue
+        _seen_led_refs.add(ref)
         # Find nets connected to LED pins
         led_nets = [net for net, _ in ref_pins.get(ref, {}).values()]
 
@@ -6800,9 +6824,14 @@ def analyze_usb_compliance(ctx: AnalysisContext,
 
     # Find USB connectors
     usb_connectors = []
+    _seen_refs = set()
     for comp in components:
         if comp["type"] != "connector":
             continue
+        ref = comp["reference"]
+        if ref in _seen_refs:
+            continue
+        _seen_refs.add(ref)
         val = comp.get("value", "").upper()
         fp = comp.get("footprint", "").upper()
         lib = comp.get("lib_id", "").upper()
@@ -6810,7 +6839,7 @@ def analyze_usb_compliance(ctx: AnalysisContext,
         if "USB" in combined:
             is_type_c = any(k in combined for k in ("USB_C", "USBC", "TYPE-C", "TYPE_C", "TYPEC"))
             usb_connectors.append({
-                "ref": comp["reference"],
+                "ref": ref,
                 "value": comp.get("value", ""),
                 "is_type_c": is_type_c,
             })

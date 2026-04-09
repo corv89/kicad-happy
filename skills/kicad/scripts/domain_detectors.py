@@ -3563,6 +3563,17 @@ def detect_level_shifters(ctx: AnalysisContext) -> list[dict]:
 
         if not any(kw in combined for kw in _LEVEL_SHIFTER_KEYWORDS):
             continue
+
+        # KH-227: Exclude pure logic gates (not level shifters)
+        _val_lib = (comp.get("value", "") + " " + comp.get("lib_id", "")).lower()
+        _logic_gate_patterns = ("1g00", "1g02", "1g04", "1g08", "1g14", "1g32",
+                                "1g86", "2g00", "2g02", "2g04", "2g08", "2g14",
+                                "2g32", "2g86", "3g14",
+                                "inverter", "nand_gate", "nor_gate", "and_gate",
+                                "or_gate", "xor_gate", "schmitt")
+        if any(g in _val_lib for g in _logic_gate_patterns):
+            continue
+
         matched_refs.add(ref)
 
         pin_nets = _build_pin_net_map(ctx, ref)
@@ -4169,10 +4180,14 @@ def audit_led_circuits(ctx: AnalysisContext,
     addr_keywords = ("ws2812", "ws2813", "ws2815", "sk6812", "sk6805", "sk6803",
                      "apa102", "apa104", "sk9822", "ws2811", "neopixel", "dotstar")
 
+    _seen_refs = set()
     for comp in ctx.components:
         if comp["type"] != "led":
             continue
         ref = comp["reference"]
+        if ref in _seen_refs:
+            continue
+        _seen_refs.add(ref)
         if ref in driven_led_refs:
             continue
 
@@ -4472,8 +4487,10 @@ def detect_thermocouple_rtd(ctx: AnalysisContext) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _EN_PIN_NAMES = {"EN", "ENABLE", "ON", "ON/OFF", "CE", "SHDN", "SHUTDOWN",
-                 "EN1", "EN2", "EN3"}
-_PG_PIN_NAMES = {"PG", "PGOOD", "PG1", "PG2", "POWER_GOOD", "POK", "nPG"}
+                 "EN1", "EN2", "EN3",
+                 "~{EN}", "~{SHDN}", "~{ENABLE}", "~{CE}"}
+_PG_PIN_NAMES = {"PG", "PGOOD", "PG1", "PG2", "POWER_GOOD", "POK", "nPG",
+                 "~{PG}", "~{PGOOD}", "~{POWER_GOOD}", "~{POK}"}
 
 
 def validate_power_sequencing(ctx: AnalysisContext,
@@ -4512,6 +4529,30 @@ def validate_power_sequencing(ctx: AnalysisContext,
     source_en_nets: dict[str, str | None] = {}  # ref -> en_net
     source_pg_nets: dict[str, str | None] = {}  # ref -> pg_net
 
+    def _match_pin(pin_nets: dict[str, str], names: set[str]) -> str | None:
+        """Match a pin name from *pin_nets* against a set of canonical names.
+
+        KiCad 6+ overbar markup (``~{EN}``) is stripped before comparison so
+        that both ``EN`` and ``~{EN}`` match the canonical ``"EN"`` entry.
+        Trailing digits are also stripped for base-name matching (e.g.
+        ``EN1`` matches if ``"EN"`` is in *names*).
+        """
+        # First pass: direct lookup (fast path for exact matches)
+        for pname in names:
+            if pname in pin_nets:
+                return pin_nets[pname]
+        # Second pass: normalize raw pin names and match against base names
+        # KH-223: strip ~{ } overbar wrappers and retry
+        for raw_pname, net in pin_nets.items():
+            norm = raw_pname.replace("~{", "").replace("}", "")
+            if norm in names:
+                return net
+            # Also try with trailing digits stripped (EN1 → EN)
+            base = norm.rstrip("0123456789")
+            if base and base in names:
+                return net
+        return None
+
     for src in all_sources:
         ref = src["ref"]
         pin_nets = _build_pin_net_map(ctx, ref)
@@ -4519,18 +4560,11 @@ def validate_power_sequencing(ctx: AnalysisContext,
         # EN pin
         en_net = src.get("enable_net")  # load switches already have this
         if not en_net:
-            for pname in _EN_PIN_NAMES:
-                if pname in pin_nets:
-                    en_net = pin_nets[pname]
-                    break
+            en_net = _match_pin(pin_nets, _EN_PIN_NAMES)
         source_en_nets[ref] = en_net
 
         # PG pin
-        pg_net = None
-        for pname in _PG_PIN_NAMES:
-            if pname in pin_nets:
-                pg_net = pin_nets[pname]
-                break
+        pg_net = _match_pin(pin_nets, _PG_PIN_NAMES)
         source_pg_nets[ref] = pg_net
 
     # Build PG→EN cross-reference: which PG net drives which EN net
