@@ -64,6 +64,8 @@ _REGULATOR_VREF: dict[str, float] = {
     # Microchip
     "MIC29": 1.24,                                                # MIC29150/29300 Vref = 1.24V (datasheet)
     # Diodes Inc
+    "AP633": 0.8,                                                 # AP63356/AP63357 VFB = 0.8V (DS41949 Rev.3)
+    "AP632": 0.8,                                                 # AP63200/AP63203/AP63205 VFB = 0.8V (DS41326)
     "AP736": 0.8,                                                 # AP7365 adjustable VFB = 0.8V (datasheet)
     "AP73": 0.6,                                                  # AP7362/63 adjustable VFB = 0.6V (datasheet)
     "AP2112": 0.8,                                                # AP2112 adjustable Vref = 0.8V (datasheet)
