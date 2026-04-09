@@ -28,26 +28,11 @@ import sys
 # identity_fields: dotpath fields that uniquely identify a detection
 # value_fields: numeric/string fields to compare for changes
 
-SIGNAL_REGISTRY = {
-    "voltage_dividers": (["r_top.ref", "r_bottom.ref"], ["ratio", "vout_estimated"]),
-    "rc_filters": (["resistor.ref", "capacitor.ref"], ["cutoff_hz"]),
-    "lc_filters": (["inductor.ref", "capacitor.ref"], ["resonant_hz"]),
-    "power_regulators": (["ref"], ["vout_estimated", "topology"]),
-    "opamp_circuits": (["reference"], ["gain", "gain_dB", "configuration"]),
-    "crystal_circuits": (["reference"], ["frequency", "effective_load_pF"]),
-    "transistor_circuits": (["reference"], ["type"]),
-    "protection_devices": (["reference", "type"], ["protected_net"]),
-    "current_sense": (["shunt.ref"], ["max_current_50mV_A", "max_current_100mV_A"]),
-    "feedback_networks": (["r_top.ref", "r_bottom.ref"], ["ratio"]),
-    "bridge_circuits": (["topology"], []),
-    "rf_matching": (["antenna_ref"], []),
-    "bms_systems": (["bms_reference"], ["cell_count"]),
-    "decoupling_analysis": (["rail_net"], []),
-    "rf_chains": ([], []),
-    "ethernet_interfaces": (["phy_ref"], []),
-    "memory_interfaces": (["type"], []),
-    "isolation_barriers": (["isolator_ref"], []),
-}
+from detection_schema import SCHEMAS as _SCHEMAS
+
+# SIGNAL_REGISTRY is derived from the unified detection schema.
+# Kept as a module-level name for backward compat (validate_signal_registry, _diff_items).
+SIGNAL_REGISTRY = {dt: (s.identity_fields, s.value_fields) for dt, s in _SCHEMAS.items()}
 
 
 def validate_signal_registry(sample_output: dict) -> list[str]:

@@ -231,7 +231,8 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
 
                     for _trial in range(monte_carlo_n):
                         sampled_det = sample_detection(
-                            det, components, mc_rng, mc_distribution)
+                            det, components, mc_rng, mc_distribution,
+                            det_type=det_type)
                         mc_result, _mc_elapsed = _run_single_sim(
                             sampled_det, det_type, generator, evaluator,
                             mc_cir, mc_out, mc_log)
@@ -254,6 +255,7 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                         sampled_values_list,
                         _singular_type(det_type),
                         monte_carlo_n, mc_distribution, mc_seed,
+                        det_type=det_type,
                     )
                     result.pop("_det", None)
 

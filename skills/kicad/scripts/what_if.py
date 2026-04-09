@@ -51,19 +51,6 @@ class SweepSpec:
 # Value key -> unit name for display
 _VALUE_UNITS = {"ohms": "ohms", "farads": "F", "henries": "H"}
 
-# Derived fields to compare per detection type
-_DERIVED_FIELDS = {
-    "rc_filters": ["cutoff_hz"],
-    "lc_filters": ["resonant_hz", "impedance_ohms"],
-    "voltage_dividers": ["ratio"],
-    "feedback_networks": ["ratio"],
-    "opamp_circuits": ["gain", "gain_dB"],
-    "crystal_circuits": ["effective_load_pF"],
-    "current_sense": ["max_current_50mV_A", "max_current_100mV_A"],
-    "power_regulators": ["estimated_vout"],
-}
-
-
 # ---------------------------------------------------------------------------
 # Parse change specifications
 # ---------------------------------------------------------------------------
@@ -216,9 +203,10 @@ def _find_affected(signal_analysis: dict, changes: dict) -> list:
 # Apply changes and recalculate
 # ---------------------------------------------------------------------------
 
-def _apply_changes(det: dict, changes: dict, matched_refs: dict) -> dict:
+def _apply_changes(det: dict, changes: dict, matched_refs: dict,
+                   det_type: str = None) -> dict:
     """Deep-copy detection, apply value changes, recalculate derived fields."""
-    from spice_tolerance import _recalc_derived
+    from detection_schema import recalc_derived
 
     patched = copy.deepcopy(det)
 
@@ -234,7 +222,11 @@ def _apply_changes(det: dict, changes: dict, matched_refs: dict) -> dict:
             if "value" in obj:
                 obj["value"] = new_str
 
-    _recalc_derived(patched)
+    if det_type:
+        recalc_derived(patched, det_type)
+    else:
+        from spice_tolerance import _recalc_derived
+        _recalc_derived(patched)
     return patched
 
 
@@ -247,7 +239,8 @@ def _compare(original: dict, patched: dict, det_type: str) -> list:
 
     Returns list of {field, before, after, delta_pct} for changed fields.
     """
-    fields = _DERIVED_FIELDS.get(det_type, [])
+    from detection_schema import get_derived_field_names
+    fields = get_derived_field_names(det_type)
     # Also check common fields not in the registry
     for extra in ("cutoff_hz", "ratio", "resonant_hz", "gain", "gain_dB",
                   "impedance_ohms", "effective_load_pF", "estimated_vout",
@@ -379,7 +372,7 @@ def _run_sweep(analysis: dict, sweep: SweepSpec, fixed_changes: dict,
         affected = _find_affected(signal, step_changes)
         step_subcircuits = []
         for det_type, idx, det, matched in affected:
-            patched = _apply_changes(det, step_changes, matched)
+            patched = _apply_changes(det, step_changes, matched, det_type=det_type)
             deltas = _compare(det, patched, det_type)
             label = _get_det_label(det, det_type)
             step_subcircuits.append({
@@ -431,7 +424,7 @@ def _run_tolerance(analysis: dict, changes: dict, spice: bool = False) -> list:
     results = []
     for det_type, idx, det, matched in affected:
         # Nominal
-        patched_nom = _apply_changes(det, changes_legacy, matched)
+        patched_nom = _apply_changes(det, changes_legacy, matched, det_type=det_type)
         nominal_deltas = _compare(det, patched_nom, det_type)
         label = _get_det_label(det, det_type)
 
@@ -451,7 +444,7 @@ def _run_tolerance(analysis: dict, changes: dict, spice: bool = False) -> list:
                 ref, (val, vstr, tol) = tol_refs[i]
                 factor = (1 + tol) if (bits >> i) & 1 else (1 - tol)
                 corner_changes[ref] = (val * factor, vstr)
-            corner_patched = _apply_changes(det, corner_changes, matched)
+            corner_patched = _apply_changes(det, corner_changes, matched, det_type=det_type)
             corners.append(corner_patched)
 
         # For each derived field, find worst-case bounds
@@ -805,126 +798,17 @@ def _solve_fix(det: dict, det_type: str, target_field: str,
                target_value: float) -> list:
     """Compute ideal component values to achieve target.
 
-    Returns list of suggestions, each with E-series snapped alternatives.
+    Uses inverse solver from detection schema. Returns suggestions with
+    E-series snapped alternatives.
     """
+    from detection_schema import get_inverse_solver
     from kicad_utils import snap_to_e_series
 
-    suggestions = []
-    pi2 = 2.0 * math.pi
+    inverse = get_inverse_solver(det_type, target_field)
+    if inverse is None:
+        return []
 
-    if det_type in ("voltage_dividers", "feedback_networks") and target_field == "ratio":
-        r_top = det.get("r_top", {})
-        r_bot = det.get("r_bottom", {})
-        rt = r_top.get("ohms", 0)
-        rb = r_bot.get("ohms", 0)
-        if rt > 0 and 0 < target_value < 1:
-            # Fix R_top, solve R_bottom
-            ideal_rb = rt * target_value / (1 - target_value)
-            suggestions.append({
-                "ref": r_bot.get("ref", "R_bottom"), "field": "ohms",
-                "current": rb, "ideal": ideal_rb,
-                "anchor_ref": r_top.get("ref", "R_top"), "anchor_value": rt,
-            })
-            # Fix R_bottom, solve R_top
-            if rb > 0:
-                ideal_rt = rb * (1 - target_value) / target_value
-                suggestions.append({
-                    "ref": r_top.get("ref", "R_top"), "field": "ohms",
-                    "current": rt, "ideal": ideal_rt,
-                    "anchor_ref": r_bot.get("ref", "R_bottom"), "anchor_value": rb,
-                })
-
-    elif det_type == "rc_filters" and target_field == "cutoff_hz":
-        r = det.get("resistor", {})
-        c = det.get("capacitor", {})
-        rv = r.get("ohms", 0)
-        cv = c.get("farads", 0)
-        if rv > 0 and target_value > 0:
-            ideal_c = 1.0 / (pi2 * rv * target_value)
-            suggestions.append({
-                "ref": c.get("ref", "C"), "field": "farads",
-                "current": cv, "ideal": ideal_c,
-                "anchor_ref": r.get("ref", "R"), "anchor_value": rv,
-            })
-        if cv > 0 and target_value > 0:
-            ideal_r = 1.0 / (pi2 * cv * target_value)
-            suggestions.append({
-                "ref": r.get("ref", "R"), "field": "ohms",
-                "current": rv, "ideal": ideal_r,
-                "anchor_ref": c.get("ref", "C"), "anchor_value": cv,
-            })
-
-    elif det_type == "lc_filters" and target_field == "resonant_hz":
-        l = det.get("inductor", {})
-        c = det.get("capacitor", {})
-        lv = l.get("henries", 0)
-        cv = c.get("farads", 0)
-        if lv > 0 and target_value > 0:
-            ideal_c = 1.0 / ((pi2 * target_value) ** 2 * lv)
-            suggestions.append({
-                "ref": c.get("ref", "C"), "field": "farads",
-                "current": cv, "ideal": ideal_c,
-                "anchor_ref": l.get("ref", "L"), "anchor_value": lv,
-            })
-        if cv > 0 and target_value > 0:
-            ideal_l = 1.0 / ((pi2 * target_value) ** 2 * cv)
-            suggestions.append({
-                "ref": l.get("ref", "L"), "field": "henries",
-                "current": lv, "ideal": ideal_l,
-                "anchor_ref": c.get("ref", "C"), "anchor_value": cv,
-            })
-
-    elif det_type == "opamp_circuits" and target_field in ("gain", "gain_dB"):
-        target_gain = target_value
-        if target_field == "gain_dB":
-            target_gain = 10 ** (target_value / 20.0)
-        rf = det.get("feedback_resistor", {})
-        ri = det.get("input_resistor", {})
-        rfv = rf.get("ohms", 0)
-        riv = ri.get("ohms", 0)
-        config = det.get("configuration", "")
-        if riv > 0:
-            if "non-inverting" in config or "non_inverting" in config:
-                ideal_rf = riv * (abs(target_gain) - 1)
-            else:
-                ideal_rf = riv * abs(target_gain)
-            if ideal_rf > 0:
-                suggestions.append({
-                    "ref": rf.get("ref", "Rf"), "field": "ohms",
-                    "current": rfv, "ideal": ideal_rf,
-                    "anchor_ref": ri.get("ref", "Ri"), "anchor_value": riv,
-                })
-
-    elif det_type == "crystal_circuits" and target_field == "effective_load_pF":
-        caps = det.get("load_caps", [])
-        stray = det.get("stray_capacitance_pF", 3.0)
-        if len(caps) >= 2 and target_value > stray:
-            ideal_pf = 2 * (target_value - stray)
-            ideal_f = ideal_pf * 1e-12
-            for cap in caps[:2]:
-                suggestions.append({
-                    "ref": cap.get("ref", "C"), "field": "farads",
-                    "current": cap.get("farads", 0), "ideal": ideal_f,
-                    "anchor_ref": None, "anchor_value": None,
-                })
-
-    elif det_type == "current_sense":
-        shunt = det.get("shunt", {})
-        rv = shunt.get("ohms", 0)
-        if target_field == "max_current_100mV_A" and target_value > 0:
-            ideal_r = 0.100 / target_value
-            suggestions.append({
-                "ref": shunt.get("ref", "R"), "field": "ohms",
-                "current": rv, "ideal": ideal_r,
-                "anchor_ref": None, "anchor_value": None,
-            })
-        elif target_field == "max_current_50mV_A" and target_value > 0:
-            ideal_r = 0.050 / target_value
-            suggestions.append({
-                "ref": shunt.get("ref", "R"), "field": "ohms",
-                "current": rv, "ideal": ideal_r,
-                "anchor_ref": None, "anchor_value": None,
-            })
+    suggestions = inverse(det, target_field, target_value)
 
     # Add E-series snapped values
     for s in suggestions:
@@ -1118,7 +1002,8 @@ def main():
         det = dets[fix_idx]
 
         if args.target is not None:
-            fields = _DERIVED_FIELDS.get(fix_det_type, [])
+            from detection_schema import get_derived_field_names
+            fields = get_derived_field_names(fix_det_type)
             target_field = fields[0] if fields else "ratio"
             target_value = args.target
         else:
@@ -1207,7 +1092,7 @@ def main():
     # Apply changes to each affected detection
     patched_dets = []
     for det_type, idx, det, matched in affected:
-        patched = _apply_changes(det, changes_legacy, matched)
+        patched = _apply_changes(det, changes_legacy, matched, det_type=det_type)
         patched_dets.append(patched)
 
     # Build before/after comparisons
