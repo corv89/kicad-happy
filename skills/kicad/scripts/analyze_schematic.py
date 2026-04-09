@@ -7187,24 +7187,49 @@ def analyze_inrush_current(ctx: AnalysisContext,
     return result
 
 
-def detect_sub_sheet(root_tree: list) -> bool:
+def detect_sub_sheet(root_tree: list, file_path: str = None) -> bool:
     """Detect whether a parsed schematic is a sub-sheet (not the root).
 
-    A file is likely a sub-sheet if it has hierarchical_label elements
-    but no (symbol_instances) section and no (sheet) blocks.
-    Root schematics that reference sub-sheets always have (sheet) blocks,
-    and KiCad 7+ roots always have (symbol_instances).
+    Uses a multi-tier heuristic (KH-228):
+      1. symbol_instances present → ROOT (KiCad 7+ roots always have this)
+      2. sheet blocks present → ROOT (files that reference sub-sheets)
+      3. .kicad_pro stem matches file stem → ROOT; doesn't match → SUB-SHEET
+      4. hierarchical_label presence → SUB-SHEET (original heuristic)
+      5. Default: not a sub-sheet (standalone single-sheet design)
     """
+    # Tier 1: symbol_instances is definitive for KiCad 7+ roots
     has_symbol_instances = find_first(root_tree, "symbol_instances") is not None
     if has_symbol_instances:
         return False
 
+    # Tier 2: Files with (sheet ...) blocks reference other sheets → root
     has_sheet_blocks = len(find_all(root_tree, "sheet")) > 0
     if has_sheet_blocks:
         return False
 
+    # Tier 3: .kicad_pro stem matching (reliable across all KiCad versions)
+    if file_path:
+        import os
+        parent_dir = os.path.dirname(os.path.abspath(file_path))
+        file_stem = os.path.splitext(os.path.basename(file_path))[0]
+        try:
+            for fname in os.listdir(parent_dir):
+                if fname.endswith('.kicad_pro'):
+                    pro_stem = fname[:-len('.kicad_pro')]
+                    if pro_stem == file_stem:
+                        return False  # This file IS the root
+                    else:
+                        return True   # A project exists but this isn't the root → sub-sheet
+        except OSError:
+            pass
+
+    # Tier 4: hierarchical_label presence (original heuristic)
     has_hier_labels = any(True for _ in find_all(root_tree, "hierarchical_label"))
-    return has_hier_labels
+    if has_hier_labels:
+        return True
+
+    # Tier 5: Ambiguous — default to not a sub-sheet
+    return False
 
 
 def parse_all_sheets(root_path: str, root_tree: list | None = None,
@@ -7618,7 +7643,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
     # Parse root sheet and all sub-sheets recursively via parse_all_sheets().
     root_tree = parse_file(path)
 
-    is_sub = detect_sub_sheet(root_tree)
+    is_sub = detect_sub_sheet(root_tree, file_path=path)
     hierarchy_ctx = None
     hierarchy_warning = None
     _root_si_override = None  # symbol_instances from root, for reference correction
