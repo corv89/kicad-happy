@@ -4833,3 +4833,165 @@ def validate_power_sequencing(ctx: AnalysisContext,
         result["issues"] = issues
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Connector Ground Pin Distribution Audit
+# ---------------------------------------------------------------------------
+
+def audit_connector_ground_distribution(ctx: AnalysisContext) -> list[dict]:
+    """Check ground pin distribution on multi-pin connectors.
+
+    Professional rule: ground pins every 2-3 signal pins for EMI control.
+    Flags connectors with >4 signal pins per ground pin or no ground pins.
+    """
+    results: list[dict] = []
+    for comp in ctx.components:
+        if comp.get("type") != "connector":
+            continue
+        pin_nets = comp.get("pin_nets", {})
+        # Also build from ref_pins if pin_nets not populated on the component
+        if not pin_nets:
+            rp = ctx.ref_pins.get(comp["reference"], {})
+            pin_nets = {pn: net for pn, (net, _) in rp.items() if net}
+        if len(pin_nets) < 5:
+            continue
+
+        ref = comp["reference"]
+        gnd_count = 0
+        signal_count = 0
+        for pin_num, net in pin_nets.items():
+            if isinstance(net, tuple):
+                net = net[0]  # handle (net_name, pin_info) tuples
+            if not net:
+                continue
+            if ctx.is_ground(net):
+                gnd_count += 1
+            elif not ctx.is_power_net(net):
+                signal_count += 1
+
+        if signal_count == 0:
+            continue
+
+        if gnd_count == 0:
+            results.append({
+                "ref": ref, "value": comp.get("value", ""),
+                "total_pins": len(pin_nets), "ground_pins": 0,
+                "signal_pins": signal_count,
+                "status": "warning",
+                "detail": f"{ref}: {len(pin_nets)}-pin connector has no ground pins",
+            })
+        else:
+            ratio = signal_count / max(gnd_count, 1)
+            if ratio > 4:
+                results.append({
+                    "ref": ref, "value": comp.get("value", ""),
+                    "total_pins": len(pin_nets), "ground_pins": gnd_count,
+                    "signal_pins": signal_count, "signal_per_ground": round(ratio, 1),
+                    "status": "advisory",
+                    "detail": (f"{ref}: {ratio:.0f} signal pins per ground pin "
+                               f"(recommended: \u22643 for EMI control)"),
+                })
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Certification Suggestion
+# ---------------------------------------------------------------------------
+
+def suggest_certifications(ctx: AnalysisContext, signal_analysis: dict) -> list[dict]:
+    """Suggest applicable certifications based on design characteristics.
+
+    Cross-references existing domain detections to identify likely
+    required standards/certifications.
+    """
+    suggestions: list[dict] = []
+
+    # Wireless modules / RF → FCC/CE/IC
+    rf_chains = signal_analysis.get("rf_chains", [])
+    if rf_chains:
+        suggestions.append({
+            "standard": "FCC Part 15",
+            "region": "US",
+            "reason": f"RF transceiver detected ({len(rf_chains)} chain(s))",
+            "components": [c.get("reference", c.get("ref", "")) for c in rf_chains[:3]],
+        })
+        suggestions.append({
+            "standard": "CE RED (Radio Equipment Directive)",
+            "region": "EU",
+            "reason": "RF transceiver detected",
+        })
+
+    # WiFi/BT modules
+    for comp in ctx.components:
+        val_lib = (comp.get("value", "") + " " + comp.get("lib_id", "")).lower()
+        if any(k in val_lib for k in ("esp32", "esp8266", "nrf52", "cc254",
+                                       "wl18", "cyw43", "ap621", "bcm43")):
+            if not any(s["standard"] == "FCC Part 15" for s in suggestions):
+                suggestions.append({
+                    "standard": "FCC Part 15",
+                    "region": "US",
+                    "reason": f"Wireless module detected: {comp['reference']}",
+                })
+            break
+
+    # Battery/charger → safety standards
+    battery_chargers = signal_analysis.get("battery_chargers", [])
+    bms_systems = signal_analysis.get("bms_systems", [])
+    if battery_chargers or bms_systems:
+        suggestions.append({
+            "standard": "IEC 62133 / UL 2054",
+            "region": "International",
+            "reason": "Battery charging/management circuitry detected",
+        })
+        suggestions.append({
+            "standard": "UN 38.3",
+            "region": "International (shipping)",
+            "reason": "Lithium battery transport safety testing",
+        })
+
+    # USB → USB-IF compliance
+    usb_compliance = signal_analysis.get("usb_compliance", [])
+    if usb_compliance:
+        suggestions.append({
+            "standard": "USB-IF Compliance",
+            "region": "International",
+            "reason": "USB interface detected",
+        })
+
+    # Ethernet → EMC
+    ethernet = signal_analysis.get("ethernet_interfaces", [])
+    if ethernet:
+        suggestions.append({
+            "standard": "IEEE 802.3 / CISPR 32",
+            "region": "International",
+            "reason": "Ethernet interface detected — EMC compliance required",
+        })
+
+    # High voltage detection (>60V)
+    rail_voltages = signal_analysis.get("rail_voltages", {})
+    max_voltage = max((v for v in rail_voltages.values()
+                       if isinstance(v, (int, float))), default=0)
+    if max_voltage > 60:
+        suggestions.append({
+            "standard": "IEC 62368-1 (Safety)",
+            "region": "International",
+            "reason": f"High voltage detected: {max_voltage:.0f}V (>60V safety threshold)",
+        })
+
+    # General EMC (all products)
+    if not any(s["standard"].startswith("FCC") for s in suggestions):
+        suggestions.append({
+            "standard": "FCC Part 15 Subpart B (Unintentional Radiator)",
+            "region": "US",
+            "reason": "All electronic devices require unintentional radiator compliance",
+        })
+    if not any("CISPR" in s["standard"] or "CE" in s["standard"]
+               for s in suggestions):
+        suggestions.append({
+            "standard": "CISPR 32 / CE EMC Directive",
+            "region": "EU",
+            "reason": "All electronic devices require EMC compliance for EU market",
+        })
+
+    return suggestions

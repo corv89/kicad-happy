@@ -71,6 +71,7 @@ from signal_detectors import (
     _merge_series_dividers,
 )
 from domain_detectors import (
+    audit_connector_ground_distribution,
     audit_esd_protection,
     audit_led_circuits,
     detect_adc_circuits,
@@ -98,6 +99,7 @@ from domain_detectors import (
     detect_rtc_circuits,
     detect_sensor_interfaces,
     detect_thermocouple_rtd,
+    suggest_certifications,
     validate_power_sequencing,
 )
 
@@ -650,6 +652,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     thermocouple_rtd = detect_thermocouple_rtd(ctx)
     power_sequencing_validation = validate_power_sequencing(
         ctx, power_regulators, power_path, reset_supervisors)
+    connector_ground_audit = audit_connector_ground_distribution(ctx)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -741,7 +744,13 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "led_audit": led_audit,
         "thermocouple_rtd": thermocouple_rtd,
         "power_sequencing_validation": power_sequencing_validation,
+        "connector_ground_audit": connector_ground_audit,
     }
+
+    # Certification suggestions cross-reference all domain detections
+    cert_suggestions = suggest_certifications(ctx, results)
+    if cert_suggestions:
+        results["suggested_certifications"] = cert_suggestions
 
     results["design_observations"] = detect_design_observations(ctx, results)
 
@@ -8153,6 +8162,37 @@ def analyze_schematic(path: str, project_root: str | None = None,
         missing_info["heuristic_vref"] = heuristic_vref
     if missing_info:
         result["missing_info"] = missing_info
+
+    # BOM lock verification (production readiness)
+    _bom_real = [c for c in all_components
+                 if c.get("type") not in ("power_symbol", "power_flag", "flag",
+                                           "mounting_hole", "fiducial",
+                                           "test_point", "graphic")
+                 and not c.get("reference", "").startswith("#")
+                 and c.get("in_bom", True) and not c.get("dnp", False)]
+    # Deduplicate multi-unit symbols
+    _bom_seen = set()
+    _bom_dedup = []
+    for _bc in _bom_real:
+        if _bc["reference"] not in _bom_seen:
+            _bom_seen.add(_bc["reference"])
+            _bom_dedup.append(_bc)
+    _bom_real = _bom_dedup
+    _bom_no_mpn = [c["reference"] for c in _bom_real if not c.get("mpn")]
+    _bom_generic = [c["reference"] for c in _bom_real
+                    if c.get("value", "") in ("", "~", "DNP", "DNF", "NC")
+                    or c.get("value", "").startswith("?")]
+    _bom_lock_pct = round((1 - len(_bom_no_mpn) / max(len(_bom_real), 1)) * 100)
+    result["bom_lock"] = {
+        "total_bom_components": len(_bom_real),
+        "components_with_mpn": len(_bom_real) - len(_bom_no_mpn),
+        "missing_mpn": _bom_no_mpn[:20],
+        "missing_mpn_count": len(_bom_no_mpn),
+        "generic_values": _bom_generic[:10],
+        "lock_pct": _bom_lock_pct,
+        "status": "pass" if _bom_lock_pct >= 95 else
+                  "warning" if _bom_lock_pct >= 70 else "fail",
+    }
 
     # Add stable detection IDs for diff matching
     from detection_schema import compute_detection_id as _compute_det_id

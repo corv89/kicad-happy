@@ -2934,6 +2934,47 @@ def extract_silkscreen(root: list, footprints: list[dict]) -> dict:
     if documentation_warnings:
         result["documentation_warnings"] = documentation_warnings
 
+    # ---- Fab notes completeness ----
+    _fab_all_text = " ".join(t.get("text", "") for t in fab_texts).lower()
+    _fab_notes_checklist = {
+        "ipc_class": bool(re.search(r'ipc[-\s]*\d{4}|class\s*[123]', _fab_all_text)),
+        "surface_finish": any(k in _fab_all_text for k in
+                              ("enig", "hasl", "osp", "immersion", "surface finish")),
+        "board_thickness": bool(re.search(r'\d+\.?\d*\s*mm.*thick|thickness', _fab_all_text)),
+        "copper_weight": any(k in _fab_all_text for k in
+                             ("1oz", "2oz", "1 oz", "2 oz", "copper weight", "35um", "70um")),
+        "solder_mask": any(k in _fab_all_text for k in
+                           ("solder mask", "soldermask", "mask color", "green", "black", "white", "blue")),
+        "material": any(k in _fab_all_text for k in
+                        ("fr4", "fr-4", "rogers", "isola", "material")),
+    }
+    _fab_missing = [k.replace("_", " ") for k, v in _fab_notes_checklist.items() if not v]
+    result["fab_notes_completeness"] = {
+        "checks": _fab_notes_checklist,
+        "missing": _fab_missing,
+        "completeness_pct": round(sum(_fab_notes_checklist.values()) / len(_fab_notes_checklist) * 100),
+        "status": "pass" if not _fab_missing else "warning",
+    }
+
+    # ---- Silkscreen completeness ----
+    _total_refs = refs_visible + refs_hidden
+    _silk_checks = {
+        "revision_marking": has_revision,
+        "board_name": has_board_name,
+        "ref_designators_visible": (refs_visible / _total_refs >= 0.9) if _total_refs > 0 else False,
+        "connector_labels": len(connectors_without_labels) == 0,
+        "polarity_markers": not any(
+            w["type"] == "polarity_reminder" for w in documentation_warnings
+        ),
+    }
+    _silk_missing = [k.replace("_", " ") for k, v in _silk_checks.items() if not v]
+    result["silkscreen_completeness"] = {
+        "checks": _silk_checks,
+        "missing": _silk_missing,
+        "completeness_pct": round(sum(_silk_checks.values()) / len(_silk_checks) * 100),
+        "status": "pass" if not _silk_missing else "warning",
+    }
+
     return result
 
 
