@@ -1080,12 +1080,13 @@ def _format_trends(trends, n_runs):
                 vals = [f"{v:.4g}" for _, v in datapoints]
                 first_val = datapoints[0][1]
                 last_val = datapoints[-1][1]
+                val_chain = " \u2192 ".join(vals)
                 if first_val != 0:
                     pct = (last_val - first_val) / abs(first_val) * 100
                     arrow = "\u2191" if pct > 1 else "\u2193" if pct < -1 else "\u2192"
-                    lines.append(f"    {identity} {field}: {' \u2192 '.join(vals)} ({arrow}{abs(pct):.1f}%)")
+                    lines.append(f"    {identity} {field}: {val_chain} ({arrow}{abs(pct):.1f}%)")
                 else:
-                    lines.append(f"    {identity} {field}: {' \u2192 '.join(vals)}")
+                    lines.append(f"    {identity} {field}: {val_chain}")
         lines.append("")
 
     return "\n".join(lines)
