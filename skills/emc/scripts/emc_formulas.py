@@ -11,7 +11,15 @@ References:
 """
 
 import math
+import os
+import sys
 from typing import List, Tuple, Optional, Dict
+
+# Add kicad scripts to path for shared imports
+_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              '..', '..', 'kicad', 'scripts')
+if os.path.isdir(_kicad_scripts) and os.path.abspath(_kicad_scripts) not in sys.path:
+    sys.path.insert(0, os.path.abspath(_kicad_scripts))
 
 # Physical constants
 C_0 = 2.998e8          # Speed of light in vacuum (m/s)
@@ -550,8 +558,8 @@ def cap_value_for_srf(target_srf_hz: float, esl_h: float) -> float:
     return 1.0 / (4 * math.pi**2 * target_srf_hz**2 * esl_h)
 
 
-# E12 standard capacitor values (one decade)
-_E12_DECADE = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2]
+# E12 standard capacitor values — imported from shared kicad_utils
+from kicad_utils import E12_DECADE as _E12_DECADE, snap_to_e_series
 
 
 def round_to_e12(value: float) -> float:
@@ -563,12 +571,8 @@ def round_to_e12(value: float) -> float:
     """
     if value <= 0:
         return 0.0
-    # Normalize to 1-10 range
-    decade = 10 ** math.floor(math.log10(value))
-    normalized = value / decade
-    # Find nearest E12 value
-    best = min(_E12_DECADE, key=lambda e: abs(e - normalized))
-    return best * decade
+    snapped, _ = snap_to_e_series(value, "E12")
+    return snapped
 
 
 def cap_impedance_at_freq(freq_hz: float, capacitance_f: float,

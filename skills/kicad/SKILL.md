@@ -374,26 +374,34 @@ Models each power component (LDO, switching regulator, shunt resistor) as a poin
 
 ### Interactive "What-If" Parameter Sweep
 
-Instantly see the impact of component value changes on circuit behavior without re-running the full analyzer. Use when the user says "what if I change", "what happens if", "try a different value", "swap R5 to 4.7k", "parameter sweep", or wants to explore design trade-offs.
+Instantly see the impact of component value changes on circuit behavior without re-running the full analyzer. Use when the user says "what if I change", "what happens if", "try a different value", "swap R5 to 4.7k", "parameter sweep", "what value gives me X", or wants to explore design trade-offs. Full reference: [`references/what-if.md`](references/what-if.md).
 
 ```bash
-# Change one component
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k
+# Single value change
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --text
 
-# Change multiple components
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k C3=22n
+# Sweep: comma list or log range
+python3 <skill-path>/scripts/what_if.py analysis.json R5=1k,2.2k,4.7k,10k --text
+python3 <skill-path>/scripts/what_if.py analysis.json R5=1k..100k:10 --text
 
-# Include SPICE re-simulation on affected subcircuits
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --spice
+# Tolerance corner analysis (±5% worst-case)
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k+-5% C3=100n+-10% --text
+
+# Find the right value: inverse solver with E-series snapping
+python3 <skill-path>/scripts/what_if.py analysis.json --fix voltage_dividers[0] --target 3.3 --text
+python3 <skill-path>/scripts/what_if.py analysis.json --fix rc_filters[0] --target 1000 --text
+
+# EMC impact preview
+python3 <skill-path>/scripts/what_if.py analysis.json C3=1u --emc --text
+
+# SPICE re-simulation on affected subcircuits
+python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --spice --text
 
 # Export patched JSON for further analysis (EMC, thermal, diff)
 python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --output patched.json
-
-# Human-readable output
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --text
 ```
 
-Finds all subcircuit detections referencing the changed component(s), patches values, recalculates derived fields (filter cutoff, divider ratio, opamp gain, etc.), and shows before/after comparison with percentage deltas. The `--spice` flag runs SPICE simulations on both original and patched circuits for dynamic verification. The `--output` flag exports a patched analysis JSON that can be fed to EMC, thermal, or diff analysis.
+Patches component values in the analyzer JSON, recalculates derived fields (filter cutoff, divider ratio, opamp gain, crystal load, current sense range, regulator Vout), and shows before/after comparison with percentage deltas. Supports single changes, multi-point sweeps (comma or log-range), tolerance corner analysis, inverse fix suggestions with E-series snapping, EMC impact preview, PCB parasitic awareness (auto-discovered or via `--pcb`), and SPICE re-verification.
 
 ### Component Lifecycle & Temperature Audit
 
