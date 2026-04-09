@@ -273,13 +273,15 @@ GND pour clearance: Measure the actual clearance between each touch pad and the 
 
 ### Antenna Layout
 [Include when ANT-prefixed footprints, antenna lib_id patterns, or RF antenna footprints are detected, OR when wireless modules (ESP32, nRF, etc.) with integrated/PCB antennas are present]
-- Keepout zone verification: check that copper keepout zones exist on ALL relevant layers under the antenna element. Report the keepout zone coordinates and layer coverage explicitly: "Keepout zone on F.Cu+B.Cu: (x1, y1) to (x2, y2)." Cross-reference dimensions against the manufacturer's reference layout — many antenna datasheets/app notes specify exact keepout areas.
+- Keepout zone verification: check the `keepout_zones` section in the PCB analyzer output for restriction areas near the antenna footprint. Report the keepout zone coordinates, layer coverage, and restriction types explicitly: "Keepout zone on F.Cu+B.Cu: (x1, y1) to (x2, y2), restrictions: no copper pour, no tracks." The `nearby_components` field shows which components are near each keepout zone. Cross-reference dimensions against the manufacturer's reference layout — many antenna datasheets/app notes specify exact keepout areas.
 - Ground plane termination: verify the ground plane ends at the antenna feed point and does not extend under the radiating element
 - Matching network placement: components between antenna and RF IC should be close to the antenna with controlled-impedance traces
 [If no keepout zones are defined around the antenna, flag as WARNING. For wireless modules (ESP32, nRF, etc.), the module vendor's reference design is the authoritative source for keepout dimensions — these are often the single most important layout constraint for RF performance. Always cite the specific antenna/module reference when verifying keepout adequacy: "Correct per Espressif guidelines" or "Matches nRF52840 reference layout."]
 
 ### Decoupling Placement
-[Cap-to-IC distances for critical components, flag caps too far from IC power pins. Verify capacitor values and placement distances against each IC's datasheet requirements — many ICs specify maximum distance, minimum capacitance, and ESR limits for input/output decoupling. Flag any deviation from datasheet recommendations.]
+[Cap-to-IC distances for critical components, flag caps too far from IC power pins. Verify capacitor values and placement distances against each IC's datasheet requirements — many ICs specify maximum distance, minimum capacitance, and ESR limits for input/output decoupling. Flag any deviation from datasheet recommendations.
+
+ESD protection ICs (entries with `category: "esd_bypass"` in the decoupling output) require a low-impedance bypass path for clamping. Their bypass cap should be within 3mm — flag WARNING if >5mm, SUGGESTION if 3-5mm. Common ESD ICs: USBLC6-2SC6, TPD4E05U06, PRTR5V0U2X, IP4220CZ6.]
 
 ### Current Capacity
 [Per-net trace/via current capacity vs estimated load, narrow signal net warnings]

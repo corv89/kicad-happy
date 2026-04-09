@@ -954,6 +954,43 @@ def extract_zones(root: list) -> tuple[list[dict], ZoneFills]:
     return zones, zone_fills
 
 
+def _extract_keepout_zones(zones: list[dict],
+                           footprints: list[dict]) -> list[dict]:
+    """Surface keepout/rule areas as a dedicated section.
+
+    Filters keepout zones from the main zones array and enriches each
+    with nearby component references (footprints within 5mm of the zone
+    bounding box).
+    """
+    keepouts = []
+    for z in zones:
+        if not z.get('is_keepout'):
+            continue
+        bbox = z.get('outline_bbox')
+        entry = {
+            'name': z.get('name', ''),
+            'layers': z.get('layers', []),
+            'restrictions': z.get('keepout', {}),
+            'bounding_box': bbox,
+            'area_mm2': z.get('outline_area_mm2', 0),
+        }
+        # Find footprints near this keepout zone
+        if bbox and len(bbox) == 4:
+            margin = 5.0  # mm
+            bx_min, by_min, bx_max, by_max = bbox
+            nearby = []
+            for fp in footprints:
+                fx = fp.get('x', 0)
+                fy = fp.get('y', 0)
+                if (bx_min - margin <= fx <= bx_max + margin
+                        and by_min - margin <= fy <= by_max + margin):
+                    nearby.append(fp.get('reference', ''))
+            entry['nearby_components'] = sorted(
+                r for r in nearby if r)
+        keepouts.append(entry)
+    return keepouts
+
+
 def extract_board_outline(root: list) -> dict:
     """Extract board outline from Edge.Cuts layer."""
     edges = []
@@ -1556,6 +1593,42 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
                 "nearby_caps": nearby,
                 "closest_cap_mm": nearby[0]["distance_mm"],
             })
+
+    # ESD protection ICs need bypass caps within 3mm for clamping
+    esd_ics = [fp for fp in footprints
+               if re.match(r'^(U|IC)\d', fp.get("reference", ""))
+               and any(fp.get("value", "").lower().startswith(p)
+                       for p in _ESD_TVS_PREFIXES)]
+    for ic in esd_ics:
+        ix, iy = ic["x"], ic["y"]
+        nearby = []
+        for cap in caps:
+            cx, cy = cap["x"], cap["y"]
+            dist = math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2)
+            if dist <= 10.0:
+                ic_nets = {p.get("net_name") for p in ic.get("pads", [])
+                           if p.get("net_name")}
+                cap_nets = {p.get("net_name") for p in cap.get("pads", [])
+                            if p.get("net_name")}
+                shared = (ic_nets & cap_nets) - {""}
+                nearby.append({
+                    "cap": cap["reference"],
+                    "value": cap.get("value", ""),
+                    "distance_mm": round(dist, 2),
+                    "shared_nets": sorted(shared) if shared else [],
+                    "same_side": cap["layer"] == ic["layer"],
+                })
+        if nearby:
+            nearby.sort(key=lambda n: n["distance_mm"])
+            results.append({
+                "ic": ic["reference"],
+                "value": ic.get("value", ""),
+                "layer": ic["layer"],
+                "category": "esd_bypass",
+                "nearby_caps": nearby,
+                "closest_cap_mm": nearby[0]["distance_mm"],
+            })
+
     return results
 
 
@@ -4561,6 +4634,7 @@ def analyze_pcb(path: str, *, proximity: bool = False,
             **({"via_analysis": via_analysis} if via_analysis else {}),
         },
         "zones": zones,
+        "keepout_zones": _extract_keepout_zones(zones, footprints),
         "connectivity": connectivity,
         "net_lengths": net_lengths,
     }
@@ -4661,7 +4735,8 @@ def _get_schema():
             "_analysis": "via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}, via_current: [warning]",
             "_with_full_flag": "vias: [{x, y: float, layers: [string], size, drill: float, net: int|null}]",
         },
-        "zones": "[{net: int (net ID), net_name: string (net name), priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool}]",
+        "zones": "[{net: int (net ID), net_name: string (net name), priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool, is_keepout: bool (opt), keepout: {tracks, vias, pads, copperpour, footprints} (opt)}]",
+        "keepout_zones": "[{name, layers: [string], restrictions: {tracks, vias, pads, copperpour, footprints}, bounding_box: [min_x, min_y, max_x, max_y], area_mm2: float, nearby_components: [string]}]",
         "connectivity": {"routing_complete": "bool", "unrouted_count": "int", "unconnected_pads": "[{reference, pad, expected_net}]"},
         "net_lengths": "{net_name: {track_length_mm: float, via_count: int, layer_transitions: int}}",
         "_optional_sections": "power_net_routing, decoupling_placement, ground_domains, current_capacity, thermal_analysis, placement_analysis, trace_proximity (--proximity), dfm, tombstoning_risk, thermal_pad_vias, copper_presence",
