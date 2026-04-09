@@ -12,73 +12,72 @@ Point your agent at a KiCad project and it does the rest — parses every schema
 
 > "Analyze my KiCad project at `hardware/rev2/`"
 
-Here's a condensed example from a real 6-layer BLDC motor controller (187 components). The agent found all of this automatically:
+Here's a condensed example from an open-source robot controller board. The agent found all of this automatically:
 
-**It builds your power tree** — tracing every regulator from input to load, computing output voltages from feedback dividers, and flagging when the math doesn't match:
+**It builds your power tree** — tracing every regulator from input to load, computing output voltages from feedback dividers:
 
 ```
-V+ (10-54V motor bus, TVS protected)
-├── MAX17760 buck → +12V (feedback: 226k/16.2k, Vref=1.0V → Vout=14.95V) ⚠️
-│   └── TPS629203 → +5V → TPS629203 → +3.3V
-├── DRV8353 gate driver (PVDD = V+ direct)
-└── 3-Phase Bridge: 6x FDMT80080DC (80V/80A)
-    └── 36x 4.7uF 100V bulk caps = 169.2uF
+VBUS (USB-C / battery input, fused)
+├── AP63357 buck (500kHz switching) → 5V
+│   └── Feedback: R8/R9 ratio=0.155 → Vout=3.87V
+│       Power dissipation: ~0.15W (85% efficiency assumed)
+└── RT9080-3.3 LDO → 3.3V
+    └── Decoupling: 16 caps, 10.8µF total
 ```
 
 **It identifies every subcircuit** — not just passives, but the functional blocks and how they connect:
 
-| Subcircuit  | Details                                                                                            |
-| ----------- | -------------------------------------------------------------------------------------------------- |
-| Motor drive | 6 FETs, gate driver, per-phase current sense (0.5mΩ), 3x matched RC filters (22Ω + 1nF = 7.23 MHz) |
-| Buses       | 2x SPI, CAN with 120Ω termination, RS-422 differential                                             |
-| Protection  | TVS on V+ input (51V standoff matches bus spec), ground domain separation with net ties            |
-| Sensing     | Battery voltage divider (100k/4.7k → 54V max reads as 2.43V), FET temp NTC                         |
+| Subcircuit  | Details                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| Motor drive | 9x P-MOSFET switches (DMG2305UX), transistor-driven H-bridges                                |
+| Filters     | RC signal conditioning at 16Hz, 169Hz, and 1.03kHz (input filtering and debounce)             |
+| Lighting    | WS2812B addressable LED chain on GPIO, 60mA estimated draw                                    |
+| Sensors     | Onboard sensor interface, crystal oscillator with load cap validation                         |
+| Protection  | ESD clamp on USB D+/D-, dual input fuses (0.75A signal, 2.5A motor)                          |
 
-**It cross-references the PCB** — checking that the layout actually supports what the schematic promises:
-
-```
-Board: 56.0 x 56.0 mm, 6-layer, 1.55mm stackup
-Routing: 100% complete, 0 unrouted nets
-
-Thermal pad vias:
-  Phase FETs: 21-85 vias per pad — good
-  STM32 QFN-48: 14 vias — WARNING (recommended: 16)
-  Inductor L2:   4 vias — INSUFFICIENT (recommended: 9)
-```
-
-**It tells you what needs attention** — and what doesn't:
-
-| Severity   | Issue                                                                                        |
-| ---------- | -------------------------------------------------------------------------------------------- |
-| WARNING    | Feedback divider computes to 14.95V, not 12V — Vref heuristic may be wrong, verify datasheet |
-| WARNING    | STM32 thermal pad has 14 vias (need 16) — elevated die temp under load                       |
-| WARNING    | Inductor L2 has 4 thermal vias (need 9) — carries the full +12V rail current                 |
-| SUGGESTION | No test point on V+ motor bus — add for bring-up measurements                                |
-
-**What looks good:** 170µF bus capacitance across 38 caps, proper GND/GNDPWR domain separation, CAN bus termination verified, 100% MPN coverage across all components, zero DFM violations, JLCPCB standard tier compatible.
-
-**It maps your protection coverage** — finds every TVS, ESD suppressor, and fuse, then tells you which interfaces are unprotected:
+**It audits every connector for ESD protection** — and flags the ones that are exposed:
 
 ```
-Protection devices:
-  D1 (PESD5V0S2UT): USB_DP, USB_DM → GND  [dual-channel ESD] ✓
-  D3 (SMBJ51A): V+ motor bus → GND  [TVS, 51V standoff] ✓
-  F1 (1A): V+ input  [fuse] ✓
-  ⚠️ CAN_H / CAN_L — no TVS protection (exposed on connector J3)
-  ⚠️ I2C_SDA / I2C_SCL — no ESD protection (exposed on header J5)
+ESD coverage: 19 connectors audited
+
+  USB-C:     ESD clamp on D+/D-  ✓ (partial — 13 signal pins per ground ⚠️)
+  Fuse F1:   2.5A motor input  ✓
+  Fuse F2:   0.75A signal input  ✓
+  ⚠️ 6-pin header:    no protection (exposed signals)
+  ⚠️ Motor outputs:   no protection (exposed to back-EMF)
+  ⚠️ Servo connectors: no protection (exposed signals)
+  ⚠️ Sensor port:     no protection
+  ... 19 of 19 connectors have coverage gaps
 ```
 
-**It estimates your sleep current** — traces every always-on path and totals the quiescent draw per rail:
+**It validates your passive networks** — computing actual circuit behavior from component values:
+
+| Detection | Components | Computed Value | What It Means |
+|-----------|-----------|---------------|---------------|
+| RC filter | R21/C31   | fc = 15.9 Hz  | Low-pass for slow analog signal |
+| RC filter | R1/C13    | fc = 169 Hz   | Debounce / noise rejection |
+| RC filter | R2/C14    | fc = 1.03 kHz | Signal conditioning |
+| Feedback  | R8/R9     | ratio = 0.155 | Buck converter output voltage set |
+| Divider   | R42/R43   | ratio = 0.500 | Voltage sensing (half) |
+| Crystal   | Y1        | CL = 14.0 pF  | Load cap status: ok (target: 18 pF, -22%) |
+
+**It suggests applicable certifications** — based on what it detects in the design:
 
 ```
-+3.3V sleep current breakdown:
-  U3 (TPS629203) quiescent: ~15 µA
-  R5/R6 feedback divider (226k/16.2k): 13.6 µA
-  R12 pull-up (100k to +3.3V): 33 µA
-  Total estimated: ~62 µA
+Suggested certifications:
+  FCC Part 15 Subpart B (US) — unintentional radiator compliance
+  CISPR 32 / CE EMC Directive (EU) — EMC compliance for EU market
 ```
 
-For a complete example, see the [full design review](example-report.md) of an ESP32-S3 board — 52 components, 2-layer, dual boost converters, USB host, touch sensing. For the end-to-end walkthrough from S-expression parsing through signal detection and datasheet cross-referencing, see [How It Works](how-it-works.md).
+**It checks production readiness** — BOM lock status, connector ground distribution, decoupling adequacy:
+
+```
+BOM lock: 0% — no MPNs assigned (prototype stage)
+Decoupling: 5 rails, 34 caps total (132µF motor, 110µF logic, 10.8µF 3.3V)
+Connector ground: USB-C has 13:1 signal-to-ground ratio (recommended ≤3:1)
+```
+
+For a complete example with all sections, see the [full design review report](example-report.md). For the end-to-end walkthrough from S-expression parsing through signal detection and datasheet cross-referencing, see [How It Works](how-it-works.md).
 
 ## 🚀 Install
 

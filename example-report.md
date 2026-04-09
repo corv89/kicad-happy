@@ -1,554 +1,472 @@
-# Example Design Review Report
+# Design Review Report
 
-**Board:** ESP32-S3 Battery-Powered IoT Board (Rev2)
-**KiCad version:** 9.0
-**Analyzer tools:** analyze_schematic.py, analyze_pcb.py (with --proximity)
+**Board:** Open-source robot controller board (Rev v20)
+**KiCad version:** 8.0 (5 hierarchical sheets)
+**Date:** 2024-12-12
+**Analyzers:** analyze_schematic.py (modern format, full signal analysis)
+**Status:** DONE_WITH_CONCERNS
 
 ---
 
 ## 1. Board Overview
 
-| Parameter | Value |
-|-----------|-------|
-| Board dimensions | 203.0 mm × 153.0 mm |
-| Layer count | 2 (F.Cu, B.Cu) |
-| Board thickness | 1.6 mm |
-| Schematic components | 52 |
-| PCB footprints | 56 (52 components + 4 logo graphics) |
-| Total nets | 60 |
-| Track segments | 343 |
-| Vias | 58 (all through-hole, 0.6mm/0.3mm drill) |
-| Zones | 10 |
-| Routing status | **100% complete** (0 unrouted nets) |
-
-### Component Breakdown
-
-| Type | Count |
-|------|-------|
-| Resistors | 18 |
-| Capacitors | 13 |
-| ICs | 4 (ESP32-S3-WROOM-1, 2× TPS61023, USBLC6-2SC6) |
-| Transistors | 4 (3× BSS138 N-FET, 1× NTR4101P P-FET) |
-| LEDs | 2 (1× RGB map LED, 1× dual status LED) |
-| Inductors | 2 (HBLE042A 1µH) |
-| Connectors | 2 (USB-A host, 2×3 programming header) |
-| Buzzer | 1 (CPT-9019A piezo) |
-| Fuse | 1 (500mA PTC) |
-| Battery holder | 1 (Keystone 1012, dual AA) |
-| Mounting holes | 2 |
-| Test points | 2 (touch pads) |
-
-### Assembly Complexity
-
-- **Score:** 37/100 (low — hand assembly feasible)
-- All SMD, no through-hole components
-- Predominant package: 0805 (32 components)
-- SOT-23 (5 components), SOT-563 (2 components)
-- 16 unique footprints
+An open-source robot controller board built around the RP2350B microcontroller. The board provides four H-bridge motor driver channels (2x DRV8411A), USB-C device connectivity, an LSM6DSOX 6-DoF IMU, a Raspberry Pi RM2 wireless radio module (WiFi/Bluetooth), external flash (W25Q128JV), PSRAM (APS6404L), WS2812B addressable LED, and extensive I/O through four 20-pin expansion headers plus servo, encoder, line sensor, and distance sensor connectors. Power is supplied through either a barrel jack or USB-C, with an AP63357 buck converter generating the 5V rail and an RT9080 LDO providing 3.3V for the digital domain.
 
 ---
 
-## 2. Power Tree
+## 2. Component Summary
+
+| Type | Count |
+|------|-------|
+| Resistors | 49 |
+| Capacitors | 45 |
+| Connectors | 19 |
+| Jumpers | 14 |
+| Test points | 11 |
+| ICs | 9 |
+| Transistors | 9 |
+| LEDs | 5 |
+| Switches | 4 |
+| Mounting holes | 4 |
+| Fiducials | 4 |
+| Inductors | 3 |
+| Fuses | 2 |
+| Crystal | 1 |
+| Diode | 1 |
+| **Total** | **184** |
+
+| Stat | Value |
+|------|-------|
+| Total nets | 160 |
+| Total wires | 774 |
+| No-connects | 5 |
+| Unique parts | 67 |
+| Power rails | 11 (3.3V, 5V, 1.1V, VIN, VSYS, VRAW, VBATT, VUSB, 3V3_EN, GPIO46/VIN_MEAS, GND) |
+| Sheets | 5 (root, peripherals, connectors, core, power) |
+| MPN coverage | 0/164 (0%) |
+| BOM lock status | **FAIL** — no MPNs assigned in schematic properties |
+
+### Assembly Complexity
+
+- **Score:** 58/100 (moderate)
+- All SMD, no through-hole components
+- 89 hard-to-solder components (0201/0402/BGA/QFN)
+- Predominant package: 0402 (83 components)
+- 38 unique footprints, 9 unique IC footprints
+
+---
+
+## 3. Power Tree
 
 ```
-Battery (2× AA, 2.0–3.2V)
+External Power Input
   │
-  ├── Q4 (NTR4101P P-FET) — Reverse polarity protection
-  │     R13=100K gate pulldown
+  ├── J1 (Barrel Jack) ──── F1 (16V/2.5A PTC fuse)
+  │                              │
+  │                              └── VBATT
+  │                                    │
+  │                                    └── Q2 (DMG2305UX P-FET)
+  │                                          R31=100k gate pulldown
+  │                                          │
+  │                                          └── VRAW ──┐
+  │                                                     │
+  ├── J2 (USB-C) ──── F2 (6V/0.75A PTC fuse)           │
+  │                        │                            │
+  │                        └── VUSB                     │
+  │                              │                      │
+  │                              └── Q4 (DMG2305UX) ───┘
+  │                                    R33=100k pulldown
+  │                                    Q6 (DMG2305UX)
+  │                                    Q5 (BCM857BS) ── Power path ORing
   │
-  ├── +BATT rail
-  │     C5=10µF, C8=10µF (input bulk)
-  │
-  ├── U3 (TPS61023) — 3.3V Boost Converter (always on)
-  │     EN tied to +BATT
-  │     L2=1µH (HBLE042A)
-  │     FB: R10=680K / R11=150K → Vout = 0.595 × (1 + 680K/150K) = 3.29V nom
-  │     C12=220pF feedforward (fFFZ ≈ 1064 Hz)
-  │     Output: C3=22µF, C9=22µF, C11=22µF, C4=100nF (66.1µF total)
-  │     Vout range: 3.16–3.43V (VREF ±2.5%, R ±1%)
-  │     │
-  │     └── +3V3 rail
-  │           └── U1 (ESP32-S3-WROOM-1) — MCU
-  │
-  └── U2 (TPS61023) — 5V Boost Converter (GPIO-controlled)
-        EN = EN_5V (GPIO8), R12=10K pulldown (off at boot)
-        L1=1µH (HBLE042A)
-        FB: R8=820K / R9=110K → Vout = 0.595 × (1 + 820K/110K) = 5.03V nom
-        C10=220pF feedforward (fFFZ ≈ 1078 Hz)
-        Output: C6=22µF, C7=22µF, C1=100nF (44.1µF total)
-        Vout range: 4.82–5.26V (VREF ±2.5%, R ±1%)
+  └── VSYS (selected source)
         │
-        └── +5V rail
-              ├── D1 RGB LED (via BSS138 level shifters)
-              ├── J1 USB-A host (via F1=500mA fuse)
-              └── U4 USBLC6-2SC6 (USB ESD protection, powered from VBUS)
+        ├── U4 (AP63357DV-7) — 5V Buck Converter
+        │     Vin=3.8–32V, Iout=3.5A
+        │     L2=6.8µH, f_sw=500kHz
+        │     FB: R8=180k / R9=33k → Vout ≈ 4.94V (with Vref=0.765V)
+        │     C23=47pF feedforward
+        │     Output: 6× 22µF + 1× 0.1µF (132µF total)
+        │     Input: 7 caps (110.2µF total)
+        │     PG → POWER_GOOD → D6 (red LED indicator)
+        │     │
+        │     └── VIN rail (motor driver power)
+        │           ├── U7 (DRV8411A) — Motor drivers L + 3
+        │           ├── U8 (DRV8411A) — Motor drivers R + 4
+        │           └── Q8 (DMG2305UX) → 5V rail (switched)
+        │                 R37=100k pulldown, D3 (Red LED indicator)
+        │
+        └── U5 (RT9080-3.3) — 3.3V LDO (600mA)
+              Fixed output, Vin=3.8–6V
+              Input: C26=4.7µF
+              Output: 2× 4.7µF + 14× 0.1µF (10.8µF total)
+              EN → 3V3_EN
+              │
+              └── 3.3V rail
+                    ├── U1 (RP2350B) — MCU
+                    ├── U2 (W25Q128JVPIM) — 128Mb Flash
+                    ├── U3 (APS6404L-3SQR-ZR) — 64Mb PSRAM
+                    ├── U6 (LSM6DSOX) — 6-DoF IMU
+                    └── 1.1V core (U1 internal regulator)
 ```
 
 ### Regulator Verification
 
-| Regulator | Vref source | Vout nom | Vout range | Output rail | Status |
-|-----------|-------------|----------|------------|-------------|--------|
-| U3 (3.3V) | Datasheet lookup (0.595V) | 3.29V | 3.16–3.43V | +3V3 | OK |
-| U2 (5.0V) | Datasheet lookup (0.595V) | 5.03V | 4.82–5.26V | +5V | OK |
+| Regulator | Topology | Vref source | Vout est. | Output rail | Status |
+|-----------|----------|-------------|-----------|-------------|--------|
+| U5 (RT9080-3.3) | LDO | Fixed suffix | 3.30V | 3.3V | OK |
+| U4 (AP63357DV-7) | Buck | Heuristic (0.6V) | 3.87V | 5V | **MISMATCH** |
+
+The AP63357 uses a heuristic Vref of 0.6V, producing an estimated output of 3.87V on a rail named "5V" (22.5% deviation). The AP63357 datasheet specifies Vref = 0.765V, which gives Vout = 0.765 x (1 + 180k/33k) = **4.94V** -- consistent with the 5V rail name. This is not a design error but a Vref lookup limitation. Note that U4 outputs to the VIN rail (which feeds the motor drivers), not directly to 5V; the 5V rail is derived via Q8 (power MOSFET switch).
 
 ### Power Sequencing
 
-- U3 (3.3V): **Always on** — EN tied directly to +BATT
-- U2 (5.0V): **Controlled** — EN driven by GPIO8 (EN_5V), R12=10K pulldown keeps 5V off during boot/sleep
+| Regulator | EN source | Behavior |
+|-----------|-----------|----------|
+| U4 (AP63357) | VIN (always on) | Powers up with input supply |
+| U5 (RT9080) | 3V3_EN | Controlled enable |
 
-### Sleep Current Audit
-
-| Path | Rail | Current (µA) | Notes |
-|------|------|-------------|-------|
-| R7 (10K pull-up) | +3V3 | 330.0 | EN RC circuit, always draws from 3.3V to GND |
-| R10 (680K, FB divider top) | +3V3 | 4.9 | Worst case if FB driven low |
-| U3 Iq | +3V3 | ~15 | Regulator quiescent, always on |
-| R8 (820K, FB divider top) | +5V | 6.1 | Only when 5V enabled |
-| U2 Iq | +5V | ~15 | Only when 5V enabled |
-| R17/R18 (100K/100K divider) | +BATT | 15 | Battery monitor, always draws |
-| **Total (5V disabled)** | | **~365** | |
-
-### Inrush Analysis
-
-| Rail | Total output capacitance | Est. inrush | Soft-start |
-|------|--------------------------|-------------|------------|
-| +3V3 | 66.1µF | 0.22A | ~1ms (TPS61023 internal) |
-| +5V | 44.1µF | 0.22A | ~1ms (TPS61023 internal) |
+U4 has a Power Good output (PG) on the POWER_GOOD net, driving D6 (red LED indicator) and exposed on connector J7. No PG-to-EN chain detected between regulators.
 
 ---
 
-## 3. MCU Pin Mapping (ESP32-S3-WROOM-1)
+## 4. Signal Analysis Review
 
-### Active GPIO Assignments
+### Voltage Dividers
 
-| GPIO | Pin Name | Net | Function | Peripheral | Verified |
-|------|----------|-----|----------|-----------|----------|
-| IO1 | Touch T1 | TOUCH_1 | Capacitive touch input 1 | RTC Touch | OK |
-| IO2 | Touch T2 | TOUCH_2 | Capacitive touch input 2 | RTC Touch | OK |
-| IO4 | LEDC CH0 | MAP_RED | RGB LED red channel | LEDC via GPIO matrix | OK |
-| IO5 | LEDC CH1 | MAP_GRN | RGB LED green channel | LEDC via GPIO matrix | OK |
-| IO6 | LEDC CH2 | MAP_BLU | RGB LED blue channel | LEDC via GPIO matrix | OK |
-| IO7 | LEDC CH3 | BUZZER | Piezo buzzer | LEDC via GPIO matrix | OK |
-| IO8 | GPIO out | EN_5V | 5V boost enable | GPIO | OK |
-| IO9 | ADC1_CH8 | (battery divider) | Battery voltage sense | ADC1 | OK |
-| IO15 | GPIO out | STATUS_RED | Status LED red | GPIO | OK |
-| IO16 | GPIO out | STATUS_GRN | Status LED green | GPIO | OK |
-| IO19 | USB D- | USB_DM | USB host data minus | Internal PHY | OK |
-| IO20 | USB D+ | USB_DP | USB host data plus | Internal PHY | OK |
-| EN | — | MCU_RESET | Reset (RC delay) | — | OK |
-| IO0 | — | MCU_BOOT | Boot mode (strapping) | — | OK |
-| TXD0 | UART0 TX | MCU_TX | Serial debug TX | UART0 | OK |
-| RXD0 | UART0 RX | MCU_RX | Serial debug RX | UART0 | OK |
+| R_top | R_bottom | Input | Ratio | Mid-point | Purpose |
+|-------|----------|-------|-------|-----------|---------|
+| R8 (180k) | R9 (33k) | 5V | 0.155 | U4 FB + C23 | Buck converter feedback |
+| R42 (100k) | R43 (100k) | 3.3V | 0.500 | JP8 | Motor L/3 VREF select |
+| R44 (100k) | R45 (100k) | 3.3V | 0.500 | JP9 | Motor R/4 VREF select |
+| R22 (100k) | R23 (33k) | VIN | 0.248 | JP14 | VIN measurement (ADC) |
 
-### Unused GPIOs (21 pins, all with no-connect markers)
+The motor VREF dividers (R42/R43 and R44/R45) provide 1.65V to set the DRV8411A current limit. These connect through solder jumpers (JP8/JP9) to allow user override via the expansion headers.
 
-- **Parked by firmware (output low):** IO3, IO10, IO11, IO12, IO13, IO14, IO17, IO18, IO21
-- **Module N4 — no PSRAM (NC):** IO35, IO36, IO37
-- **Additional NC:** IO38, IO39, IO40, IO41, IO42, IO45, IO46, IO47, IO48
-
-### Strapping Pin Verification
-
-| Pin | Required | Actual | Status |
-|-----|----------|--------|--------|
-| IO0 | Pull-up (SPI boot) | Connected to MCU_BOOT (programming header) | OK |
-| IO3 | Floating OK (JTAG select, ignored with default eFuses) | NC, parked by firmware | OK |
-| IO45 | Pull-down (3.3V VDD_SPI) | NC (internal pull-down) | OK |
-| IO46 | Pull-down (ROM print) | NC (internal pull-down) | OK |
-
----
-
-## 4. Signal Analysis
-
-### LED Driver Circuits
-
-Three BSS138 N-FETs (Q1/Q2/Q3) with 10K gate resistors (R14/R15/R16) drive the RGB LED (D1, XZMDKCBDDG45S-9) from the 5V rail. Current-limiting resistors on the high side:
-
-| Channel | FET | Gate | Resistor | Value | I_typ | I_worst* | 30mA limit |
-|---------|-----|------|----------|-------|-------|----------|------------|
-| Red | Q1 | MAP_RED (IO4) | R3 | 150Ω | 20.5mA | 25.0mA | OK |
-| Green | Q2 | MAP_GRN (IO5) | R4 | 110Ω | 15.7mA | 24.5mA | OK |
-| Blue | Q3 | MAP_BLU (IO6) | R5 | 110Ω | 15.7mA | 24.5mA | OK |
-
-*Worst case: max Vout (5.26V), min LED Vf, resistor -5% tolerance.
-
-### Buzzer Circuit
-
-BZ1 (CPT-9019A) driven directly from GPIO7 through R6=100Ω series resistor. Piezo impedance ~3.3kΩ at 4kHz resonance. GPIO current ~1mA — no transistor driver needed.
-
-### Reset Circuit
-
-R7=10K (pull-up from +3V3) + C2=1µF (to GND) on ESP32-S3 EN pin.
-- RC time constant: 10ms
-- Low-pass cutoff: 15.92 Hz
-- Provides reliable startup delay and noise filtering
-
-### Battery Voltage Monitor
-
-R17=100K / R18=100K voltage divider + C13=100nF filter cap on IO9 (ADC1_CH8).
-- Divider ratio: 0.5 (3.0V battery → 1.5V at ADC)
-- Source impedance: 50kΩ
-- Filter time constant: 5ms (adequate ADC settling)
-- ADC1 — no WiFi conflict (ADC2 contends with WiFi)
-- Divider draws 15µA from battery
-
-### Reverse Polarity Protection
-
-Q4 (NTR4101P P-FET) with R13=100K gate pulldown. Source connected to battery positive, drain to +BATT rail. Gate pulled to GND ensures FET is on with correct polarity, blocking reverse current.
-
-### USB Host Interface
-
-- USB-A connector (J1) with VBUS from 5V rail through F1 (500mA PTC fuse)
-- ESD protection: U4 (USBLC6-2SC6) on D+/D- lines
-- D-/D+ on GPIO19/20 (dedicated analog pins, non-remappable internal PHY)
-- VBUS switched by 5V boost enable (GPIO8)
-
-### Voltage Divider Summary
-
-| Divider | R_top | R_bottom | Input | Output ratio | Purpose |
-|---------|-------|----------|-------|-------------|---------|
-| R8/R9 | 820K 1% | 110K 1% | +5V | 0.118 | U2 feedback |
-| R10/R11 | 680K 1% | 150K 1% | +3V3 | 0.181 | U3 feedback |
-| R17/R18 | 100K | 100K | +BATT | 0.500 | Battery ADC |
-
-### RC Filter Summary
+### RC Filters
 
 | Filter | R | C | Cutoff | Type | Purpose |
 |--------|---|---|--------|------|---------|
-| R7/C2 | 10K | 1µF | 15.92 Hz | Low-pass | EN reset delay |
+| R21/C31 | 100k | 0.1µF | 15.92 Hz | Low-pass | User button debounce (GPIO36) |
+| R1/C13 | 200 | 4.7µF | 169 Hz | Low-pass | ADC VREF filtering |
+| R2/C14 | 33 | 4.7µF | 1.03 kHz | Low-pass | RP2350B core supply filtering |
+
+### Crystal Circuit
+
+Y1 (12 MHz) with C17=15pF and C18=15pF load capacitors.
+- Effective load: 10.5pF (including ~3pF stray capacitance)
+- Target load: 18pF (typical for 12 MHz crystals)
+- **Error: -41.7%** — load caps appear undersized
+
+This is flagged as out-of-spec, but the RP2350B has programmable internal load capacitance on its oscillator pins. The external 15pF caps plus internal trim can reach the target. Verify the RP2350B oscillator configuration in firmware.
+
+### Transistor Circuits
+
+9 transistors detected, primarily P-channel MOSFETs (DMG2305UX, 4.2A/20V) used in the power path:
+
+| Ref | Type | Function | Gate pull | Source | Drain |
+|-----|------|----------|-----------|--------|-------|
+| Q2 | P-FET | Battery path switch | R31=100k | VRAW | VBATT |
+| Q4 | P-FET | USB-to-VRAW path | R33=100k | VRAW | VUSB |
+| Q6 | P-FET | USB VSYS switch | R35=100k | VSYS | VUSB |
+| Q8 | P-FET | 5V rail switch | R37=100k | VSYS | 5V |
+| Q9 | P-FET | Power ORing | — | — | — |
+| Q5 | PNP dual (BCM857BS) | Power path control | R34=100k | VSYS | Q6 gate |
+| Q1, Q3, Q7 | Various | Power path support | — | — | — |
+
+No flyback diodes detected on any transistor circuit. This is acceptable because the motor outputs are driven by the DRV8411A H-bridges (which have integrated protection), not discrete FETs.
+
+### Protection Devices
+
+| Ref | Value | Type | Protected net |
+|-----|-------|------|---------------|
+| D5 | DT1042-04SO | ESD TVS (4-ch) | USB_D+, USB_D-, VUSB |
+| F2 | 6V/0.75A/1.5A | PTC fuse | USB VBUS input |
+| F1 | 16V/2.5A/5.0A | PTC fuse | Barrel jack input |
+
+USB data lines are protected by D5 (DT1042-04SO quad ESD suppressor). Both power input paths (barrel jack and USB) have PTC fuses for overcurrent protection.
+
+### Motor Driver Circuits
+
+Two DRV8411A dual H-bridge motor driver ICs (U7, U8) provide four independent motor channels:
+
+| Driver | Channels | Motors | Current sense | VREF source |
+|--------|----------|--------|---------------|-------------|
+| U7 | L + 3 | J16, J17 (6-pin) | R24/R25=5.1k, JP10/JP11 | R42/R43 divider via JP8 |
+| U8 | R + 4 | J18, J19 (6-pin) | R26/R27=5.1k, JP12/JP13 | R44/R45 divider via JP9 |
+
+Each motor channel has dedicated test points (TP5-TP12) on the H-bridge outputs. Current sense resistors (5.1k) connect through solder jumpers, allowing measurement via the MCU's ADC (GPIO40-43). Fault outputs (MOTOR_L/3_FAULT, MOTOR_R/4_FAULT) are active-low with R48/R49=100k pull-ups.
+
+### Addressable LED Chain
+
+D4 (WS2812B) driven from GPIO37/NEOPIXEL. Single-LED chain with data output (NEOPIXEL_OUT) routed to the expansion header for daisy-chaining external LEDs. Estimated current: 60mA at full white.
+
+### LED Audit
+
+| Ref | Color | Series R | Supply | Estimated I |
+|-----|-------|----------|--------|-------------|
+| D6 | Red | R47=4.7k | VIN | ~0.6mA |
+| D2 | Red | R11=4.7k | 3.3V | ~0.3mA |
+| D1 | Blue | R10=2.2k | Radio module | — |
+| D3 | Red | R12=10k | 5V | ~0.3mA |
+
+LED currents are conservative across the board. All indicators are low-power status LEDs.
+
+### Decoupling Analysis
+
+| Rail | Cap count | Total µF | Bulk | Bypass | Status |
+|------|-----------|----------|------|--------|--------|
+| 3.3V | 16 | 10.8 | 2x 4.7µF | 14x 0.1µF | Good |
+| 5V | 6 | 132.0 | 6x 22µF | None | **Missing bypass** |
+| VIN | 7 | 110.2 | 6x 22µF | 1x 0.1µF | OK |
+| VSYS | 1 | 4.7 | 1x 4.7µF | None | **Minimal** |
+| 1.1V | 4 | 9.6 | 2x 4.7µF | 2x 0.1µF | Good |
+
+The 5V rail has 132µF of bulk capacitance but no 100nF bypass caps. The VSYS rail feeding the 3.3V LDO has only a single 4.7µF cap.
+
+### Sensor Interface
+
+U6 (LSM6DSOX) — 6-DoF IMU on I2C1 (GPIO38/SDA1, GPIO39/SCL1). Two interrupt lines (IMU_INT1, IMU_INT2) detected but not connected to any MCU GPIO in the schematic. Address jumper JP4 present.
 
 ---
 
-## 5. Decoupling and PDN
+## 5. ESD Coverage Audit
 
-### Decoupling Capacitor Placement
+**This is the headline finding.** Of 19 connectors audited, **17 have zero ESD protection** and 2 have partial coverage. No connector has full coverage.
 
-| Rail | Capacitors | Total | Purpose |
-|------|-----------|-------|---------|
-| +3V3 | C3=22µF, C9=22µF, C11=22µF, C4=100nF | 66.1µF | MCU + regulator output |
-| +5V | C6=22µF, C7=22µF, C1=100nF | 44.1µF | LED rail + regulator output |
-| +BATT | C5=10µF, C8=10µF | 20.0µF | Regulator input bulk |
+| Connector | Type | Signal nets | Protected | Unprotected | Coverage |
+|-----------|------|-------------|-----------|-------------|----------|
+| J2 | USB-C | 11 | 3 (D5, F2) | 8 | Partial |
+| J1 | Barrel Jack | 2 | 1 (F1) | 1 | Partial |
+| J4 | 20-pin header | 16 | 0 | 16 | **None** |
+| J5 | 20-pin header | 16 | 0 | 16 | **None** |
+| J7 | 20-pin header | 12 | 0 | 12 | **None** |
+| J6 | 20-pin header | 11 | 0 | 11 | **None** |
+| J16 | Motor (6-pin) | 4 | 0 | 4 | **None** |
+| J17 | Motor (6-pin) | 4 | 0 | 4 | **None** |
+| J18 | Motor (6-pin) | 4 | 0 | 4 | **None** |
+| J19 | Motor (6-pin) | 4 | 0 | 4 | **None** |
+| J13 | Qwiic | 3 | 0 | 3 | **None** |
+| J14 | Qwiic | 3 | 0 | 3 | **None** |
+| J12 | JST (line sensor) | 2 | 0 | 2 | **None** |
+| J15 | JST (line sensor) | 2 | 0 | 2 | **None** |
+| J3 | Distance sensor | 2 | 0 | 2 | **None** |
+| J8, J9, J10, J11 | Servo (3-pin) | 1 each | 0 | 1 each | **None** |
 
-### Decoupling Cap Distance to ICs
+For an educational robotics board where all connectors are user-facing and will be repeatedly plugged/unplugged, this is a significant gap. The motor connectors (J16-J19) and expansion headers (J4-J7) are particularly exposed to ESD events during cable handling.
 
-| IC | Closest cap | Distance | Status |
-|----|------------|----------|--------|
-| U2 (TPS61023, 5V) | C5 (10µF input) | 4.4mm | Good |
-| U3 (TPS61023, 3.3V) | C8 (10µF input) | 4.4mm | Good |
-| U4 (USBLC6-2SC6) | C1 (100nF) | 7.2mm | Acceptable |
-
-### PDN Impedance
-
-| Rail | Min impedance | At frequency | Anti-resonance |
-|------|--------------|-------------|----------------|
-| +3V3 | 1.68 mΩ | 1.26 MHz | 16.2 mΩ @ 12.6 MHz |
-| +5V | 2.51 mΩ | 1.26 MHz | 21.8 mΩ @ 12.6 MHz |
-| +BATT | 2.70 mΩ | 2.00 MHz | — |
-
-All rails show excellent low-frequency impedance. The highest SRF is 17.8 MHz (100nF caps); >100 MHz coverage relies on PCB plane capacitance.
-
----
-
-## 6. PCB Layout Analysis
-
-### Copper Zones
-
-| Net | Layer | Filled area | Priority | Purpose |
-|-----|-------|-------------|----------|---------|
-| GND | F.Cu | 26,860 mm² | 0 | Main ground pour |
-| GND | B.Cu | 29,818 mm² | 4 | Full back ground plane |
-| GND | F.Cu | 55 mm² | 8 | Local ground island |
-| +BATT | F.Cu | 59 mm² | 1 | Battery input area |
-| +5V | F.Cu | 38 mm² | 7 | 5V local pour |
-| +3V3 | F.Cu | 30 mm² | 2 | 3.3V local pour |
-| Others | F.Cu | ~33 mm² | 3-6 | LED/signal local pours |
-
-### Ground Plane
-
-- Single GND domain (no split ground)
-- 31 components connected to GND
-- Full back copper pour (29,818 mm²) provides continuous return path
-- 42 GND stitching vias (0.3mm drill)
-- Ground plane continuity: **Good** — no splits observed
-
-### Track Width Summary
-
-| Width | Count | Usage |
-|-------|-------|-------|
-| 0.20 mm | 256 | Standard signal traces |
-| 0.30 mm | 68 | Power traces |
-| 0.50 mm | 3 | Wide power connections |
-| 0.18 mm | 16 | Fine-pitch routing (near ESP32) |
-
-### Layer Distribution
-
-| Layer | Track segments | Purpose |
-|-------|---------------|---------|
-| F.Cu | 330 | Main routing layer |
-| B.Cu | 13 | Jumper traces (escape routing) |
-
-### Power Net Routing
-
-| Net | Segments | Length | Min width | Max width | Zones |
-|-----|----------|--------|-----------|-----------|-------|
-| GND | 61 | 60.0mm | 0.18mm | 0.30mm | 3 (F.Cu + B.Cu) |
-| +5V | 30 | 247.0mm | 0.20mm | 0.30mm | 1 (F.Cu) |
-| +3V3 | 22 | 87.2mm | 0.20mm | 0.30mm | 1 (F.Cu) |
-| +BATT | 14 | 39.3mm | 0.20mm | 0.20mm | 1 (F.Cu) |
-
-### Via Analysis
-
-- **Total vias:** 58
-- **All through-hole:** 0.6mm diameter, 0.3mm drill
-- **Annular ring:** 0.15mm (uniform)
-- **GND vias:** 42 (stitching)
-- **Signal vias:** 16
-- **Via current capacity:** ~7.9A per via (well above needs)
-
-### Thermal Pad Vias
-
-| Component | Pad | Net | Via count | Adequacy |
-|-----------|-----|-----|-----------|----------|
-| U1 (ESP32-S3) | 41 (GND) | GND | 12 (footprint vias) | Adequate (9-16 recommended) |
-| J1 (USB) | 5 (shield) | GND | 3 (nearby) | Acceptable for USB |
-| TP1 (Touch 1) | 1 | TOUCH_1 | 1 | N/A (touch pad, not thermal) |
-| TP2 (Touch 2) | 1 | TOUCH_2 | 1 | N/A (touch pad, not thermal) |
-| BT1 (Battery) | 1-4 | Various | 0-1 | N/A (battery holder, mechanical) |
-
-### USB Differential Pair
-
-| Parameter | Value | Status |
-|-----------|-------|--------|
-| USB_DP length | 75.78 mm | — |
-| USB_DM length | 75.25 mm | — |
-| Length mismatch | 0.53 mm | Excellent for USB 2.0 FS |
-| Coupling length | 23.0 mm | Good proximity matching |
-| ESD protection | USBLC6-2SC6 | Present |
-
-### Signal Trace Lengths
-
-| Net | Length (mm) | Layers | Notes |
-|-----|------------|--------|-------|
-| +5V | 247.0 | F.Cu + B.Cu | Long run to LED/USB, zone-reinforced |
-| D1 Red cathode | 125.7 | F.Cu | LED trace |
-| D1 Green cathode | 119.9 | F.Cu | LED trace |
-| D1 Blue cathode | 117.7 | F.Cu | LED trace |
-| +3V3 | 87.2 | F.Cu + B.Cu | MCU power |
-| USB_DP | 75.8 | F.Cu | Length-matched |
-| USB_DM | 75.2 | F.Cu | Length-matched |
-| MCU_RESET | 55.3 | F.Cu + B.Cu | Reset line to header |
-| EN_5V | 42.8 | F.Cu + B.Cu | GPIO8 to boost EN |
-| TOUCH_2 | 41.6 | F.Cu + B.Cu | Touch pad connection |
-
-### Trace Proximity (Crosstalk Analysis)
-
-| Net A | Net B | Layer | Coupling length | Concern |
-|-------|-------|-------|----------------|---------|
-| D1 Red | D1 Green | F.Cu | 87mm | None (LED traces, same switching domain) |
-| USB_DP | USB_DM | F.Cu | 23mm | Expected (differential pair) |
-| D1 Green | D1 Blue | F.Cu | 22mm | None (LED traces) |
-| MCU_RESET | MCU_RX | F.Cu | 18.5mm | Low risk (both low-speed) |
-
-No high-speed signal integrity concerns identified.
+**Mitigation context:** The DRV8411A motor drivers have integrated ESD protection on their output pins, providing some inherent robustness on the motor channels. GPIO pins on the RP2350B have internal ESD clamp diodes (typically rated for HBM but not full IEC 61000-4-2). For a board at this price point and educational use case, this level of protection may be acceptable, but it should be documented as a known limitation.
 
 ---
 
-## 7. Protection and Safety
+## 6. Bus Protocol Compliance
 
-### ESD Protection
+### I2C Buses
 
-| Interface | Protection | Device | Status |
-|-----------|-----------|--------|--------|
-| USB D+/D- | TVS clamp | U4 (USBLC6-2SC6) | Present |
-| USB VBUS | PTC fuse | F1 (500mA) | Present |
-| Battery | Reverse polarity | Q4 (NTR4101P P-FET) | Present |
+| Bus | SDA | SCL | Devices | Pull-ups | Status |
+|-----|-----|-----|---------|----------|--------|
+| I2C0 | GPIO4/SDA0 | GPIO5/SCL0 | U1 only | None | **FAIL** |
+| I2C1 | GPIO38/SDA1 | GPIO39/SCL1 | U1, U6 | None | **FAIL** |
 
-### USB Compliance Checks
+**No external I2C pull-up resistors detected** on either bus. I2C1 connects the IMU (U6) to the MCU and requires pull-ups for reliable operation. I2C0 is exposed on the Qwiic connectors (J13/J14) for user expansion.
 
-| Check | Status | Notes |
-|-------|--------|-------|
-| Data line ESD (USBLC6-2SC6) | PASS | Bidirectional TVS on D+/D- |
-| D+/D- series resistors | INFO | Optional for USB host mode |
-| VBUS ESD protection | INFO | Fused but no dedicated VBUS TVS |
-| VBUS decoupling | INFO | C1=100nF on 5V rail (near U4) |
+However, the RP2350B supports internal GPIO pull-ups (typically 50-80k) that can be enabled in firmware. For short bus runs at standard mode (100 kHz), internal pull-ups may suffice. For the IMU on I2C1, the LSM6DSOX also has internal pull-ups that can be enabled. Note that R14 and R15 (2.2k) are present on the IMU I2C1 bus but are connected as address configuration, not as bus pull-ups.
 
----
+### USB Compliance
 
-## 8. DFM (Design for Manufacturing)
+| Check | Status |
+|-------|--------|
+| CC1 pull-down 5.1k (R29) | PASS |
+| CC2 pull-down 5.1k (R28) | PASS |
+| D+ series resistor (R4) | PASS |
+| D- series resistor (R5) | PASS |
+| VBUS ESD (D5) | PASS |
+| USB ESD IC | PASS |
+| VBUS decoupling | **FAIL** |
 
-### JLCPCB Compatibility
-
-| Parameter | Value | JLCPCB Standard Tier | Status |
-|-----------|-------|---------------------|--------|
-| Min track width | 0.18 mm | ≥ 0.127 mm | OK |
-| Min spacing | ~0.17 mm | ≥ 0.127 mm | OK |
-| Min drill | 0.30 mm | ≥ 0.30 mm | OK |
-| Min annular ring | 0.15 mm | ≥ 0.13 mm | OK |
-| Board size | 203 × 153 mm | > 100 × 100 mm | **Exceeds standard pricing** |
-| Layer count | 2 | 1-2 standard | OK |
-| Copper layers | F.Cu, B.Cu | — | OK |
-
-**DFM tier:** Standard (no advanced features required)
-**Note:** Board exceeds 100×100mm — expect higher per-board pricing.
-
-### Courtyard Overlaps
-
-18 courtyard overlaps detected, all involving passive components placed close to U1 (ESP32-S3-WROOM-1). These are tight-clearance placements of decoupling caps and gate resistors near the MCU — standard practice and not an assembly concern.
-
-Largest overlap: J2 (programming header) with U1 at 41.4 mm².
-
-### Edge Clearance
-
-| Component | Clearance | Status |
-|-----------|-----------|--------|
-| U1 (ESP32-S3) | -0.21 mm | **Review** — courtyard extends past edge |
-| H2 (Mounting hole) | 0.55 mm | OK |
-
-U1's courtyard extends 0.21mm past the board edge. This is likely the antenna keepout area extending beyond the board — verify that the actual module body and solder pads do not overhang the board edge.
-
-### Silkscreen
-
-- 56 reference designators visible
-- 3 board text items (USB label, user instructions, revision mark)
-- User instructions text on F.SilkS provides clear troubleshooting guide
-- **Suggestion:** Add pin labels for J1 (USB) and J2 (programming header)
+USB-C CC resistors correctly configure the port as a sink (device). Data line series resistors and ESD protection are present. VBUS decoupling was not detected near the connector.
 
 ---
 
-## 9. Sourcing
+## 7. Design Observations
 
-### MPN Coverage
+### Decoupling Gaps
 
-- **17 of 48** BOM components (35.4%) have manufacturer part numbers assigned
-- **31 passives** (all resistors and capacitors) are missing MPNs
-- All active components (ICs, FETs, LEDs, connectors) have MPNs
-- **No LCSC part numbers** assigned (needed for JLCPCB assembly)
+- **U1 (RP2350B):** GPIO46/VIN_MEAS power pin has no local decoupling capacitor. This pin is used for voltage measurement via ADC and connects to a voltage divider (R22/R23), so a dedicated decoupling cap on the ADC reference would improve measurement accuracy.
+- **U5 (RT9080-3.3):** 3V3_EN pin has no local decoupling. The EN pin is typically a high-impedance CMOS input and does not require decoupling, so this is informational only.
+- **5V rail:** 132µF bulk but no high-frequency bypass (100nF). The motor drivers switch at moderate frequencies and would benefit from local 100nF caps close to the VIN pins.
 
-### BOM Optimization
+### Cross-Domain Signal Analysis
 
-- 9 unique resistor values, 5 unique capacitor values
-- 6 single-use passive values — consider standardizing where possible:
-  - Could 150Ω (R3) and 110Ω (R4/R5) be consolidated? (No — different LED Vf requires different values)
-  - R6=100Ω (buzzer), R1/R2=100Ω (status LED) — already consolidated
+21 cross-domain signals detected. 8 motor control signals cross between the 3.3V MCU domain and the VIN motor driver domain:
 
-### Unique Footprints: 16
+| Signal group | Count | Level shift needed? |
+|--------------|-------|---------------------|
+| Motor L/3 control (U1 → U7) | 4 | Yes (flagged) |
+| Motor R/4 control (U1 → U8) | 4 | Yes (flagged) |
+| Radio SPI (U1 → U9) | 4 | Yes (flagged) |
+| Memory QSPI (U1 → U2, U3) | 6 | No (same 3.3V domain) |
+| IMU I2C (U1 → U6) | 2 | No (same 3.3V domain) |
+| Flash CS (U1 → U2) | 1 | No |
 
-Manageable for procurement. All footprints use standard packages.
+The DRV8411A logic inputs accept 1.2V minimum high level (V_IH) when powered from 3.3V VREF, so the 3.3V GPIOs from the RP2350B are compatible without level shifting. The cross-domain flags are informational because the motor drivers' digital interface runs at VREF voltage, which is set to 1.65V (below the MCU's 3.3V output).
 
----
+### Connector Ground Distribution
 
-## 10. Test and Debug
-
-### Test Points
-
-| Ref | Net | Location | Type |
-|-----|-----|----------|------|
-| TP1 | TOUCH_1 | B.Cu | 15×15mm touch pad |
-| TP2 | TOUCH_2 | B.Cu | 15×15mm touch pad |
-
-### Debug Interface
-
-J2 (2×3 pin, 1.27mm pitch SMD header) provides:
-- +3V3, GND
-- MCU_TX, MCU_RX (UART0)
-- MCU_RESET, MCU_BOOT
-
-This enables serial programming and debug without USB.
-
-### Key Nets Without Dedicated Test Points
-
-- +3V3, +5V, +BATT (power rails — accessible via component pads)
-- MCU_RESET (accessible via J2)
-- MCU_TX, MCU_RX (accessible via J2)
-
-For a consumer product, the J2 header provides adequate debug access. Dedicated test points on power rails would only be needed for production test fixtures.
+J2 (USB-C): 13 signal pins per ground pin (recommended: 3 or fewer for EMI control). The USB-C receptacle has multiple ground pins in the spec, but only 1 GND connection is made in this schematic. For a USB 2.0 Full Speed device, this is functionally adequate but suboptimal for EMI.
 
 ---
 
-## 11. Cross-Reference Verification
+## 8. PDN Impedance
 
-### Schematic ↔ PCB Component Count
+| Rail | Cap count | Total µF | Min Z | At frequency |
+|------|-----------|----------|-------|-------------|
+| 3.3V | 16 | 10.8 | 34.4 mOhm | 7.94 MHz |
+| 5V | 6 | 132.0 | 1.8 mOhm | 1.26 MHz |
+| VIN | 7 | 110.2 | 2.2 mOhm | 1.26 MHz |
+| VSYS | 1 | 4.7 | 138.4 mOhm | 3.16 MHz |
+| 1.1V | 4 | 9.6 | 60.9 mOhm | 5.01 MHz |
 
-| Source | Count | Notes |
-|--------|-------|-------|
-| Schematic | 52 | All electrical components |
-| PCB | 56 | 52 components + 4 logo graphics (G***) |
-| **Match** | **Yes** | All schematic components present on PCB |
-
-### Net Count
-
-| Source | Count | Match |
-|--------|-------|-------|
-| Schematic | 60 | — |
-| PCB | 60 | Yes |
-
-### Named Net Cross-Reference
-
-All 19 named nets in the schematic are present in the PCB:
-+3V3, +5V, +BATT, BUZZER, EN_5V, GND, MAP_BLU, MAP_GRN, MAP_RED,
-MCU_BOOT, MCU_RESET, MCU_RX, MCU_TX, STATUS_GRN, STATUS_RED,
-TOUCH_1, TOUCH_2, USB_DM, USB_DP
-
-### Critical Component Value Verification (PCB vs Schematic)
-
-| Ref | Schematic | PCB | Match |
-|-----|-----------|-----|-------|
-| R3 | 150 | 150 | Yes |
-| R4 | 110 | 110 | Yes |
-| R5 | 110 | 110 | Yes |
-| R8 | 820K 1% | 820K 1% | Yes |
-| R9 | 110K 1% | 110K 1% | Yes |
-| R10 | 680K 1% | 680K 1% | Yes |
-| R11 | 150K 1% | 150K 1% | Yes |
+The 3.3V rail impedance is moderate (34.4 mOhm) despite 16 capacitors because all bypass caps are 0402 package (higher ESR). The 5V and VIN rails have excellent impedance thanks to the 0805 22µF bulk capacitors with low ESR. The VSYS rail is the weakest at 138 mOhm with only a single 4.7µF cap -- this is the input to the 3.3V LDO and should be stiffened.
 
 ---
 
-## 12. Issues and Recommendations
+## 9. Sleep Current Audit
 
-### Issues
+### 3.3V Rail (dominant path)
+
+| Component | Type | Current (µA) | Note |
+|-----------|------|-------------|------|
+| R1 (200) | Series R to ADC_VREF | 16,500 | **Dominant** — always draws through RC filter |
+| R2 (33) | Series R to core filter | 100,000 | Worst-case only; normally loaded by U1 core |
+| R11 (4.7k) | Pull-up | 702 | LED indicator circuit |
+| R7 (10k) | Pull-up | 330 | RUN pin pull-up |
+| R19-R49 (100k) | Various pull-ups | ~33 each | Multiple GPIO/fault pull-ups |
+| U5 (RT9080) | LDO Iq | ~15 | Always on |
+
+The R1=200 ohm filter resistor to ADC_VREF is a significant sleep current path (16.5mA worst case) because it forms a low-impedance connection from 3.3V to the ADC reference pin. In practice, the ADC_VREF pin is a high-impedance input, so actual current through R1 is minimal (nanoamps). The worst-case figure is misleading here.
+
+### 5V Rail
+
+| Component | Type | Current (µA) | Realistic |
+|-----------|------|-------------|-----------|
+| R12 (10k) | Pull-up | 500 | 500 |
+| R8 (180k) | FB divider top | 28 | 28 |
+| D3 (Red LED) | Indicator | 300 | 0 (GPIO off) |
+| U4 (AP63357) | Buck Iq | 20 | 0 (can disable via EN) |
+
+---
+
+## 10. Inrush Analysis
+
+| Regulator | Rail | Output caps | Est. inrush | Soft-start | Status |
+|-----------|------|-------------|-------------|------------|--------|
+| U5 (RT9080) | 3.3V | 10.8µF | 0.071A | 0.5ms | OK |
+| U4 (AP63357) | 5V | 132µF | 0.51A | 1.0ms | **Moderate** |
+
+The AP63357 output stage has 132µF of ceramic capacitance, resulting in moderate inrush (0.51A). The AP63357 has internal soft-start (typically 0.64ms), which limits the actual inrush. With a 2.5A PTC fuse (F1) on the barrel jack input, this is within margins.
+
+---
+
+## 11. Suggested Certifications
+
+| Standard | Region | Reason |
+|----------|--------|--------|
+| FCC Part 15 Subpart B | US | Unintentional radiator (switching converter, wireless module) |
+| CISPR 32 / CE EMC Directive | EU | EMC compliance for all electronic devices |
+
+The RM2 wireless module (U9) is a pre-certified module. For the complete product, the host board still requires intentional radiator testing if the module certification conditions are not met (antenna type, ground plane size, etc.).
+
+---
+
+## 12. ERC Warnings
+
+| Warning | Net | Assessment |
+|---------|-----|------------|
+| No driver | RUN | Expected — R18 pull-up + external reset via J6. Passive network drives the RP2350B RUN pin. |
+| No driver | MOTOR_L/3_VREF | Expected — voltage divider output (R42/R43) through jumper JP8. No active driver needed. |
+| No driver | MOTOR_R/4_VREF | Expected — voltage divider output (R44/R45) through jumper JP9. |
+| No driver | ADC_VREF | Expected — RC filter output (R1/C13). Passive network provides filtered reference. |
+
+All ERC warnings are false positives from passive-only networks driving input pins.
+
+### PWR_FLAG Warnings
+
+7 power rails missing PWR_FLAG symbols: GND, VIN, 1.1V, 5V, VRAW, VUSB, VSYS. KiCad ERC will flag these. Add PWR_FLAG symbols to silence the warnings.
+
+---
+
+## 13. Test Coverage
+
+11 test points covering motor outputs and USB data lines:
+
+| Ref | Net | Function |
+|-----|-----|----------|
+| TP1 | USB_D+ | USB data debug |
+| TP2 | USB_D- | USB data debug |
+| TP4 | VBATT | Battery input |
+| TP5 | MOTOR_L_OUT+ | Motor L positive |
+| TP6 | MOTOR_L_OUT- | Motor L negative |
+| TP7 | MOTOR_3_OUT- | Motor 3 negative |
+| TP8 | MOTOR_3_OUT+ | Motor 3 positive |
+| TP9 | MOTOR_4_OUT+ | Motor 4 positive |
+| TP10 | MOTOR_4_OUT- | Motor 4 negative |
+| TP11 | MOTOR_R_OUT- | Motor R negative |
+| TP12 | MOTOR_R_OUT+ | Motor R positive |
+
+### Key Nets Without Test Points
+
+- **Power rails:** 3.3V, 5V, VIN, VSYS, VRAW, VBATT, VUSB, 1.1V, 3V3_EN, GPIO46/VIN_MEAS (10 rails)
+- **I2C buses:** GPIO4/SDA0, GPIO5/SCL0, GPIO38/SDA1, GPIO39/SCL1
+
+No SWD/JTAG debug connector detected. The board exposes SWDCLK and SWDIO signals but lacks a dedicated debug header. Programming is handled via USB (UF2 bootloader).
+
+---
+
+## 14. Issues and Recommendations
 
 | # | Severity | Category | Finding | Recommendation |
 |---|----------|----------|---------|----------------|
-| 1 | **Medium** | Documentation | LED resistor values in project documentation (R3=120Ω, R4/R5=91Ω) do not match schematic (R3=150Ω, R4/R5=110Ω). Schematic values are safe — all channels under 30mA worst case. | Update documentation to reflect actual schematic values |
-| 2 | Low | ERC | All 4 power rails (+3V3, +5V, +BATT, GND) missing PWR_FLAG symbols. KiCad ERC will flag these. | Add PWR_FLAG symbols to silence warnings |
-| 3 | Low | Layout | U1 courtyard extends 0.21mm past board edge. | Verify module body/pads don't overhang; likely just antenna keepout |
-| 4 | Low | Sourcing | 31 passives missing MPNs (35.4% MPN coverage). No LCSC numbers for JLCPCB assembly. | Assign MPNs before ordering assembled boards |
-| 5 | Info | Silkscreen | Connectors J1 and J2 lack pin label silkscreen. | Add pin/signal labels for assembly reference |
-| 6 | Info | Footprint | L1/L2 footprints (custom library inductor) don't match symbol footprint filters (Inductor_*, L_*). | Update symbol footprint filters to include custom library prefix |
-
-### ERC Warnings (non-critical)
-
-| Warning | Details | Assessment |
-|---------|---------|------------|
-| MCU_RESET no driver | Net has passive pins (R7, C2) and input pin (U1.EN) but no output driver | Expected — RC circuit drives EN via passive network. Not a real issue. |
-| MCU_RESET input label shape | Label shaped as input with no driver | Cosmetic — label direction doesn't affect connectivity |
-| Cross-domain: EN_5V | Signal crosses +3V3 and +5V domains | False positive — GPIO8 (3.3V logic) drives TPS61023 EN (0.5V threshold, CMOS compatible) |
-
----
-
-## 13. Positive Findings
-
-1. **Routing 100% complete** with no unrouted nets
-2. **All 16 active GPIO assignments verified** against ESP32-S3 TRM — no peripheral conflicts, no strapping violations
-3. **21 unused GPIOs properly marked NC** in schematic
-4. **USB D+/D- length matched within 0.53mm** — excellent for USB 2.0 Full Speed
-5. **Continuous ground plane** on B.Cu (29,818 mm²) with 42 stitching vias
-6. **ESP32-S3 thermal pad: 12 vias** — adequate thermal relief
-7. **Decoupling caps well-placed** (4.4mm from boost converters)
-8. **PDN impedance excellent** — 1.7mΩ on +3V3, 2.5mΩ on +5V
-9. **All LED currents within 30mA abs max** at worst-case tolerance stack
-10. **Reverse polarity protection** (P-FET) and **USB ESD protection** (USBLC6-2SC6) present
-11. **500mA VBUS fuse** protects USB host port
-12. **Feedforward caps** on both boost converter FB dividers (proper loop compensation)
-13. **Battery ADC on ADC1** — no WiFi contention
-14. **Low assembly complexity** (score 37/100) — all SMD, predominantly 0805
-15. **DFM metrics within JLCPCB standard tier** specifications
+| 1 | **WARNING** | ESD | 17 of 19 connectors have zero ESD protection. All expansion headers, motor connectors, servo ports, and sensor ports expose MCU GPIOs directly. | Add TVS arrays on high-risk connectors (J4-J7 expansion headers, J16-J19 motor). At minimum, add ESD protection on the Qwiic I2C ports (J13/J14) since these are hot-pluggable. |
+| 2 | **WARNING** | Protocol | No external I2C pull-up resistors on either I2C bus. I2C1 (IMU) and I2C0 (Qwiic expansion) rely on internal pull-ups. | Add 2.2k-4.7k pull-ups to 3.3V on SDA1/SCL1 for reliable IMU communication. For Qwiic connectors, pull-ups are typically provided by the connected device. |
+| 3 | **WARNING** | Power | 5V rail (132µF) has no 100nF bypass capacitors. All caps are 22µF bulk (0805). Motor driver switching transients need high-frequency bypass. | Add 100nF 0402 caps near U7 and U8 VIN pins. |
+| 4 | **WARNING** | Voltage | AP63357 feedback divider (R8=180k/R9=33k) yields 4.94V with correct Vref=0.765V. Analyzer heuristic used 0.6V and flagged 22.5% mismatch. | Verify Vout with actual Vref from AP63357 datasheet. The divider is correctly designed for ~5V output. |
+| 5 | Medium | Crystal | Y1 (12 MHz) load capacitor error -41.7% (10.5pF effective vs 18pF target). | Verify RP2350B internal oscillator load cap trim is configured in firmware to compensate. External 15pF + internal trim should reach 18pF. |
+| 6 | Medium | Decoupling | VSYS rail has only 1x 4.7µF cap (PDN impedance 138 mOhm). This rail feeds the 3.3V LDO (U5). | Add a 100nF bypass cap on VSYS near U5 input. |
+| 7 | Medium | USB | VBUS decoupling not detected near USB-C connector (J2). | Add 4.7µF + 100nF on VUSB close to J2. |
+| 8 | Medium | Sensor | IMU interrupt lines (IMU_INT1, IMU_INT2) are not connected to MCU GPIOs. | If motion interrupts are needed, route INT1/INT2 to available GPIOs. |
+| 9 | Low | ERC | 7 power rails missing PWR_FLAG symbols. | Add PWR_FLAG to GND, VIN, 1.1V, 5V, VRAW, VUSB, VSYS. |
+| 10 | Low | Sourcing | 0% MPN coverage (0/164 components). BOM lock status: FAIL. | Assign MPNs for all active components and critical passives before production. |
+| 11 | Low | Assembly | 89 hard-to-solder components (0402 package). Moderate complexity score (58/100). | Appropriate for machine assembly. Document 0402 hand-rework procedures. |
+| 12 | Info | Debug | No SWD/JTAG debug header. SWDCLK/SWDIO routed but not broken out to a connector. | Consider adding a Tag-Connect or 10-pin SWD header for production debug. |
+| 13 | Info | Ground | USB-C connector J2 has 13 signal pins per ground pin. | Connect additional GND pins on J2 footprint for improved EMI. |
+| 14 | Info | BOM | 8 single-use passive values — potential for consolidation. | Review single-use values for standardization opportunities. |
 
 ---
 
-## 14. Summary
+## 15. Positive Findings
 
-This design is well-engineered and ready for fabrication. The schematic has correct component values, proper power sequencing, adequate protection, and clean GPIO assignments. The PCB layout has complete routing, good power integrity, proper ground plane coverage, and USB length matching.
+1. **Comprehensive motor driver design** — 4 independent H-bridge channels with per-channel current sensing, VREF adjustment via solder jumpers, fault outputs with pull-ups, and 8 dedicated test points on motor outputs
+2. **Robust power input ORing** — Battery and USB power paths use DMG2305UX P-FETs with BCM857BS dual PNP for proper source selection, preventing back-feeding between inputs
+3. **USB-C correctly configured** — CC1/CC2 pull-downs (R28/R29=5.1k) properly identify the board as a USB sink device. Series resistors (R4/R5) on data lines. ESD protection (D5, DT1042-04SO) on D+/D-/VBUS
+4. **Generous buck converter output capacitance** — 132µF on the 5V/VIN rail and 110µF on the motor power input provide excellent transient response for motor driver load steps
+5. **Well-filtered ADC reference** — R1=200/C13=4.7µF (169 Hz cutoff) provides clean ADC_VREF for accurate voltage measurements. R2=33/C14=4.7µF (1.03 kHz) filters the core supply.
+6. **Power Good indicator** — U4 (AP63357) PG output drives D6 (red LED) and is exposed on the expansion header for firmware monitoring
+7. **Single ground domain** — 132 components connected to a unified GND net with no split ground issues. Clean return path for all circuits.
+8. **Extensive I/O expansion** — Four 20-pin headers (J4-J7) expose motor control, encoder inputs, servo outputs, ADC, I2C, SPI, UART, power, and GPIO signals for educational experimentation
+9. **Solder jumper configurability** — 14 solder jumpers (JP1-JP14) allow users to configure I2C addresses, current sense enable, VREF selection, and VIN measurement without board modifications
+10. **Test point coverage on all motor outputs** — All 8 H-bridge output nets have dedicated 1.0mm test points for oscilloscope probing during motor tuning
 
-The only actionable item before ordering is updating the CLAUDE.md documentation to match the actual LED resistor values in the schematic. The remaining items (PWR_FLAGs, MPN assignment, silkscreen labels) are low-priority improvements.
+---
 
-**Verdict: Ready for fabrication.**
+## 16. Summary
+
+This robot controller board is a well-designed educational platform with a capable power architecture and thoughtful motor driver implementation. The AP63357 buck converter with generous output capacitance handles the dynamic loads of four motor channels, and the power path ORing between battery and USB is properly implemented with P-FET switches.
+
+The primary concern is **ESD protection coverage**: 17 of 19 connectors have no ESD protection, and this is a board designed to be handled by students who will frequently plug and unplug motors, sensors, and expansion cables. While the RP2350B and DRV8411A have some internal ESD tolerance, dedicated TVS protection on the most-exposed connectors (Qwiic I2C, motor ports, expansion headers) would significantly improve field reliability.
+
+Secondary concerns include missing I2C pull-ups (can be mitigated in firmware via internal pull-ups), missing high-frequency bypass caps on the motor power rail, and the crystal load capacitor sizing (likely compensated by RP2350B internal trim).
+
+The design is functional as-is for educational use. For production hardening, address the ESD gaps on external connectors and add bypass capacitors on the 5V and VSYS rails.
+
+**Verdict: Functional, with ESD and decoupling improvements recommended before high-volume production.**
