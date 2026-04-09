@@ -24,7 +24,8 @@ def snap_to_mil_grid(x_mm: float) -> float:
 
 # Regulator Vref lookup table — maps part number prefixes to their internal
 # reference voltage.  Used by the feedback divider Vout estimator instead of
-# guessing from a list.  Entries are checked in order; first prefix match wins.
+# guessing from a list.  Lookup uses longest-prefix-match so that specific
+# entries (e.g. LMR51420=0.6V) beat broader ones (e.g. LMR514=0.8V).
 # When a part isn't found here the analyzer falls back to the heuristic sweep.
 _REGULATOR_VREF: dict[str, float] = {
     # TI switching regulators — verified against TI datasheets 2026-03-31
@@ -36,7 +37,10 @@ _REGULATOR_VREF: dict[str, float] = {
     "TPS56": 0.6,                                                 # TPS560200 VSENSE = 0.6V (datasheet)
     "TPS6300": 0.5,    "TPS6301": 0.5,                           # TPS63000/01 VFB = 0.5V (datasheet)
     "TPS6310": 0.5,                                               # TPS631000 VFB = 0.5V (datasheet SLVSEK5)
-    "LMR514": 0.8,     "LMR516": 0.8,                            # LMR51440/60 Vref = 0.8V (datasheet)
+    "LMR51410": 0.6,   "LMR51420": 0.6,   "LMR51430": 0.6,       # LMR51410/20/30 Vref = 0.6V (datasheet)
+    "LMR51440": 0.8,   "LMR51460": 0.8,                          # LMR51440/60 Vref = 0.8V (datasheet)
+    "LMR51610": 0.6,   "LMR51620": 0.6,   "LMR51630": 0.6,       # LMR51610/20/30 Vref = 0.6V (datasheet)
+    "LMR51640": 0.8,   "LMR51660": 0.8,                          # LMR51640/60 Vref = 0.8V (datasheet)
     "LMR336": 1.0,     "LMR338": 1.0,                            # LMR33630/60 Vref = 1.0V (datasheet)
     "LMR380": 1.0,                                                # LMR38010 VFB = 1.0V (datasheet SNVSB89)
     "LM258": 1.23,     "LM259": 1.23,                            # LM2596/LM2585 VFB = 1.23V (datasheet)
@@ -154,10 +158,16 @@ def lookup_regulator_vref(value: str, lib_id: str) -> tuple[float | None, str]:
             fixed_v = float(digits[0] + "." + digits[1])
             if 0.5 <= fixed_v <= 9.9:
                 return fixed_v, "fixed_suffix"
+    # Longest-prefix-match: collect all matching prefixes, pick the longest
     for candidate in candidates:
+        best_prefix = ""
+        best_vref = None
         for prefix, vref in _REGULATOR_VREF.items():
-            if candidate.startswith(prefix.upper()):
-                return vref, "lookup"
+            if candidate.startswith(prefix.upper()) and len(prefix) > len(best_prefix):
+                best_prefix = prefix
+                best_vref = vref
+        if best_vref is not None:
+            return best_vref, "lookup"
     return None, ""
 
 
