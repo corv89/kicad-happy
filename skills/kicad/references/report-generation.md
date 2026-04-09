@@ -160,7 +160,7 @@ Custom library symbols (e.g., `sacmap:TPS61023`) are highest priority for datash
 [Enable chains (EN/PG dependencies), startup order, missing PG feedback]
 
 ### Sleep Current Audit
-[Per-rail estimated sleep current, dominant leakage paths (pull-up/pull-down resistors), regulator Iq estimates with EN pin detection. Note: worst-case model — real sleep current typically 5-20x lower.]
+[Per-rail estimated sleep current, dominant leakage paths (pull-up/pull-down resistors), regulator Iq estimates with EN pin detection. Present both the analyzer's worst-case figure (`total_estimated_sleep_uA`) and realistic estimate (`realistic_total_uA`). Use `realistic_total_uA` for expected battery life; use the worst-case for absolute-maximum calculations. Each current path has `likely_state` explaining whether it's active during sleep (e.g., "can be disabled via EN", "GPIO off during sleep", "rail disabled during sleep") and `realistic_uA` (0 for inactive paths). Explain which paths are inactive and why.]
 
 ### Inrush Analysis
 [Power-on current analysis — not limited to regulators. Consider ALL current paths at power-on:]
@@ -269,7 +269,7 @@ Copper absence vs keepout enforcement: Confirming "no copper" under a touch pad 
 
 Trace length asymmetry: Compute the trace length from each touch pad to the controller IC and compare across all pads. Significant asymmetry (>1.5×) means different parasitic capacitance per channel, which shifts baseline readings and may reduce dynamic range even with firmware calibration. Report the ratio: "TOUCH_2 (41.6mm) is 1.75× longer than TOUCH_1 (23.7mm)."
 
-GND pour clearance: Measure the actual clearance between each touch pad and the nearest same-layer ground copper. Compare against the touch controller's recommended minimum (typically 1.0mm for Espressif, check the specific controller's app note). If the clearance is exactly at the minimum, note this: "GND clearance is 1.0mm — exactly the Espressif minimum. Consider increasing to 1.5mm if sensitivity is marginal."
+GND pour clearance: Use the `touch_pad_gnd_clearance` section in `copper_presence` for measured clearance values (`gnd_clearance_mm` per touch pad). Compare against the touch controller's recommended minimum (typically 1.0mm for Espressif, check the specific controller's app note). If the clearance is exactly at the minimum, note this: "GND clearance is 1.0mm — exactly the Espressif minimum. Consider increasing to 1.5mm if sensitivity is marginal." If `touch_pad_gnd_clearance` is not present, measure manually from the PCB layout.
 
 ### Antenna Layout
 [Include when ANT-prefixed footprints, antenna lib_id patterns, or RF antenna footprints are detected, OR when wireless modules (ESP32, nRF, etc.) with integrated/PCB antennas are present]
@@ -581,7 +581,7 @@ Document these when they affect the report — it helps the designer understand 
 
 - **Vref coverage**: Feedback divider Vout calculations use a lookup table (~60 regulator families) with heuristic fallback. When `vref_source` is `"heuristic"`, the assumed Vref may be wrong — always verify against the datasheet. The `vout_net_mismatch` field flags cases where estimated Vout differs >15% from the output rail name voltage.
 - **Legacy format**: KiCad 5 `.sch` files get full analysis when `.lib` files are available in the repo (92–100% typical coverage). Components whose `.lib` files are missing will lack pin data and won't participate in signal analysis or subcircuit detection.
-- **Sleep current model**: Uses worst-case assumption (all pull-ups driven low simultaneously) plus family-level regulator Iq estimates with EN pin detection. Real sleep current is typically 5-20x lower than reported.
+- **Sleep current model**: Reports both worst-case (`total_estimated_sleep_uA`) and realistic (`realistic_total_uA`) estimates. Worst-case assumes all pull-ups driven low simultaneously; realistic uses topology-aware state estimation (LEDs off, disableable regulators off, rails from EN-equipped regulators disabled). The realistic estimate may still overcount if the design has additional sleep-mode controls not visible in the schematic topology.
 - **Cross-domain analysis**: Uses voltage equivalence (parsing voltage from rail names) to reduce false positives, but rails without parseable voltages in their names may still trigger false cross-domain warnings.
 - **MOSFET load classification**: Net name keyword detection covers common patterns (motor, heater, fan, solenoid, valve, pump, relay, speaker, buzzer, lamp) but may miss unusual naming conventions.
 - **Bridge circuits**: Cross-sheet detection works through unified hierarchical nets. Topology classification is based on half-bridge count (1=half, 2=H-bridge, 3+=3-phase) which may misclassify independent half-bridges as an H-bridge.

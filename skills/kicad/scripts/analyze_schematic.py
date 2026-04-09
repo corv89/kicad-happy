@@ -5343,20 +5343,67 @@ def analyze_sleep_current(ctx: AnalysisContext,
     if not rail_currents:
         return {}
 
+    # Build set of disableable rails (output of regulators with EN pins)
+    _disableable_rails: set[str] = set()
+    if signal_analysis:
+        for reg in signal_analysis.get("power_regulators", []):
+            out_rail = reg.get("output_rail", "")
+            if not out_rail:
+                continue
+            for comp in components:
+                if comp["reference"] == reg.get("ref", ""):
+                    for pin in comp.get("pins", []):
+                        if pin.get("name", "").upper() in (
+                                "EN", "ENABLE", "ON/OFF", "ON", "SHDN", "CE"):
+                            _disableable_rails.add(out_rail)
+                    break
+
+    # Add realistic state estimation to each entry
+    for rail, entries in rail_currents.items():
+        for e in entries:
+            etype = e["type"]
+            if etype == "pull_up":
+                # Check if signal net connects to a pin powered by the same
+                # rail (both ends at rail voltage → ~0µA)
+                e["likely_state"] = "worst-case (signal driven low)"
+                e["realistic_uA"] = e["current_uA"]
+            elif etype == "led_indicator":
+                # LEDs are typically GPIO-controlled
+                e["likely_state"] = "GPIO off during sleep"
+                e["realistic_uA"] = 0.0
+            elif etype == "regulator_iq":
+                if e.get("has_enable_pin"):
+                    e["likely_state"] = "can be disabled via EN"
+                    e["realistic_uA"] = 0.0
+                else:
+                    e["likely_state"] = "always-on"
+                    e["realistic_uA"] = e["current_uA"]
+            elif etype == "resistor_to_gnd":
+                if rail in _disableable_rails:
+                    e["likely_state"] = "rail disabled during sleep"
+                    e["realistic_uA"] = 0.0
+                else:
+                    e["likely_state"] = "always conducting"
+                    e["realistic_uA"] = e["current_uA"]
+
     # Summarize per rail — split always-on vs conditional (pull-ups)
     result_rails = {}
     always_on_uA = 0.0
     conditional_uA = 0.0
+    realistic_uA = 0.0
     for rail, entries in rail_currents.items():
         rail_always = sum(e["current_uA"] for e in entries if e["type"] != "pull_up")
         rail_cond = sum(e["current_uA"] for e in entries if e["type"] == "pull_up")
+        rail_realistic = sum(e.get("realistic_uA", e["current_uA"]) for e in entries)
         always_on_uA += rail_always
         conditional_uA += rail_cond
+        realistic_uA += rail_realistic
         result_rails[rail] = {
             "current_paths": entries,
             "total_uA": round(rail_always + rail_cond, 2),
             "always_on_uA": round(rail_always, 2),
             "conditional_uA": round(rail_cond, 2),
+            "realistic_uA": round(rail_realistic, 2),
         }
 
     observations = [
@@ -5366,11 +5413,15 @@ def analyze_sleep_current(ctx: AnalysisContext,
         observations.append(
             f"Conditional current (pull-ups, worst-case): {conditional_uA:.1f} uA ({conditional_uA / 1000:.2f} mA)"
         )
+    observations.append(
+        f"Realistic sleep estimate: {realistic_uA:.1f} uA ({realistic_uA / 1000:.2f} mA)"
+    )
 
     return {
         "rails": result_rails,
         "total_estimated_sleep_uA": round(always_on_uA, 2),
         "conditional_pull_up_uA": round(conditional_uA, 2),
+        "realistic_total_uA": round(realistic_uA, 2),
         "observations": observations,
     }
 

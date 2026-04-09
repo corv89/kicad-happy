@@ -4394,6 +4394,47 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
     if foreign_zone_details:
         result["same_layer_foreign_zones"] = foreign_zone_details
 
+    # Touch pad GND clearance measurement
+    # For components in opp_uncovered that look like touch pads, compute
+    # distance to nearest same-layer GND zone edge
+    _gnd_keywords = ("gnd", "vss", "ground", "agnd", "dgnd", "pgnd")
+    gnd_zones = [z for z in zones
+                 if z.get("net_name", "").lower() in _gnd_keywords
+                 or "gnd" in z.get("net_name", "").lower()]
+    touch_clearances = []
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        if ref not in opp_uncovered:
+            continue
+        lib = fp.get("library", "").lower()
+        is_touch = (ref.upper().startswith("TP")
+                    or "touch" in lib or "capacitive" in lib)
+        if not is_touch:
+            continue
+        fx, fy = fp.get("x", 0), fp.get("y", 0)
+        fp_layer = fp.get("layer", "F.Cu")
+        min_dist = float('inf')
+        for gz in gnd_zones:
+            if fp_layer not in gz.get("layers", []):
+                continue
+            bbox = gz.get("outline_bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            bx_min, by_min, bx_max, by_max = bbox
+            # Distance from point to axis-aligned bounding box
+            dx = max(bx_min - fx, 0, fx - bx_max)
+            dy = max(by_min - fy, 0, fy - by_max)
+            dist = math.sqrt(dx * dx + dy * dy)
+            min_dist = min(min_dist, dist)
+        if min_dist < float('inf'):
+            touch_clearances.append({
+                "ref": ref,
+                "layer": fp_layer,
+                "gnd_clearance_mm": round(min_dist, 2),
+            })
+    if touch_clearances:
+        result["touch_pad_gnd_clearance"] = touch_clearances
+
     return result
 
 
