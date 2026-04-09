@@ -8139,6 +8139,21 @@ def main():
         except Exception as e:
             print(f"Warning: lifecycle audit failed: {e}", file=sys.stderr)
 
+    # Datasheet verification — cross-check extracted datasheet data against schematic
+    try:
+        from datasheet_verify import run_datasheet_verification
+        project_dir = str(Path(args.schematic).parent)
+        ds_verify = run_datasheet_verification(result, project_dir=project_dir)
+        if ds_verify.get("findings") or ds_verify.get("summary", {}).get("ics_with_extractions", 0) > 0:
+            result["datasheet_verification"] = ds_verify
+    except ImportError:
+        pass
+    except Exception as e:
+        result["datasheet_verification"] = {
+            "findings": [],
+            "summary": {"error": str(e)},
+        }
+
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
 
