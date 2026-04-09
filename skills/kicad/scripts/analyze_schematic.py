@@ -7887,6 +7887,23 @@ def main():
     except ImportError:
         pass
 
+    # Apply power_rails config (ignore/flag/voltage_overrides)
+    try:
+        from project_config import apply_power_rails_config
+        sig = result.get('signal_analysis', {})
+        stats = result.get('statistics', {})
+        rv = sig.get('rail_voltages', {})
+        pr = stats.get('power_rails', [])
+        if rv or pr:
+            filtered_rv, filtered_pr, flagged = apply_power_rails_config(
+                rv, pr, config)
+            sig['rail_voltages'] = filtered_rv
+            stats['power_rails'] = filtered_pr
+            if flagged:
+                sig['flagged_rails'] = flagged
+    except (ImportError, Exception):
+        pass
+
     if args.lifecycle:
         try:
             from lifecycle_audit import audit_bom

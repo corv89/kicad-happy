@@ -230,7 +230,7 @@ The schematic symbol property is the best place for per-component notes, but pro
 
 4. **Existing BOM CSV Notes column** — if a `bom.csv` already exists, read the Notes column. The user may have added notes there that aren't in the schematic.
 
-5. **Project-level config** (e.g., `CLAUDE.md`, `AGENTS.md`, or equivalent) — project instructions may specify BOM conventions, preferred distributors, or special ordering rules.
+5. **Project-level config** (`.kicad-happy.json`) — `preferred_suppliers` sets sourcing priority, `bom` section sets field naming and grouping conventions. See `skills/kicad/references/config-reference.md` for the full schema.
 
 6. **Schematic symbol Description field** — sometimes used for assembly notes rather than part description (e.g., "100nF bypass - place close to U3 pin 4").
 

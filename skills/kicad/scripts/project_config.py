@@ -59,6 +59,8 @@ CONFIG_FILENAME = '.kicad-happy.json'
 VALID_MARKETS = {'us', 'eu', 'automotive', 'medical', 'military'}
 VALID_DERATING_PROFILES = {'hobby', 'commercial', 'conservative', 'automotive'}
 VALID_BOARD_CLASSES = {'class_1', 'class_2', 'class_3'}
+VALID_SUPPLIERS = {'digikey', 'mouser', 'lcsc', 'element14'}
+VALID_BOM_GROUP_BY = {'value', 'mpn', 'value+footprint'}
 
 # Top-level keys whose list values are concatenated across layers
 # instead of replaced.  All other lists use closer-wins semantics.
@@ -69,12 +71,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     'version': 1,
     'project': {},
     'suppressions': [],
+    'preferred_suppliers': [],
+    'bom': {},
     'analysis': {
         'output_dir': 'analysis',
         'retention': 5,
         'auto_diff': True,
         'track_in_git': False,
         'diff_threshold': 'major',
+        'power_rails': {},
     },
 }
 
@@ -219,6 +224,71 @@ def _load_and_validate(path: str) -> Optional[Dict[str, Any]]:
                 continue
             valid_suppressions.append(s)
         cfg['suppressions'] = valid_suppressions
+
+    # Validate preferred_suppliers
+    raw_suppliers = cfg.get('preferred_suppliers')
+    if raw_suppliers is not None:
+        if not isinstance(raw_suppliers, list):
+            print(f'Warning: {path}: preferred_suppliers must be a list, '
+                  f'ignoring', file=sys.stderr)
+            del cfg['preferred_suppliers']
+        else:
+            valid = [s for s in raw_suppliers
+                     if isinstance(s, str) and s in VALID_SUPPLIERS]
+            invalid = [s for s in raw_suppliers
+                       if not isinstance(s, str) or s not in VALID_SUPPLIERS]
+            if invalid:
+                print(f'Warning: {path}: preferred_suppliers: unknown '
+                      f'suppliers {invalid}, ignoring them', file=sys.stderr)
+            cfg['preferred_suppliers'] = valid
+
+    # Validate bom section
+    raw_bom = cfg.get('bom')
+    if raw_bom is not None:
+        if not isinstance(raw_bom, dict):
+            print(f'Warning: {path}: bom must be an object, ignoring',
+                  file=sys.stderr)
+            del cfg['bom']
+        else:
+            group_by = raw_bom.get('group_by')
+            if group_by is not None and group_by not in VALID_BOM_GROUP_BY:
+                print(f'Warning: {path}: bom.group_by "{group_by}" invalid '
+                      f'(expected {VALID_BOM_GROUP_BY}), ignoring',
+                      file=sys.stderr)
+                del raw_bom['group_by']
+
+    # Validate analysis.power_rails
+    raw_analysis = cfg.get('analysis')
+    if isinstance(raw_analysis, dict):
+        raw_pr = raw_analysis.get('power_rails')
+        if raw_pr is not None:
+            if not isinstance(raw_pr, dict):
+                print(f'Warning: {path}: analysis.power_rails must be an '
+                      f'object, ignoring', file=sys.stderr)
+                del raw_analysis['power_rails']
+            else:
+                for list_key in ('ignore', 'flag'):
+                    val = raw_pr.get(list_key)
+                    if val is not None and not isinstance(val, list):
+                        print(f'Warning: {path}: analysis.power_rails.'
+                              f'{list_key} must be a list, ignoring',
+                              file=sys.stderr)
+                        del raw_pr[list_key]
+                overrides = raw_pr.get('voltage_overrides')
+                if overrides is not None:
+                    if not isinstance(overrides, dict):
+                        print(f'Warning: {path}: analysis.power_rails.'
+                              f'voltage_overrides must be an object, '
+                              f'ignoring', file=sys.stderr)
+                        del raw_pr['voltage_overrides']
+                    else:
+                        bad = [k for k, v in overrides.items()
+                               if not isinstance(v, (int, float))]
+                        for k in bad:
+                            print(f'Warning: {path}: analysis.power_rails.'
+                                  f'voltage_overrides.{k} must be numeric, '
+                                  f'ignoring', file=sys.stderr)
+                            del overrides[k]
 
     return cfg
 
@@ -560,6 +630,68 @@ def resolve_design_intent(config: Dict[str, Any],
     result['source'] = source
 
     return result
+
+
+def apply_power_rails_config(
+        rail_voltages: Dict[str, float],
+        power_rails_list: list,
+        config: Dict[str, Any],
+) -> tuple:
+    """Apply power_rails config to analysis output.
+
+    Filters ignored rails, marks flagged rails, applies voltage overrides.
+
+    Args:
+        rail_voltages: {net_name: voltage} dict from signal analysis.
+        power_rails_list: [{name, voltage}] list from statistics.
+        config: Loaded .kicad-happy.json config.
+
+    Returns:
+        (filtered_rail_voltages, filtered_power_rails, flagged_rails)
+        where flagged_rails is a list of net names matching flag patterns.
+    """
+    pr_cfg = config.get('analysis', {}).get('power_rails', {})
+    if not pr_cfg:
+        return rail_voltages, power_rails_list, []
+
+    ignore_patterns = pr_cfg.get('ignore', [])
+    flag_patterns = pr_cfg.get('flag', [])
+    voltage_overrides = pr_cfg.get('voltage_overrides', {})
+
+    def _is_ignored(name: str) -> bool:
+        return any(fnmatch(name, pat) for pat in ignore_patterns)
+
+    def _is_flagged(name: str) -> bool:
+        return any(fnmatch(name, pat) for pat in flag_patterns)
+
+    # Filter rail_voltages
+    filtered_rv = {}
+    for name, voltage in rail_voltages.items():
+        if _is_ignored(name):
+            continue
+        v = voltage_overrides.get(name, voltage)
+        filtered_rv[name] = v
+
+    # Filter power_rails list
+    filtered_pr = []
+    for rail in power_rails_list:
+        rname = rail.get('name', '')
+        if _is_ignored(rname):
+            continue
+        entry = dict(rail)
+        if rname in voltage_overrides:
+            entry['voltage'] = voltage_overrides[rname]
+        filtered_pr.append(entry)
+
+    # Collect flagged rails
+    flagged = [name for name in filtered_rv if _is_flagged(name)]
+
+    return filtered_rv, filtered_pr, flagged
+
+
+def get_preferred_suppliers(config: Dict[str, Any]) -> List[str]:
+    """Return preferred_suppliers from config, or empty list."""
+    return config.get('preferred_suppliers', [])
 
 
 # ---------------------------------------------------------------------------

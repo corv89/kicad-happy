@@ -36,6 +36,11 @@ from pathlib import Path
 
 from kicad_sexp import find_matching_paren, find_sub_sheets
 
+# Allow importing project_config from kicad skill
+_kicad_scripts = Path(__file__).resolve().parent.parent.parent / 'kicad' / 'scripts'
+if _kicad_scripts.is_dir() and str(_kicad_scripts) not in sys.path:
+    sys.path.insert(0, str(_kicad_scripts))
+
 
 # ---------------------------------------------------------------------------
 # Field name aliases — maps every known variant to a canonical name
@@ -344,7 +349,8 @@ def detect_convention(
 # BOM grouping
 # ---------------------------------------------------------------------------
 
-def generate_bom(symbols: list[dict], convention: dict) -> list[dict]:
+def generate_bom(symbols: list[dict], convention: dict,
+                 group_by: str = 'value+footprint') -> list[dict]:
     """Group symbols into BOM lines and identify gaps."""
     groups: dict[tuple, dict] = {}
     seen_refs = set()
@@ -395,7 +401,12 @@ def generate_bom(symbols: list[dict], convention: dict) -> list[dict]:
                 bom_comment = val
                 break
 
-        group_key = (value, footprint, mpn)
+        if group_by == 'mpn':
+            group_key = (mpn,) if mpn else (value, footprint, mpn)
+        elif group_by == 'value':
+            group_key = (value,)
+        else:  # 'value+footprint' — current default
+            group_key = (value, footprint, mpn)
 
         if group_key not in groups:
             groups[group_key] = {
@@ -505,6 +516,7 @@ def parse_schematic_file(filepath: Path) -> tuple[list[dict], str]:
 def analyze(
     input_path: Path,
     recursive: bool = False,
+    group_by: str = 'value+footprint',
 ) -> dict:
     """Analyze a KiCad schematic and return full BOM report."""
     files_to_parse = [input_path]
@@ -535,7 +547,7 @@ def analyze(
     convention = detect_convention(all_symbols)
 
     # Generate BOM
-    bom = generate_bom(all_symbols, convention)
+    bom = generate_bom(all_symbols, convention, group_by=group_by)
 
     # Compute stats
     real_parts = [e for e in bom if e["type"] not in ("power_symbol", "test_point", "mounting_hole")]
@@ -1163,6 +1175,18 @@ def main():
 
     args = parser.parse_args()
 
+    # Load project config for BOM preferences
+    bom_config: dict = {}
+    preferred_suppliers_cfg: list = []
+    try:
+        from project_config import load_config, get_preferred_suppliers
+        sch_dir = str(getattr(args, 'schematic', Path('.')).parent)
+        cfg = load_config(sch_dir)
+        bom_config = cfg.get('bom', {})
+        preferred_suppliers_cfg = get_preferred_suppliers(cfg)
+    except (ImportError, Exception):
+        pass
+
     if args.command is None:
         parser.print_help()
         sys.exit(1)
@@ -1194,7 +1218,15 @@ def main():
             sys.exit(1)
 
         if args.command == "analyze":
-            report = analyze(args.schematic, recursive=args.recursive)
+            group_by = bom_config.get('group_by', 'value+footprint')
+            report = analyze(args.schematic, recursive=args.recursive,
+                             group_by=group_by)
+            # Config override: preferred_suppliers takes precedence
+            if preferred_suppliers_cfg:
+                report['convention']['preferred_distributor'] = (
+                    preferred_suppliers_cfg[0])
+                report['convention']['preferred_suppliers'] = (
+                    preferred_suppliers_cfg)
             if args.json:
                 json.dump(report, sys.stdout, indent=2)
                 print()
@@ -1202,8 +1234,16 @@ def main():
                 print(format_human(report, gaps_only=args.gaps_only))
 
         elif args.command == "export":
-            report = analyze(args.schematic, recursive=args.recursive)
-            extra_distributors = [_normalize_distributor(s) for s in args.add_distributor]
+            group_by = bom_config.get('group_by', 'value+footprint')
+            report = analyze(args.schematic, recursive=args.recursive,
+                             group_by=group_by)
+            extra_distributors = [_normalize_distributor(s)
+                                  for s in args.add_distributor]
+            # Config-preferred suppliers always get CSV columns
+            for s in preferred_suppliers_cfg:
+                ns = _normalize_distributor(s)
+                if ns not in extra_distributors:
+                    extra_distributors.append(ns)
             result = export_csv(report, args.output, extra_distributors=extra_distributors)
             print(f"Exported {result['total_lines']} BOM lines to {result['output']}", file=sys.stderr)
             dist_names = [_DIST_CSV_MAP[s][0] for s in result.get("active_distributors", []) if s in _DIST_CSV_MAP]
