@@ -39,6 +39,8 @@ from kicad_utils import (
     _MIL_MM,
     _OUTPUT_DRIVE_KEYWORDS,
     classify_component,
+    classify_connector,
+    classify_ic_function,
     extract_pro_text_variables,
     format_frequency as _format_frequency,
     load_lib_tables,
@@ -540,6 +542,17 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         if is_power_sym:
             comp["_power_scope"] = sym_def.get("power_scope", "global")
 
+        # Enrich ICs with functional classification
+        if comp["type"] == "ic":
+            comp["functional_class"] = classify_ic_function(lib_id, value, description)
+
+        # Enrich connectors with external status and layout
+        if comp["type"] == "connector":
+            pin_count = len(sym_def.get("pins", [])) if sym_def else 0
+            is_ext, conn_layout = classify_connector(lib_id, value, pin_count)
+            comp["is_external_connector"] = is_ext
+            comp["connector_layout"] = conn_layout
+
         # Compute absolute pin positions
         comp["pins"] = compute_pin_positions(comp, lib_symbols)
 
@@ -575,6 +588,22 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     power_regulators = detect_power_regulators(ctx, voltage_dividers)
     integrated_ldos = detect_integrated_ldos(ctx, power_regulators)
     power_regulators.extend(integrated_ldos)
+
+    # Build rail_voltages: net name → voltage from regulator outputs + power symbol names
+    rail_voltages: dict[str, float] = {}
+    for reg in power_regulators:
+        out_rail = reg.get("output_rail")
+        v_out = reg.get("estimated_vout")
+        if out_rail and v_out is not None:
+            rail_voltages[_clean_hierarchical_name(out_rail)] = v_out
+    # Augment with voltages inferred from power symbol / net names
+    for net_name in ctx.nets:
+        clean = _clean_hierarchical_name(net_name)
+        if clean not in rail_voltages:
+            v = _estimate_rail_voltage(clean)
+            if v is not None:
+                rail_voltages[clean] = v
+
     protection_devices = detect_protection_devices(ctx)
     bridge_circuits, matched_fets, fet_pins = detect_bridge_circuits(ctx)
     transistor_circuits = detect_transistor_circuits(ctx, matched_fets, fet_pins)
@@ -660,6 +689,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         _enrich(results_dict)
 
     results = {
+        "rail_voltages": rail_voltages,
         "voltage_dividers": voltage_dividers,
         "rc_filters": rc_filters,
         "lc_filters": lc_filters,

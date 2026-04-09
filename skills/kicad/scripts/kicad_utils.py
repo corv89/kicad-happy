@@ -622,6 +622,171 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
     return "other"
 
 
+def classify_ic_function(lib_id: str, value: str, description: str = "") -> str:
+    """Classify an IC's functional role from its lib_id, value, and description.
+
+    Returns one of: mcu, fpga, memory, communication, sensor, power_management,
+    audio, display, motor_driver, adc, dac, clock, protection, interface, other_ic.
+    """
+    combined = (lib_id + " " + value + " " + description).lower()
+
+    # Order matters: more specific matches first to avoid false positives.
+    # MCU / microcontroller
+    if any(k in combined for k in ("stm32", "esp32", "esp8266", "rp2040", "rp2350",
+                                    "atmega", "attiny", "atsamd", "atsam", "pic16",
+                                    "pic18", "pic32", "nrf5", "nrf9", "msp430",
+                                    "cy8c", "efm32", "gd32", "ch32", "ch552",
+                                    "microcontroller", "mcu_")):
+        return "mcu"
+
+    # FPGA / CPLD
+    if any(k in combined for k in ("fpga", "cpld", "ice40", "ecp5", "spartan",
+                                    "artix", "kintex", "zynq", "cyclone", "max10",
+                                    "gowin", "lattice", "altera", "xilinx")):
+        return "fpga"
+
+    # Memory
+    if any(k in combined for k in ("flash", "eeprom", "sram", "dram", "sdram",
+                                    "w25q", "at24c", "25lc", "is62", "is66",
+                                    "mt48", "as4c", "ly68", "memory_")):
+        return "memory"
+
+    # ADC (before sensor — some ADC ICs have "sensor" in description)
+    if any(k in combined for k in ("analog_adc", "adc_", "_adc", "ads1", "mcp320",
+                                    "mcp330", "max11", "ltc24")):
+        return "adc"
+
+    # DAC
+    if any(k in combined for k in ("analog_dac", "dac_", "_dac", "mcp47", "mcp48",
+                                    "dac81", "dac71")):
+        return "dac"
+
+    # Audio
+    if any(k in combined for k in ("audio", "codec", "i2s", "pcm51", "pcm17",
+                                    "wm8", "max98", "tas2", "tas5", "ssm2",
+                                    "cs42", "cs43", "sgtl5", "tlv320")):
+        return "audio"
+
+    # Display driver
+    if any(k in combined for k in ("display", "lcd_driver", "oled_driver", "ssd1306",
+                                    "st7735", "st7789", "ili9", "hx8357",
+                                    "max7219", "ht16k33")):
+        return "display"
+
+    # Motor driver
+    if any(k in combined for k in ("motor_driver", "motor driver", "drv8", "a4988",
+                                    "tmc2", "l298", "l293", "tb6612", "uln2003")):
+        return "motor_driver"
+
+    # Clock / oscillator / PLL
+    if any(k in combined for k in ("clock", "pll", "si5351", "cdce", "lmk0",
+                                    "ics5", "clock_generator", "clock_buffer",
+                                    "timer_", "si544", "ds1085")):
+        return "clock"
+
+    # Sensor
+    if any(k in combined for k in ("sensor", "accel", "gyro", "imu", "magneto",
+                                    "bme2", "bme6", "bmp2", "bmp3", "bmp5",
+                                    "sht3", "sht4", "hdc1", "tmp1", "lm75",
+                                    "mpu6", "icm20", "lis3", "lsm6", "ina2",
+                                    "ina3", "max31", "thermocouple", "rtd")):
+        return "sensor"
+
+    # Protection (ESD, TVS array, overvoltage, overcurrent)
+    if any(k in combined for k in ("esd_protection", "tvs_array", "usblc",
+                                    "tpd4e", "prtr5v", "sp0505", "pesd",
+                                    "ip4220", "sn65220", "protection")):
+        return "protection"
+
+    # Communication (after MCU to avoid false positives on MCU descriptions)
+    if any(k in combined for k in ("uart", "ethernet", "wifi", "bluetooth", "lora",
+                                    "can_", "spi_", "i2c_", "rs232", "rs485",
+                                    "rs-232", "rs-485", "phy_", "transceiver",
+                                    "modem", "usb_hub", "usb_", "zigbee",
+                                    "interface_uart", "interface_can",
+                                    "ch340", "cp210", "ft232", "max232",
+                                    "max485", "max3232", "sn65hvd")):
+        return "communication"
+
+    # Power management (regulators, PMICs, battery chargers, supervisors)
+    if any(k in combined for k in ("regulator", "ldo", "buck", "boost", "pmic",
+                                    "battery_management", "charger", "power_management",
+                                    "power_supervisor", "supervisor", "voltage_reference",
+                                    "ams1117", "lm317", "tps5", "tps6", "tps7",
+                                    "mp1584", "mp2359", "lt308", "ltc36",
+                                    "mcp1640", "mcp1603")):
+        return "power_management"
+
+    # Interface (level shifters, buffers, muxes, I/O expanders)
+    if any(k in combined for k in ("interface_", "level_shift", "buffer", "mux",
+                                    "multiplexer", "demux", "io_expander",
+                                    "logic_level", "74hc", "74lvc", "74ahc",
+                                    "txb0", "txs0", "pca953", "pca955",
+                                    "mcp23", "pcf857", "tca6")):
+        return "interface"
+
+    return "other_ic"
+
+
+def classify_connector(lib_id: str, value: str, pin_count: int = 0) -> tuple[bool, str]:
+    """Classify a connector's external status and layout type.
+
+    Returns (is_external, layout) where:
+    - is_external: True if connector faces an external cable/user
+    - layout: one of usb_c, barrel, rj45, rj11, screw_terminal, dual, single, other
+    """
+    combined = (lib_id + " " + value).lower()
+
+    # Layout detection — order matters, most specific first
+    if any(k in combined for k in ("usb_c", "usb-c", "type-c", "typec")):
+        layout = "usb_c"
+    elif any(k in combined for k in ("barrel_jack", "barrel jack", "dc_jack",
+                                      "dc jack", "pj-", "pwrj")):
+        layout = "barrel"
+    elif "rj45" in combined or "8p8c" in combined:
+        layout = "rj45"
+    elif "rj11" in combined or "rj12" in combined or "6p6c" in combined or "4p4c" in combined:
+        layout = "rj11"
+    elif any(k in combined for k in ("screw_terminal", "screw terminal", "phoenix",
+                                      "pluggable_terminal", "terminal_block")):
+        layout = "screw_terminal"
+    elif re.search(r'(?:conn_\d+x\d+|_2x\d+|\d+x2_)', combined) or \
+         re.search(r'pin_header.*2x\d+|pin_socket.*2x\d+', combined):
+        layout = "dual"
+    elif re.search(r'(?:conn_01x\d+|conn_1x\d+|_1x\d+|\d+x1_)', combined) or \
+         re.search(r'pin_header.*1x\d+|pin_socket.*1x\d+', combined):
+        layout = "single"
+    else:
+        layout = "other"
+
+    # External classification
+    # Explicitly external connectors
+    if any(k in combined for k in ("usb", "rj45", "rj11", "rj12", "barrel", "dc_jack",
+                                    "hdmi", "displayport", "dvi", "vga",
+                                    "audio_jack", "headphone", "line_in", "line_out",
+                                    "sma", "sma_", "bnc", "f_conn", "n_conn",
+                                    "db9", "db25", "dsub", "d-sub",
+                                    "sd_card", "micro_sd", "sim_card")):
+        is_external = True
+    elif any(k in combined for k in ("screw_terminal", "screw terminal", "phoenix",
+                                      "terminal_block", "pluggable_terminal",
+                                      "molex", "jst", "jst_", "s3b-", "s4b-",
+                                      "wire_to_board", "wire-to-board")):
+        is_external = True
+    elif any(k in combined for k in ("test", "debug", "tp_", "testpoint", "test_point",
+                                      "tag_connect", "tag-connect", "cortex_debug",
+                                      "swd", "jtag", "isp", "icsp")):
+        is_external = False
+    elif any(k in combined for k in ("pin_header", "pin_socket", "conn_01x", "conn_02x",
+                                      "conn_1x", "conn_2x")):
+        # Generic headers: small headers (<=6 pins) are typically internal
+        is_external = pin_count > 6
+    else:
+        is_external = False
+
+    return is_external, layout
+
+
 def is_power_net_name(net_name: str | None, power_rails: set[str] | None = None) -> bool:
     """Check if a net name looks like a power rail by naming convention.
 

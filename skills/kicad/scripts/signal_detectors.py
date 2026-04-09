@@ -24,6 +24,64 @@ from detector_helpers import index_two_pin_components, get_components_by_type
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def _estimate_switching_freq(part_value: str) -> float | None:
+    """Estimate switching frequency from common regulator part numbers.
+
+    Returns frequency in Hz or None if unknown.
+    """
+    if not part_value:
+        return None
+    val = part_value.upper()
+
+    # Common SMPS ICs and their typical switching frequencies.
+    # Sources: DigiKey parametric data + manufacturer datasheets (verified 2026-04-01).
+    known_freqs = {
+        'TPS62': 2.5e6,    # TPS62130: 2.5MHz (DigiKey parametric)
+        'TPS61': 1.0e6,    # TPS61023: 1MHz (DigiKey parametric)
+        'TPS54': 570e3,    # TPS54331: 570kHz (DigiKey parametric)
+        'TPS56': 500e3,    # TPS56339: 500kHz (DigiKey parametric)
+        'TPS629': 2.2e6,   # TPS62912: 2.2MHz (DigiKey: 1/2.2MHz modes)
+        'TPS63': 2.4e6,    # TPS63020: 2.4MHz (DigiKey parametric)
+        'LM259': 150e3,    # LM2596: 150kHz (DigiKey parametric)
+        'LM257': 52e3,     # LM2575: 52kHz (DigiKey parametric)
+        'MP2307': 340e3,   # MP2307: 340kHz (DigiKey parametric)
+        'MP1584': 1.5e6,   # MP1584: 1.5MHz max (DigiKey: 100kHz-1.5MHz adj)
+        'MP2359': 1.4e6,   # MP2359: 1.4MHz (DigiKey parametric)
+        'AP3012': 1.5e6,   # AP3012: 1.5MHz (DigiKey parametric)
+        'RT8059': 1.5e6,   # RT8059: 1.5MHz (DigiKey parametric)
+        'SY820': 800e3,    # SY8208: 800kHz (Silergy datasheet)
+        'LTC36': 1.0e6,    # LTC3600: 1MHz typ (DigiKey; adj 400kHz-4MHz)
+        'ADP2': 700e3,     # ADP2302: 700kHz (DigiKey parametric)
+        'MCP1640': 500e3,  # MCP1640: 500kHz (DigiKey parametric)
+        'MCP1603': 2.0e6,  # MCP1603: 2MHz (Microchip DS22042B)
+        'XL6009': 400e3,   # XL6009: 400kHz typ (XLSEMI datasheet, 320-430kHz)
+        'XL4015': 180e3,   # XL4015: 180kHz (XLSEMI datasheet)
+        'MT3608': 1.2e6,   # MT3608: 1.2MHz (Aerosemi datasheet)
+    }
+
+    for prefix, freq in known_freqs.items():
+        if prefix in val:
+            return freq
+
+    return None
+
+
+def _default_switching_freq(topology: str) -> float | None:
+    """Fallback switching frequency estimate when part is unrecognized.
+
+    Based on typical ranges for each topology. Conservative (low end)
+    to avoid underestimating harmonic reach.
+    """
+    defaults = {
+        'buck': 500e3,
+        'boost': 500e3,
+        'buck-boost': 300e3,
+        'inverting': 300e3,
+        'sepic': 300e3,
+    }
+    return defaults.get(topology.lower()) if topology else None
+
+
 def _get_net_components(ctx: AnalysisContext, net_name, exclude_ref):
     """Get components on a net excluding the given component."""
     if ctx.nq:
@@ -103,6 +161,43 @@ def _parse_crystal_frequency(value_str: str) -> float | None:
     if m:
         return float(m.group(1)) * 1e6
     return None
+
+
+# ---------------------------------------------------------------------------
+# Divider purpose classification
+# ---------------------------------------------------------------------------
+
+def _classify_divider_purpose(divider: dict) -> str:
+    """Classify a voltage divider's purpose from connected pin names.
+
+    Examines mid_point_connections pin names and the is_feedback flag to
+    determine: adc_input, feedback, bias, reference, enable_threshold, or unknown.
+    """
+    if divider.get("is_feedback"):
+        return "feedback"
+
+    mid_pins = divider.get("mid_point_connections", [])
+    for mp in mid_pins:
+        pn = mp.get("pin_name", "").upper()
+        if not pn:
+            continue
+        # ADC / analog input
+        if any(k in pn for k in ("ADC", "AIN", "ANALOG")):
+            return "adc_input"
+        # Feedback
+        if any(k in pn for k in ("FB", "FEEDBACK")):
+            return "feedback"
+        # Enable / shutdown threshold
+        if any(k in pn for k in ("EN", "ENABLE", "SHDN")):
+            return "enable_threshold"
+        # Comparator / reference / threshold
+        if any(k in pn for k in ("COMP", "REF", "THRESH")):
+            return "reference"
+        # Bias input (opamp, comparator non-inverting/inverting)
+        if any(k in pn for k in ("IN+", "IN-", "INP", "INM")):
+            return "bias"
+
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +310,9 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
                                     divider["is_feedback"] = True
                                     feedback_networks.append(divider)
                                     break
+
+                    # Classify divider purpose from connected pin names
+                    divider["purpose"] = _classify_divider_purpose(divider)
 
                     voltage_dividers.append(divider)
 
@@ -1504,6 +1602,19 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         # Negate Vout for inverting regulators
         if reg_info.get("inverting") and "estimated_vout" in reg_info:
             reg_info["estimated_vout"] = -abs(reg_info["estimated_vout"])
+
+        # Estimate switching frequency for switching regulators
+        if reg_info.get("topology") == "switching":
+            sw_f = _estimate_switching_freq(ic.get("value", ""))
+            if sw_f is None:
+                # Try lib_id part name (after colon)
+                lib_part = ic.get("lib_id", "").split(":")[-1] if ":" in ic.get("lib_id", "") else ""
+                if lib_part:
+                    sw_f = _estimate_switching_freq(lib_part)
+            if sw_f is None:
+                sw_f = _default_switching_freq("buck")  # conservative default for switching
+            if sw_f is not None:
+                reg_info["switching_frequency_hz"] = sw_f
 
         # Only add if we found meaningful regulator features
         is_regulator = False

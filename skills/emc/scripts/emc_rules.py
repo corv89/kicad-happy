@@ -776,8 +776,10 @@ def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') ->
         ref = reg.get('ref', reg.get('reference', ''))
         val = reg.get('value', '')
 
-        # Try to get switching frequency from the part
-        sw_freq = _estimate_switching_freq(val)
+        # Try to get switching frequency: prefer pre-computed field, fall back to local estimate
+        sw_freq = reg.get('switching_frequency_hz')
+        if sw_freq is None:
+            sw_freq = _estimate_switching_freq(val)
         if sw_freq is None:
             sw_freq = _default_switching_freq(topology)
         if sw_freq is None:
@@ -1469,7 +1471,7 @@ def estimate_switching_emissions(schematic: Dict,
 
         ref = reg.get('ref', reg.get('reference', ''))
         val = reg.get('value', '')
-        sw_freq = _estimate_switching_freq(val)
+        sw_freq = reg.get('switching_frequency_hz') or _estimate_switching_freq(val)
         if sw_freq is None:
             sw_freq = _default_switching_freq(topology)
         if sw_freq is None:
@@ -1709,7 +1711,7 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
         # SPICE enhancement: estimate radiated emission from loop
         spice_note = ''
         if spice_backend and area_mm2 > 25:
-            sw_freq = _estimate_switching_freq(val) or _default_switching_freq(topology)
+            sw_freq = reg.get('switching_frequency_hz') or _estimate_switching_freq(val) or _default_switching_freq(topology)
             if sw_freq:
                 area_m2 = area_mm2 * 1e-6
                 # Estimate switching current from power dissipation or default 0.5A
@@ -2560,7 +2562,7 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
 
         ref = reg.get('ref', reg.get('reference', ''))
         val = reg.get('value', '')
-        sw_freq = _estimate_switching_freq(val) or _default_switching_freq(topology)
+        sw_freq = reg.get('switching_frequency_hz') or _estimate_switching_freq(val) or _default_switching_freq(topology)
         if not sw_freq:
             continue
 
@@ -3051,7 +3053,7 @@ def check_shielding_advisory(pcb: Dict,
         for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
             if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
-            sw = _estimate_switching_freq(reg.get('value', '')) or _default_switching_freq(reg.get('topology', ''))
+            sw = reg.get('switching_frequency_hz') or _estimate_switching_freq(reg.get('value', '')) or _default_switching_freq(reg.get('topology', ''))
             if sw:
                 # Add harmonics that fall in EMC test range
                 for n in range(1, 20):
@@ -3747,7 +3749,7 @@ def generate_test_plan(schematic: Optional[Dict], pcb: Optional[Dict],
             ref = reg.get('ref', reg.get('reference', ''))
             val = reg.get('value', '')
             topology_local = reg.get('topology', '')
-            sw_freq = _estimate_switching_freq(val) or _default_switching_freq(topology_local)
+            sw_freq = reg.get('switching_frequency_hz') or _estimate_switching_freq(val) or _default_switching_freq(topology_local)
             if not sw_freq:
                 continue
             for band in bands:
