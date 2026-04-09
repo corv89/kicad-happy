@@ -3262,6 +3262,16 @@ def _detect_cross_domain_signals(ctx: AnalysisContext, power_domains: dict,
     return cross_domain
 
 
+def _enrich_device_ref(ref: str, comp_lookup: dict) -> dict:
+    """Convert a bare component reference to {ref, value, lib_id} dict."""
+    comp = comp_lookup.get(ref, {})
+    return {
+        "ref": ref,
+        "value": comp.get("value", ""),
+        "lib_id": comp.get("lib_id", ""),
+    }
+
+
 def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
     """Detect I2C buses by net name and pin name matching."""
     nets = ctx.nets
@@ -3297,8 +3307,9 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
             i2c_seen_nets.add(net_name)
             net_info = nets.get(net_name, {})
             line = "SDA" if "SDA" in nu_key else "SCL"
-            devices = [p["component"] for p in net_info.get("pins", [])
-                       if comp_lookup.get(p["component"], {}).get("type") == "ic"]
+            device_refs = [p["component"] for p in net_info.get("pins", [])
+                           if comp_lookup.get(p["component"], {}).get("type") == "ic"]
+            devices = [_enrich_device_ref(r, comp_lookup) for r in device_refs]
             # Find pull-up resistors
             pullups = []
             for p in net_info.get("pins", []):
@@ -3319,6 +3330,34 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
                 load_count = len(devices)
                 # Typical I2C input capacitance: ~5pF per device pin
                 estimated_cin_pF = load_count * 5
+                # Electrical parameters from pull-ups
+                pu_ohms_list = [pu["ohms"] for pu in pullups if pu.get("ohms")]
+                min_pu_ohms = min(pu_ohms_list) if pu_ohms_list else None
+                if min_pu_ohms is not None:
+                    if min_pu_ohms <= 500:
+                        speed_mode = "high_speed"
+                    elif min_pu_ohms <= 1500:
+                        speed_mode = "fast_plus"
+                    elif min_pu_ohms <= 4700:
+                        speed_mode = "fast"
+                    else:
+                        speed_mode = "standard"
+                else:
+                    speed_mode = None
+                # Voltage level from pull-up rail
+                voltage_level = None
+                for pu in pullups:
+                    v = _estimate_rail_voltage(pu.get("to_rail", ""))
+                    if v is not None:
+                        voltage_level = v
+                        break
+                # Controller: MCU or FPGA on the bus
+                controller = None
+                for ref in device_refs:
+                    fc = comp_lookup.get(ref, {}).get("functional_class", "")
+                    if fc in ("mcu", "fpga"):
+                        controller = ref
+                        break
                 results.append({
                     "net": net_name,
                     "line": line,
@@ -3327,6 +3366,10 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
                     "estimated_bus_capacitance_pF": estimated_cin_pF,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
+                    "speed_mode": speed_mode,
+                    "voltage_level_V": voltage_level,
+                    "pull_up_ohms": min_pu_ohms,
+                    "controller": controller,
                 })
 
     # Also detect I2C from pin names (for nets without SDA/SCL in their name)
@@ -3367,11 +3410,38 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
                             })
 
             bus_type = "SDA" if sda_pins else "SCL"
-            devices = [p["component"] for p in net_info["pins"]
-                       if comp_lookup.get(p["component"], {}).get("type") == "ic"]
+            device_refs = [p["component"] for p in net_info["pins"]
+                           if comp_lookup.get(p["component"], {}).get("type") == "ic"]
+            devices = [_enrich_device_ref(r, comp_lookup) for r in device_refs]
 
             if devices:  # Skip connector-only routing with no ICs
                 load_count = len(devices)
+                # Electrical parameters from pull-ups
+                pu_ohms_list = [pu["ohms"] for pu in pullups if pu.get("ohms")]
+                min_pu_ohms = min(pu_ohms_list) if pu_ohms_list else None
+                if min_pu_ohms is not None:
+                    if min_pu_ohms <= 500:
+                        speed_mode = "high_speed"
+                    elif min_pu_ohms <= 1500:
+                        speed_mode = "fast_plus"
+                    elif min_pu_ohms <= 4700:
+                        speed_mode = "fast"
+                    else:
+                        speed_mode = "standard"
+                else:
+                    speed_mode = None
+                voltage_level = None
+                for pu in pullups:
+                    v = _estimate_rail_voltage(pu.get("to_rail", ""))
+                    if v is not None:
+                        voltage_level = v
+                        break
+                controller = None
+                for ref in device_refs:
+                    fc = comp_lookup.get(ref, {}).get("functional_class", "")
+                    if fc in ("mcu", "fpga"):
+                        controller = ref
+                        break
                 entry = {
                     "net": net_name,
                     "line": bus_type,
@@ -3380,6 +3450,10 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
                     "estimated_bus_capacitance_pF": load_count * 5,
                     "pull_ups": pullups,
                     "has_pull_up": len(pullups) > 0,
+                    "speed_mode": speed_mode,
+                    "voltage_level_V": voltage_level,
+                    "pull_up_ohms": min_pu_ohms,
+                    "controller": controller,
                 }
 
                 # I2C rise time validation
@@ -3504,11 +3578,11 @@ def _detect_uart_buses(ctx: AnalysisContext) -> list[dict]:
             continue
         if any(kw in nu for kw in ("UART", "TX", "RX", "TXD", "RXD")):
             # Identify which devices connect
-            devices = [p["component"] for p in net_info["pins"]
-                       if comp_lookup.get(p["component"], {}).get("type") == "ic"]
+            device_refs = [p["component"] for p in net_info["pins"]
+                           if comp_lookup.get(p["component"], {}).get("type") == "ic"]
             uart_nets[net_name] = {
                 "net": net_name,
-                "devices": devices,
+                "devices": [_enrich_device_ref(r, comp_lookup) for r in device_refs],
                 "pin_count": len(net_info["pins"]),
             }
 
@@ -3648,6 +3722,8 @@ def _detect_can_buses(ctx: AnalysisContext) -> list[dict]:
     components = ctx.components
     nets = ctx.nets
     comp_lookup = ctx.comp_lookup
+    pin_net = ctx.pin_net
+    parsed_values = ctx.parsed_values
 
     can_keywords = ("can_tx", "can_rx", "cantx", "canrx", "canh", "canl", "can_h", "can_l")
     # SN65HVD2xx/10xx are CAN; SN65HVD7x are RS-485 -- use specific prefixes
@@ -3658,9 +3734,12 @@ def _detect_can_buses(ctx: AnalysisContext) -> list[dict]:
     for net_name, net_info in nets.items():
         nu = net_name.upper()
         if any(kw in nu.lower() for kw in can_keywords):
-            devices = [p["component"] for p in net_info["pins"]
-                       if comp_lookup.get(p["component"], {}).get("type") == "ic"]
-            can_nets_found[net_name] = {"net": net_name, "devices": devices}
+            device_refs = [p["component"] for p in net_info["pins"]
+                           if comp_lookup.get(p["component"], {}).get("type") == "ic"]
+            can_nets_found[net_name] = {
+                "net": net_name,
+                "devices": [_enrich_device_ref(r, comp_lookup) for r in device_refs],
+            }
     # Also detect by CAN transceiver IC presence -- add transceiver info to bus
     for comp in components:
         if comp["type"] != "ic":
@@ -3673,8 +3752,33 @@ def _detect_can_buses(ctx: AnalysisContext) -> list[dict]:
                 can_nets_found["__can_transceiver__"] = {
                     "net": "CAN",
                     "transceiver": comp["reference"],
-                    "devices": [comp["reference"]],
+                    "devices": [_enrich_device_ref(comp["reference"], comp_lookup)],
                 }
+
+    # CAN termination detection: look for 100-150 ohm resistors between CANH and CANL
+    canh_nets = [n for n in can_nets_found if "CANH" in n.upper() or "CAN_H" in n.upper()]
+    canl_nets = [n for n in can_nets_found if "CANL" in n.upper() or "CAN_L" in n.upper()]
+    termination = None
+    for canh_net in canh_nets:
+        if canh_net not in nets:
+            continue
+        for p in nets[canh_net]["pins"]:
+            comp = comp_lookup.get(p["component"])
+            if not comp or comp["type"] != "resistor":
+                continue
+            r_val = parsed_values.get(p["component"])
+            if r_val and 100 <= r_val <= 150:
+                # Check if other end goes to a CANL net
+                other_pin = "1" if p["pin_number"] == "2" else "2"
+                other_net, _ = pin_net.get((p["component"], other_pin), (None, None))
+                if other_net and any(other_net == cl for cl in canl_nets):
+                    termination = f"{int(r_val)}\u03A9 ({p['component']})"
+                    break
+        if termination:
+            break
+    # Attach termination to all CAN bus entries
+    for entry in can_nets_found.values():
+        entry["termination"] = termination
 
     return list(can_nets_found.values())
 
@@ -3744,6 +3848,7 @@ def _detect_rs485_buses(ctx: AnalysisContext) -> list[dict]:
 def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
     """Detect I2C, SPI, UART, CAN, SDIO, RS-485 buses and check configuration."""
     nets = ctx.nets
+    comp_lookup = ctx.comp_lookup
 
     buses: dict = {
         "i2c": _detect_i2c_buses(ctx),
@@ -3809,7 +3914,18 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
         for sig_info in sigs.values():
             if isinstance(sig_info, dict):
                 all_spi_devs.update(sig_info.get('devices', []))
-        spi_entry['devices'] = sorted(all_spi_devs)
+        spi_entry['devices'] = [_enrich_device_ref(r, comp_lookup) for r in sorted(all_spi_devs)]
+
+        # Controller: MCU/FPGA driving SCK (clock master)
+        sck_info = sigs.get("SCK")
+        controller = None
+        if isinstance(sck_info, dict):
+            for ref in sck_info.get("devices", []):
+                fc = comp_lookup.get(ref, {}).get("functional_class", "")
+                if fc in ("mcu", "fpga"):
+                    controller = ref
+                    break
+        spi_entry["controller"] = controller
 
     return buses
 
@@ -5803,10 +5919,10 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
         for sda in sda_entries:
             checks, issues, obs = {}, [], []
             sda_net = sda["net"]
-            sda_devs = set(sda.get("devices", []))
+            sda_devs = set(d["ref"] if isinstance(d, dict) else d for d in sda.get("devices", []))
             scl = scl_net = None
             for s in scl_entries:
-                if set(s.get("devices", [])) & sda_devs:
+                if set(d["ref"] if isinstance(d, dict) else d for d in s.get("devices", [])) & sda_devs:
                     scl, scl_net = s, s["net"]
                     break
             sda_pullups = sda.get("pull_ups", [])
@@ -5858,7 +5974,8 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
                 pu_voltage = _estimate_rail_voltage(pu_rail) if pu_rail else None
                 device_voltages = set()
                 for dev in sda.get("devices", []):
-                    for rail_info in power_domains.get(dev, {}).get("power_rails", []):
+                    dev_ref = dev["ref"] if isinstance(dev, dict) else dev
+                    for rail_info in power_domains.get(dev_ref, {}).get("power_rails", []):
                         v = _estimate_rail_voltage(rail_info) if isinstance(rail_info, str) else None
                         if v:
                             device_voltages.add(v)
@@ -5871,8 +5988,18 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
                         issues.append(f"Pull-up rail {pu_rail} ({pu_voltage}V) but device(s) on "
                                       f"{', '.join(f'{v}V' for v in mismatched)} — voltage mismatch")
             if checks:
+                # Merge SDA + SCL device lists, deduplicate by ref
+                _all_devs = sda.get("devices", []) + (scl.get("devices", []) if scl else [])
+                _seen_refs: set[str] = set()
+                _merged_devs: list = []
+                for _d in _all_devs:
+                    _r = _d["ref"] if isinstance(_d, dict) else _d
+                    if _r not in _seen_refs:
+                        _seen_refs.add(_r)
+                        _merged_devs.append(_d)
+                _merged_devs.sort(key=lambda d: d["ref"] if isinstance(d, dict) else d)
                 entry_result = {"protocol": "i2c", "sda_net": sda_net, "scl_net": scl_net,
-                                "devices": sorted(set(sda.get("devices", []) + (scl.get("devices", []) if scl else []))),
+                                "devices": _merged_devs,
                                 "checks": checks}
                 if issues:
                     entry_result["issues"] = issues

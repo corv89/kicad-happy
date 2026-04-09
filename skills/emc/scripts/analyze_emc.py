@@ -422,6 +422,27 @@ def main():
     regulatory = analyze_regulatory_coverage(args.standard, args.market,
                                             findings)
 
+    # Pre-rollup by category for downstream consumers
+    _sev_order = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
+    category_summary = {}
+    for f in findings:
+        cat = f.get("category", "other")
+        if cat not in category_summary:
+            category_summary[cat] = {
+                "count": 0,
+                "max_severity": "INFO",
+                "severities": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0},
+                "suppressed_count": 0,
+            }
+        cs = category_summary[cat]
+        cs["count"] += 1
+        sev = f.get("severity", "INFO")
+        cs["severities"][sev] = cs["severities"].get(sev, 0) + 1
+        if f.get("suppressed"):
+            cs["suppressed_count"] += 1
+        if _sev_order.get(sev, 0) > _sev_order.get(cs["max_severity"], 0):
+            cs["max_severity"] = sev
+
     result = {
         'summary': {
             'total_checks': len(findings),
@@ -439,6 +460,7 @@ def main():
         'per_net_scores': per_net,
         'test_plan': test_plan,
         'regulatory_coverage': regulatory,
+        'category_summary': category_summary,
         'board_info': extract_board_info(schematic, pcb),
         'elapsed_s': round(elapsed, 3),
     }

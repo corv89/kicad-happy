@@ -2088,6 +2088,9 @@ def audit_esd_protection(ctx: AnalysisContext,
             protected_nets_set.add(net)
             net_to_esd.setdefault(net, []).append(pd["ref"])
 
+    # Quick lookup from ref -> protection_device entry
+    pd_lookup: dict[str, dict] = {pd["ref"]: pd for pd in protection_devices}
+
     results: list[dict] = []
 
     for comp in ctx.components:
@@ -2125,6 +2128,21 @@ def audit_esd_protection(ctx: AnalysisContext,
             ref for n in prot for ref in net_to_esd.get(n, [])
         })
 
+        # Build detailed info for each ESD device
+        esd_device_details: list[dict] = []
+        for esd_ref in esd_refs:
+            esd_comp = ctx.comp_lookup.get(esd_ref, {})
+            detail: dict = {
+                "ref": esd_ref,
+                "value": esd_comp.get("value", ""),
+                "lib_id": esd_comp.get("lib_id", ""),
+            }
+            # Pull protection_type from the protection_devices entry
+            pd_entry = pd_lookup.get(esd_ref)
+            if pd_entry:
+                detail["protection_type"] = pd_entry.get("type", "")
+            esd_device_details.append(detail)
+
         results.append({
             "connector_ref": comp["reference"],
             "connector_value": comp.get("value", ""),
@@ -2135,6 +2153,7 @@ def audit_esd_protection(ctx: AnalysisContext,
             "unprotected_nets": unprot,
             "coverage": coverage,
             "esd_devices": esd_refs,
+            "esd_device_details": esd_device_details,
         })
 
     return results

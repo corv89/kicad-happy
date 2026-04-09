@@ -4686,6 +4686,21 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["power_net_routing"] = power_routing
     if decoupling:
         result["decoupling_placement"] = decoupling
+        # Flat decoupling proximity matrix for EMC/cross-verify consumers
+        decoupling_proximity = []
+        for entry in decoupling:
+            ic_ref = entry["ic"]
+            for cap in entry.get("nearby_caps", []):
+                decoupling_proximity.append({
+                    "ic_ref": ic_ref,
+                    "cap_ref": cap["cap"],
+                    "distance_mm": cap["distance_mm"],
+                    "cap_value": cap.get("value", ""),
+                    "same_side": cap.get("same_side", True),
+                    "shared_nets": cap.get("shared_nets", []),
+                })
+        if decoupling_proximity:
+            result["decoupling_proximity"] = decoupling_proximity
     if ground_domains["domain_count"] > 0:
         result["ground_domains"] = ground_domains
     if current_capacity["power_ground_nets"] or current_capacity["narrow_signal_nets"]:

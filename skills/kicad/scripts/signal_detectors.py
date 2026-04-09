@@ -853,6 +853,34 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
             xtal_entry["effective_load_pF"] = round(cl_eff * 1e12, 2)
             xtal_entry["note"] = f"CL_eff = ({load_caps[0]['value']} * {load_caps[1]['value']}) / ({load_caps[0]['value']} + {load_caps[1]['value']}) + ~3pF stray"
 
+        # Crystal load capacitance validation
+        target_load_pF = None
+        xtal_value = xtal.get("value", "")
+        # Try parsing from value string: "16MHz/18pF", "8MHz 20pF"
+        load_match = re.search(r'(\d+\.?\d*)\s*pF', xtal_value, re.IGNORECASE)
+        if load_match:
+            target_load_pF = float(load_match.group(1))
+        # Frequency-based defaults
+        if target_load_pF is None:
+            freq = xtal_entry.get("frequency")
+            if freq:
+                if freq <= 100e3:
+                    target_load_pF = 12.5
+                elif freq <= 20e6:
+                    target_load_pF = 18.0
+                else:
+                    target_load_pF = 12.0
+        xtal_entry["target_load_pF"] = target_load_pF
+        if target_load_pF and "effective_load_pF" in xtal_entry:
+            error_pct = (xtal_entry["effective_load_pF"] - target_load_pF) / target_load_pF * 100
+            xtal_entry["load_cap_error_pct"] = round(error_pct, 1)
+            if abs(error_pct) <= 10:
+                xtal_entry["load_cap_status"] = "ok"
+            elif abs(error_pct) <= 25:
+                xtal_entry["load_cap_status"] = "marginal"
+            else:
+                xtal_entry["load_cap_status"] = "out_of_spec"
+
         crystal_circuits.append(xtal_entry)
 
     # Detect active oscillators (TCXO, VCXO, MEMS, etc.)
@@ -1772,6 +1800,54 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     "dropout_V": round(dropout, 3),
                     "estimated_iout_A": round(estimated_iout_a, 3),
                     "estimated_pdiss_W": round(dropout * estimated_iout_a, 3),
+                }
+        elif topology == "switching" and vout and vout > 0:
+            vin = _infer_rail_voltage(vin_rail)
+            if vin and vin > 0:
+                # Estimate load current from output cap total (same heuristic as LDO,
+                # but cap at 2.0A for switching regulators)
+                output_caps = reg.get("output_capacitors", [])
+                total_cout = sum(c.get("farads", 0) for c in output_caps)
+                estimated_iout_a = min(total_cout * 1e4, 2.0) if total_cout > 0 else 0.2
+
+                # Determine sub-topology from part name/lib_id keywords
+                lib_val_lower = (reg.get("lib_id", "") + " " + reg.get("value", "")).lower()
+                if "buck-boost" in lib_val_lower or "buck_boost" in lib_val_lower \
+                        or "sepic" in lib_val_lower or "inverting" in lib_val_lower:
+                    sw_type = "buck-boost"
+                    efficiency = 0.78
+                elif "boost" in lib_val_lower or "step-up" in lib_val_lower \
+                        or "step_up" in lib_val_lower or "step up" in lib_val_lower:
+                    sw_type = "boost"
+                    efficiency = 0.80
+                elif "buck" in lib_val_lower or "step-down" in lib_val_lower \
+                        or "step_down" in lib_val_lower or "step down" in lib_val_lower:
+                    sw_type = "buck"
+                    efficiency = 0.85
+                else:
+                    # Fall back to vin/vout relationship
+                    if vin > vout:
+                        sw_type = "buck"
+                        efficiency = 0.85
+                    elif vin < vout:
+                        sw_type = "boost"
+                        efficiency = 0.80
+                    else:
+                        sw_type = "buck-boost"
+                        efficiency = 0.78
+
+                pout = vout * estimated_iout_a
+                pin = pout / efficiency
+                pdiss = pin - pout
+
+                reg["power_dissipation"] = {
+                    "vin_estimated_V": round(vin, 3),
+                    "vout_V": round(vout, 3),
+                    "efficiency_assumed": efficiency,
+                    "estimated_iout_A": round(estimated_iout_a, 3),
+                    "estimated_pdiss_W": round(pdiss, 3),
+                    "topology": "switching",
+                    "sub_topology": sw_type,
                 }
 
     return power_regulators
