@@ -323,10 +323,10 @@ The PCB analyzer's `sch_path`, `sch_sheetname`, and `sch_sheetfile` fields in ea
 
 ### Diff-Aware Design Comparison
 
-Compare two analysis JSON outputs to see what changed between design revisions (e.g., base branch vs PR, v1 vs v2). Use when the user says things like "compare designs", "what changed", "diff my schematic", "show changes from main", or "diff base vs head".
+Compare two analysis JSON outputs to see what changed between design revisions (e.g., base branch vs PR, v1 vs v2). Use when the user says things like "compare designs", "what changed", "diff my schematic", "show changes from main", or "diff base vs head". Full reference: `references/diff-analysis.md`.
 
 ```bash
-# Compare two schematic analysis outputs
+# Compare two schematic analysis outputs (JSON to stdout)
 python3 <skill-path>/scripts/diff_analysis.py base.json head.json
 
 # Human-readable text output
@@ -334,16 +334,21 @@ python3 <skill-path>/scripts/diff_analysis.py base.json head.json --text
 
 # Write to file, custom threshold (ignore <2% deltas)
 python3 <skill-path>/scripts/diff_analysis.py base.json head.json --output diff.json --threshold 2.0
+
+# Ignore small percentage changes (e.g., rounding noise)
+python3 <skill-path>/scripts/diff_analysis.py base.json head.json --threshold 5.0 --text
 ```
 
 Auto-detects analyzer type (schematic, PCB, EMC, SPICE). Reports:
 - **Components**: new, removed, value/footprint/MPN changes
-- **Signal analysis**: parameter shifts (divider ratio, filter cutoff, opamp gain, regulator Vout)
-- **EMC findings**: new/resolved findings with severity, risk score delta
-- **SPICE results**: status transitions (pass→fail regressions, fail→pass fixes)
-- **Severity classification**: none, minor, major, breaking
+- **Signal analysis**: parameter shifts per detection type, driven by `detection_schema.SCHEMAS` identity and value fields
+- **BOM**: added/removed line items, quantity changes
+- **Connectivity/ERC**: new/resolved single-pin nets, floating nets, multi-driver nets, ERC warnings
+- **EMC findings**: new/resolved findings with severity, risk score delta, per-net score changes
+- **SPICE results**: status transitions (pass->fail regressions, fail->pass fixes), Monte Carlo concern changes
+- **Severity classification**: `none` (no changes), `minor` (statistics only), `major` (component/signal/finding changes), `breaking` (SPICE regressions, new CRITICAL EMC findings, new ERC warnings)
 
-The GitHub Action supports `diff-base: true` to automatically compare PR changes against the base branch.
+Also used programmatically by `analysis_cache.should_create_new_run()` to decide whether new outputs warrant a new timestamped run folder.
 
 ### Thermal Hotspot Estimation
 

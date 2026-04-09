@@ -8,6 +8,7 @@ Single source of truth for per-detection-type metadata consumed by:
 Adding a new detection type: add a DetectionSchema entry to SCHEMAS.
 """
 
+import hashlib
 import math
 import os
 import sys
@@ -437,3 +438,29 @@ def get_primary_metric(det_type: str) -> str:
     """Return the primary metric name for Monte Carlo, or None."""
     schema = SCHEMAS.get(det_type)
     return schema.primary_metric if schema else None
+
+
+def compute_detection_id(det, det_type):
+    """Compute a stable hash ID for a detection based on identity fields.
+
+    Deterministic: same detection -> same ID across runs.
+    Format: det_type:xxxxxxxxxxxx (12-char SHA-256 prefix).
+    """
+    schema = SCHEMAS.get(det_type)
+    if not schema:
+        return ""
+
+    parts = [det_type]
+    for field in schema.identity_fields:
+        val = det
+        for key in field.split("."):
+            if isinstance(val, dict) and key in val:
+                val = val[key]
+            else:
+                val = None
+                break
+        parts.append(str(val) if val is not None else "")
+
+    raw = "::".join(parts)
+    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return f"{det_type}:{h}"

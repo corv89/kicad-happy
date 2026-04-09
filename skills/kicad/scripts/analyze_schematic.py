@@ -2790,6 +2790,14 @@ def parse_legacy_schematic(path: str) -> dict:
             _comp['pin_nets'] = _all_pn
         _comp.pop("_unit_pins", None)
 
+    # Add stable detection IDs for diff matching (legacy path)
+    from detection_schema import compute_detection_id as _compute_det_id
+    for _det_type, _dets in signal_analysis.items():
+        if isinstance(_dets, list):
+            for _det in _dets:
+                if isinstance(_det, dict):
+                    _det["detection_id"] = _compute_det_id(_det, _det_type)
+
     return {
         "file": str(path),
         "kicad_version": "5 (legacy)",
@@ -7784,6 +7792,14 @@ def analyze_schematic(path: str, project_root: str | None = None,
         missing_info["heuristic_vref"] = heuristic_vref
     if missing_info:
         result["missing_info"] = missing_info
+
+    # Add stable detection IDs for diff matching
+    from detection_schema import compute_detection_id as _compute_det_id
+    for _det_type, _dets in signal_analysis.items():
+        if isinstance(_dets, list):
+            for _det in _dets:
+                if isinstance(_det, dict):
+                    _det["detection_id"] = _compute_det_id(_det, _det_type)
 
     return result
 

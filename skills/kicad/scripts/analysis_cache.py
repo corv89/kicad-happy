@@ -436,6 +436,25 @@ def get_current_run(analysis_dir: str
     return run_dir, manifest['runs'][current_id]
 
 
+def list_runs(analysis_dir: str, limit: int = 0) -> list:
+    """Return run entries sorted newest-first.
+
+    Each entry is (run_id, run_metadata_dict). If limit > 0, return at most
+    that many. Excludes runs whose folders no longer exist on disk.
+    """
+    manifest = load_manifest(analysis_dir)
+    runs = manifest.get('runs', {})
+    sorted_ids = sorted(runs.keys(), reverse=True)
+    result = []
+    for run_id in sorted_ids:
+        run_dir = os.path.join(analysis_dir, run_id)
+        if os.path.isdir(run_dir):
+            result.append((run_id, runs[run_id]))
+        if limit > 0 and len(result) >= limit:
+            break
+    return result
+
+
 # ---------------------------------------------------------------------------
 # New-run decision logic
 # ---------------------------------------------------------------------------
