@@ -323,14 +323,19 @@ def compute_pin_positions(component: dict, lib_symbols: dict) -> list[dict]:
             continue
         px, py = pin["offset"][0], pin["offset"][1]
 
-        # Apply mirroring before rotation
-        if mirror_x:
-            py = -py
-        if mirror_y:
-            px = -px
-
-        # Apply rotation to pin offset
-        rpx, rpy = apply_rotation(px, py, angle)
+        # Apply transform: prefer raw matrix (legacy KiCad 5) over decomposed angle/mirror
+        transform_matrix = component.get("transform_matrix")
+        if transform_matrix:
+            a, b, c, d = transform_matrix
+            rpx = a * px + b * py
+            rpy = c * px + d * py
+        else:
+            # KiCad 6+: decomposed angle + mirror
+            if mirror_x:
+                py = -py
+            if mirror_y:
+                px = -px
+            rpx, rpy = apply_rotation(px, py, angle)
 
         # Absolute position: Y-axis inversion (symbol coords are math-up, schematic is screen-down)
         abs_x = round(cx + rpx, 4)
@@ -555,6 +560,8 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
 
         # Compute absolute pin positions
         comp["pins"] = compute_pin_positions(comp, lib_symbols)
+        # KH-216: Store unit-valid pin numbers for pin_nets filtering
+        comp["_unit_pins"] = {p["number"] for p in comp["pins"]}
 
         components.append(comp)
 
@@ -2466,6 +2473,7 @@ def _parse_legacy_single_sheet(path: str) -> tuple:
                     parts = cl.split()
                     try:
                         a, b, c, d = [int(p) for p in parts]
+                        comp["transform_matrix"] = (a, b, c, d)
                         det = a * d - b * c
                         if det < 0:
                             comp["mirror_x"] = True
@@ -2692,6 +2700,8 @@ def parse_legacy_schematic(path: str) -> dict:
                 sym_def = lib_symbols.get(cache_key)
         if sym_def:
             comp["pins"] = compute_pin_positions(comp, {lib_id: sym_def})
+            # KH-216: Store unit-valid pin numbers for pin_nets filtering
+            comp["_unit_pins"] = {p["number"] for p in comp["pins"]}
             # Snap pin positions to mil grid — eliminates floating-point drift
             # from trig-based rotation so pins align with wire endpoints.
             for pin in comp["pins"]:
@@ -2761,10 +2771,10 @@ def parse_legacy_schematic(path: str) -> dict:
     annotation_issues = check_annotation_completeness(real_components)
 
     # Enrich components with pin-to-net mapping (legacy path)
+    # KH-211: Include __unnamed_* nets so that connections through unlabelled
+    # wires (common in hierarchical sub-sheets) appear in pin_nets.
     _pin_nets_l: dict[str, dict[str, str]] = {}
     for _net_name, _net_info in nets.items():
-        if _net_name.startswith('__unnamed_'):
-            continue
         if isinstance(_net_info, dict):
             for _p in _net_info.get('pins', []):
                 _comp_ref = _p.get('component', '')
@@ -2772,7 +2782,13 @@ def parse_legacy_schematic(path: str) -> dict:
                 if _comp_ref and _pin_num:
                     _pin_nets_l.setdefault(_comp_ref, {})[_pin_num] = _net_name
     for _comp in all_components:
-        _comp['pin_nets'] = _pin_nets_l.get(_comp.get('reference', ''), {})
+        _all_pn = _pin_nets_l.get(_comp.get('reference', ''), {})
+        _valid = _comp.get("_unit_pins")
+        if _valid and len(_all_pn) > len(_valid):
+            _comp['pin_nets'] = {k: v for k, v in _all_pn.items() if k in _valid}
+        else:
+            _comp['pin_nets'] = _all_pn
+        _comp.pop("_unit_pins", None)
 
     return {
         "file": str(path),
@@ -3744,7 +3760,8 @@ def _analyze_bus_protocols(ctx: AnalysisContext) -> dict:
         bus_id = spi_entry.get("bus_id", "")
         for net_name in nets:
             nu = net_name.upper()
-            if any(kw in nu for kw in ("CS", "SS", "NSS", "SPI_CS", "SPI_SS")):
+            if any(kw in nu for kw in ("CS", "SS", "NSS", "SPI_CS", "SPI_SS",
+                                       "CSN", "NCS", "SSEL", "CSEL")):
                 if bus_id in ("0", "") or bus_id in nu.replace("_", ""):
                     cs_nets.append(net_name)
         spi_entry["chip_select_count"] = len(cs_nets)
@@ -6275,7 +6292,7 @@ def analyze_bom_optimization(components: list[dict]) -> dict:
         val_str = c.get("value", "")
         fp = c.get("footprint", "") or "unknown"
         cap_by_value.setdefault(val_str, {}).setdefault(fp, []).append(c["reference"])
-        val = parse_value(val_str)
+        val = parse_value(val_str, component_type="capacitor")
         if val and val > 0:
             c_values.setdefault(val, []).append(c["reference"])
 
@@ -7592,7 +7609,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
     for comp in all_components:
         comp["category"] = comp.get("type")
         if comp["type"] in ("resistor", "capacitor", "inductor", "ferrite_bead", "crystal"):
-            pv = parse_value(comp.get("value", ""))
+            pv = parse_value(comp.get("value", ""), component_type=comp["type"])
             if pv is not None:
                 comp["parsed_value"] = pv
 
@@ -7643,10 +7660,10 @@ def analyze_schematic(path: str, project_root: str | None = None,
         project_settings['symbol_libs'] = lib_tables['symbol_libs']
 
     # Enrich components with pin-to-net mapping for downstream consumers
+    # KH-211: Include __unnamed_* nets so that connections through unlabelled
+    # wires (common in hierarchical sub-sheets) appear in pin_nets.
     _pin_nets: dict[str, dict[str, str]] = {}
     for _net_name, _net_info in nets.items():
-        if _net_name.startswith('__unnamed_'):
-            continue
         if isinstance(_net_info, dict):
             for _p in _net_info.get('pins', []):
                 _comp_ref = _p.get('component', '')
@@ -7654,7 +7671,13 @@ def analyze_schematic(path: str, project_root: str | None = None,
                 if _comp_ref and _pin_num:
                     _pin_nets.setdefault(_comp_ref, {})[_pin_num] = _net_name
     for _comp in all_components:
-        _comp['pin_nets'] = _pin_nets.get(_comp.get('reference', ''), {})
+        _all_pn = _pin_nets.get(_comp.get('reference', ''), {})
+        _valid = _comp.get("_unit_pins")
+        if _valid and len(_all_pn) > len(_valid):
+            _comp['pin_nets'] = {k: v for k, v in _all_pn.items() if k in _valid}
+        else:
+            _comp['pin_nets'] = _all_pn
+        _comp.pop("_unit_pins", None)
 
     result = {
         "analyzer_type": "schematic",

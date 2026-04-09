@@ -275,9 +275,14 @@ def parse_value(value_str: str, component_type: str | None = None) -> float | No
     # Plain number: "100", "47", "0.1"
     try:
         result = float(s)
-        # KH-153: Bare integers for capacitors are picofarads in legacy schematics
-        if component_type == "capacitor" and result >= 1.0:
-            result *= 1e-12
+        if component_type == "capacitor":
+            # KH-153: Bare integers >= 1 are picofarads in legacy schematics.
+            # KH-212: Bare decimals < 1 (0.1, 0.47, 0.22) are microfarads —
+            # no real-world cap is 0.1 Farads in SMD packages.
+            if result >= 1.0:
+                result *= 1e-12
+            else:
+                result *= 1e-6
         return result
     except ValueError:
         return None
@@ -399,6 +404,19 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         if any(x in val_low or x in lib_low or x in fp_low
                for x in ("testpad", "test_pad", "testpoint", "test_point")):
             return "test_point"
+        # KH-208: Unambiguous lib_id patterns override ref prefix.
+        _lib_prefix = lib_low.split(":")[0] if ":" in lib_low else ""
+        _lib_type_overrides = {
+            "connector": "connector", "connector_audio": "connector",
+            "connector_generic": "connector", "connector_generic_shielded": "connector",
+            "sensor_temperature": "ic", "sensor": "ic",
+            "motor": "motor",
+        }
+        _override = _lib_type_overrides.get(_lib_prefix)
+        if _override:
+            return _override
+        if "circuitbreaker" in lib_low or "circuit_breaker" in lib_low:
+            return "switch"
         # Crystal/oscillator override: Q-prefix crystals (Q for quartz),
         # CR-prefix oscillators, or any prefix where lib_id clearly says crystal/oscillator
         if result not in ("crystal", "oscillator"):
@@ -510,6 +528,8 @@ def classify_component(ref: str, lib_id: str, value: str, is_power: bool = False
         return "led"
 
     # Library-based fallback for non-standard reference prefixes
+    if "circuitbreaker" in lib_lower or "circuit_breaker" in lib_lower:
+        return "switch"
     if "thermistor" in lib_lower or "thermistor" in val_lower or "ntc" in val_lower:
         return "thermistor"
     if "varistor" in lib_lower or "varistor" in val_lower:
@@ -825,6 +845,18 @@ def is_power_net_name(net_name: str | None, power_rails: set[str] | None = None)
         return True
     # Vnn, VnnV patterns (V3V3, V1V8, V5V0)
     if len(nu) >= 3 and nu[0] == "V" and nu[1].isdigit():
+        return True
+    # nnVn patterns (3V3, 5V0, 12V0, 1V8) — industry-standard voltage naming
+    if re.match(r'^\d+V\d', nu):
+        return True
+    # Negative voltage rails (Neg6v, NEG12V)
+    if re.match(r'^NEG\d+V', nu):
+        return True
+    # VDDn, VCCn without underscore separator (VDD5, VDD12, VCC3)
+    if re.match(r'^V[CD][CD]\d', nu):
+        return True
+    # nV_xxx patterns (5V_INT, 12V_SW, 3V_AUX)
+    if "_" in nu and re.match(r'^\d+V', nu.split("_")[0]):
         return True
     # PWRnVn patterns (PWR3V3, PWR1V8, PWR5V0)
     if re.match(r'^PWR\d', nu):
