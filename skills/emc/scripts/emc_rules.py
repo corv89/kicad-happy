@@ -1657,6 +1657,72 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
         return findings
 
     regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+
+    # Prefer pre-computed loop areas from PCB analyzer (enrichment 2.4)
+    precomputed = pcb.get('switching_loop_areas', []) if pcb else []
+    if precomputed:
+        for loop in precomputed:
+            area_mm2 = loop.get('area_mm2', 0)
+            if area_mm2 < 25:
+                continue  # Acceptable
+
+            ref = loop.get('regulator_ref', '')
+            val = loop.get('regulator_value', '')
+            inductor_ref = loop.get('inductor_ref', '')
+            cap_ref = loop.get('cap_ref', '')
+
+            severity = 'HIGH' if area_mm2 > 100 else 'MEDIUM'
+
+            desc = (
+                f'{ref} ({val}) hot loop area ≈ {area_mm2:.0f}mm² '
+                f'(triangle: {cap_ref} → {ref} → {inductor_ref}). '
+                f'Recommended: <25mm² for low EMI.'
+            )
+
+            # SPICE radiation estimate
+            spice_note = ''
+            if spice_backend and area_mm2 > 25:
+                reg_match = None
+                for reg in regulators:
+                    if reg.get('ref', reg.get('reference', '')) == ref:
+                        reg_match = reg
+                        break
+                if reg_match:
+                    sw_freq = (reg_match.get('switching_frequency_hz') or
+                               _estimate_switching_freq(val) or
+                               _default_switching_freq(reg_match.get('topology', '')))
+                    if sw_freq:
+                        area_m2 = area_mm2 * 1e-6
+                        pdiss = reg_match.get('power_dissipation', {})
+                        i_sw = pdiss.get('estimated_iout_A', 0.5)
+                        e_dbuv = dm_radiation_dbuv_m(sw_freq, area_m2, i_sw, 3.0,
+                                                      ground_plane=True)
+                        limit = get_emission_limit(sw_freq, 'fcc-class-b')
+                        if limit:
+                            margin = limit[0] - e_dbuv
+                            spice_note = (
+                                f' Estimated radiation at {sw_freq/1e6:.1f}MHz: '
+                                f'{e_dbuv:.0f} dBµV/m (limit: {limit[0]:.0f}, '
+                                f'margin: {margin:.0f}dB).'
+                            )
+
+            findings.append({
+                'category': 'switching_emc',
+                'severity': severity,
+                'rule_id': 'SW-003',
+                'confidence': 'heuristic',
+                'title': f'Large hot loop for {ref}',
+                'description': desc + spice_note,
+                'components': [ref, inductor_ref, cap_ref],
+                'nets': [],
+                'recommendation': (
+                    f'Place {cap_ref}, {ref}, and {inductor_ref} in a tight triangle. '
+                    f'Minimize trace length between them. Input cap should be adjacent '
+                    f'to the IC with the inductor on the opposite side.'
+                ),
+            })
+        return findings
+
     footprints = pcb.get('footprints', [])
 
     # Build position lookup

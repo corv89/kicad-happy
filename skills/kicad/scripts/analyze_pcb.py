@@ -4438,8 +4438,72 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
     return result
 
 
+def _compute_switching_loop_areas(footprints: list, schematic_data: dict) -> list:
+    """Compute hot loop triangle areas for switching regulators.
+
+    Uses regulator refs from schematic + footprint positions from PCB.
+    Returns list of {regulator_ref, regulator_value, inductor_ref, cap_ref,
+    area_mm2, vertices_mm}.
+    """
+    regulators = schematic_data.get('signal_analysis', {}).get('power_regulators', [])
+    if not regulators:
+        return []
+
+    fp_pos = {}
+    for fp in footprints:
+        ref = fp.get('reference', '')
+        if ref:
+            fp_pos[ref] = (fp.get('x') or 0, fp.get('y') or 0)
+
+    results = []
+    for reg in regulators:
+        topology = reg.get('topology', '').lower()
+        if topology in ('ldo', 'linear', 'unknown', 'ic_with_internal_regulator',
+                        'load_switch', 'charge_pump'):
+            continue
+
+        ref = reg.get('ref', reg.get('reference', ''))
+        inductor_ref = reg.get('inductor')
+        input_caps = reg.get('input_capacitors', [])
+
+        if not inductor_ref or not input_caps:
+            continue
+
+        ic_pos = fp_pos.get(ref)
+        ind_pos = fp_pos.get(inductor_ref)
+        cap_ref = input_caps[0].get('ref', '') if isinstance(input_caps[0], dict) else str(input_caps[0])
+        cap_pos = fp_pos.get(cap_ref)
+
+        if not ic_pos or not ind_pos or not cap_pos:
+            continue
+        if ic_pos == (0, 0) or ind_pos == (0, 0) or cap_pos == (0, 0):
+            continue
+
+        # Shoelace formula for triangle area
+        vertices = [cap_pos, ic_pos, ind_pos]
+        area = 0.0
+        n = len(vertices)
+        for i in range(n):
+            j = (i + 1) % n
+            area += vertices[i][0] * vertices[j][1]
+            area -= vertices[j][0] * vertices[i][1]
+        area_mm2 = abs(area) / 2.0
+
+        results.append({
+            "regulator_ref": ref,
+            "regulator_value": reg.get('value', ''),
+            "inductor_ref": inductor_ref,
+            "cap_ref": cap_ref,
+            "area_mm2": round(area_mm2, 1),
+            "vertices_mm": [list(v) for v in vertices],
+        })
+
+    return results
+
+
 def analyze_pcb(path: str, *, proximity: bool = False,
-                include_trace_segments: bool = False) -> dict:
+                include_trace_segments: bool = False,
+                schematic_data: dict = None) -> dict:
     """Main analysis function.
 
     Args:
@@ -4701,6 +4765,11 @@ def analyze_pcb(path: str, *, proximity: bool = False,
                 })
         if decoupling_proximity:
             result["decoupling_proximity"] = decoupling_proximity
+    if schematic_data:
+        loop_areas = _compute_switching_loop_areas(footprints, schematic_data)
+        if loop_areas:
+            result["switching_loop_areas"] = loop_areas
+
     if ground_domains["domain_count"] > 0:
         result["ground_domains"] = ground_domains
     if current_capacity["power_ground_nets"] or current_capacity["narrow_signal_nets"]:
@@ -4813,6 +4882,8 @@ def main():
                         help="Print JSON output schema and exit")
     parser.add_argument("--config", default=None,
                         help="Path to .kicad-happy.json project config file")
+    parser.add_argument("--schematic",
+                        help="Schematic analysis JSON for cross-analyzer enrichment")
     args = parser.parse_args()
 
     if args.schema:
@@ -4833,8 +4904,17 @@ def main():
     except ImportError:
         config = {"version": 1, "project": {}, "suppressions": []}
 
+    schematic_data = None
+    if args.schematic:
+        try:
+            with open(args.schematic) as f:
+                schematic_data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: cannot load schematic analysis: {e}", file=sys.stderr)
+
     result = analyze_pcb(args.pcb, proximity=args.proximity,
-                         include_trace_segments=args.full)
+                         include_trace_segments=args.full,
+                         schematic_data=schematic_data)
 
     # Attach project config summary to output for downstream consumers
     project = config.get("project", {})
