@@ -525,6 +525,22 @@ def detect_ethernet_interfaces(ctx: AnalysisContext) -> list[dict]:
                     if bob_smith:
                         break
 
+            # Impedance advisory: magnetics provide both isolation and 100Ω
+            # differential impedance matching for Ethernet
+            has_magnetics = bool(found_magnetics)
+            if not has_magnetics:
+                impedance_advisory = {
+                    "status": "warning",
+                    "detail": ("No magnetics/transformer detected between PHY and connector. "
+                               "Ethernet requires magnetic isolation and impedance matching "
+                               "(100\u03A9 differential)."),
+                }
+            else:
+                impedance_advisory = {
+                    "status": "pass",
+                    "detail": "Magnetics present for impedance matching and isolation",
+                }
+
             ethernet_interfaces.append({
                 "phy_reference": phy["reference"],
                 "phy_value": phy["value"],
@@ -538,6 +554,7 @@ def detect_ethernet_interfaces(ctx: AnalysisContext) -> list[dict]:
                     for c in found_connectors
                 ],
                 "bob_smith_termination": bob_smith,
+                "impedance_advisory": impedance_advisory,
             })
     return ethernet_interfaces
 
@@ -620,7 +637,121 @@ def detect_hdmi_dvi_interfaces(ctx: AnalysisContext) -> list[dict]:
                 "connector_value": conn.get("value", ""),
             })
 
+    # TMDS differential termination check: look for ~100Ω resistors on
+    # TMDS data/clock nets connected to HDMI connectors or bridge ICs
+    _tmds_pin_re = re.compile(
+        r'(TMDS|D\d[+-]|CLK[+-]|CK[+-]|HPD|HDMI_D|HDMI_CLK|DVI_D|DVI_CLK)',
+        re.IGNORECASE)
+    for entry in hdmi_dvi:
+        # Determine the component reference to scan
+        comp_ref = entry.get("reference") or entry.get("connector")
+        if not comp_ref:
+            continue
+        comp = ctx.comp_lookup.get(comp_ref)
+        if not comp:
+            continue
+
+        # Gather signal nets from this component's TMDS-related pins
+        tmds_nets: set[str] = set()
+        for pin in comp.get("pins", []):
+            pname = pin.get("name", "")
+            if _tmds_pin_re.search(pname):
+                net_name, _ = ctx.pin_net.get(
+                    (comp_ref, pin["number"]), (None, None))
+                if net_name and not ctx.is_ground(net_name) and not ctx.is_power_net(net_name):
+                    tmds_nets.add(net_name)
+        # Fallback: scan nets for pin names or TMDS-related net names
+        if not tmds_nets:
+            _tmds_net_re = re.compile(r'(TMDS|HDMI_D|HDMI_CLK|DVI_D)', re.IGNORECASE)
+            for net_name, ndata in ctx.nets.items():
+                if ctx.is_ground(net_name) or ctx.is_power_net(net_name):
+                    continue
+                for p in ndata.get("pins", []):
+                    if p.get("component") == comp_ref:
+                        pname = p.get("pin_name", "")
+                        if _tmds_pin_re.search(pname) or _tmds_net_re.search(net_name):
+                            tmds_nets.add(net_name)
+                            break
+
+        # Search for termination resistors (80–120Ω) on those nets
+        term_resistors: list[dict] = []
+        seen_term_refs: set[str] = set()
+        for net_name in tmds_nets:
+            if net_name not in ctx.nets:
+                continue
+            for p in ctx.nets[net_name]["pins"]:
+                rc = ctx.comp_lookup.get(p["component"])
+                if not rc or rc["type"] != "resistor":
+                    continue
+                if rc["reference"] in seen_term_refs:
+                    continue
+                rv = ctx.parsed_values.get(rc["reference"])
+                if rv and 80 <= rv <= 120:
+                    term_resistors.append({
+                        "reference": rc["reference"],
+                        "value": rc.get("value", ""),
+                        "ohms": rv,
+                    })
+                    seen_term_refs.add(rc["reference"])
+
+        if term_resistors:
+            entry["termination"] = {
+                "status": "pass",
+                "detail": f"{len(term_resistors)} termination resistor(s) found on TMDS nets",
+                "resistors": term_resistors,
+            }
+        elif tmds_nets:
+            entry["termination"] = {
+                "status": "warning",
+                "detail": ("No ~100\u03A9 differential termination resistors detected "
+                           "on TMDS nets. HDMI/DVI requires 100\u03A9 differential "
+                           "impedance matching."),
+            }
+        # If no TMDS nets were identified, skip termination check silently
+
     return hdmi_dvi
+
+
+def detect_lvds_interfaces(ctx: AnalysisContext) -> list[dict]:
+    """Detect LVDS serializer/deserializer ICs and flag impedance requirements."""
+    lvds_interfaces: list[dict] = []
+
+    _lvds_keywords = (
+        "ds90", "fpdlink", "fpd-link", "fpd_link", "lvds",
+        "sn65lvds", "thc63", "max9217", "max9247",
+        "ub924", "ub925",
+    )
+    _serializer_hints = ("ser", "driver", "transmit", "tx", "encoder", "ub925")
+    _deserializer_hints = ("des", "receiver", "rx", "decoder", "ub924")
+
+    for comp in ctx.components:
+        if comp["type"] != "ic":
+            continue
+        val_lib = (comp.get("value", "") + " " + comp.get("lib_id", "")).lower()
+        if not any(k in val_lib for k in _lvds_keywords):
+            continue
+
+        # Classify role
+        role = "unknown"
+        if any(h in val_lib for h in _serializer_hints):
+            role = "serializer"
+        elif any(h in val_lib for h in _deserializer_hints):
+            role = "deserializer"
+        else:
+            # Heuristic: DS90Cx8xx — even last digit = serializer, odd = deserializer
+            # e.g., DS90C124 (ser), DS90C125 (des), DS90CR286 (ser), DS90CF386 (des)
+            # Not perfectly reliable, so leave as "unknown" if no strong hint
+            pass
+
+        lvds_interfaces.append({
+            "reference": comp["reference"],
+            "value": comp.get("value", ""),
+            "lib_id": comp.get("lib_id", ""),
+            "role": role,
+            "impedance_required": "100\u03A9 differential (LVDS standard)",
+        })
+
+    return lvds_interfaces
 
 
 def detect_memory_interfaces(ctx: AnalysisContext) -> list[dict]:

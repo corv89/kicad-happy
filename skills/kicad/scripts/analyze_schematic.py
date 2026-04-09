@@ -86,6 +86,7 @@ from domain_detectors import (
     detect_hdmi_dvi_interfaces,
     detect_isolation_barriers,
     detect_key_matrices,
+    detect_lvds_interfaces,
     detect_led_driver_ics,
     detect_level_shifters,
     detect_memory_interfaces,
@@ -625,6 +626,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     isolation_barriers = detect_isolation_barriers(ctx)
     ethernet_interfaces = detect_ethernet_interfaces(ctx)
     hdmi_dvi_interfaces = detect_hdmi_dvi_interfaces(ctx)
+    lvds_interfaces = detect_lvds_interfaces(ctx)
     memory_interfaces = detect_memory_interfaces(ctx)
     rf_chains = detect_rf_chains(ctx)
     rf_matching = detect_rf_matching(ctx)
@@ -716,6 +718,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "isolation_barriers": isolation_barriers,
         "ethernet_interfaces": ethernet_interfaces,
         "hdmi_dvi_interfaces": hdmi_dvi_interfaces,
+        "lvds_interfaces": lvds_interfaces,
         "memory_interfaces": memory_interfaces,
         "rf_chains": rf_chains,
         "rf_matching": rf_matching,
@@ -6011,6 +6014,60 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
                     if mismatched:
                         issues.append(f"Pull-up rail {pu_rail} ({pu_voltage}V) but device(s) on "
                                       f"{', '.join(f'{v}V' for v in mismatched)} — voltage mismatch")
+            # KH: I2C open-drain VOL compatibility
+            # I2C spec: VOL_max = 0.4V for standard/fast mode
+            # With pull-up R and sink current I_OL: VOL = I_OL × R_on
+            # If pull-up too strong (low R) relative to device sink current,
+            # VOL may exceed 0.4V threshold
+            if sda_pullups:
+                min_pu_ohms = min(pu.get("ohms", 10000) for pu in sda_pullups)
+                # I2C spec sink current: 3mA standard, 6mA fast, 20mA fast+
+                # Derive speed mode from rise time checks
+                speed = "standard"
+                if "rise_time" in checks:
+                    rt = checks["rise_time"]
+                    sda_rt = rt.get("sda", {})
+                    if sda_rt.get("valid_400khz"):
+                        speed = "fast"
+                iol_ma = {"standard": 3, "fast": 6, "fast_plus": 20,
+                          "high_speed": 20}.get(speed, 3)
+                # Max pull-up for VOL < 0.4V: R_max = 0.4V / I_OL
+                r_max_for_vol = 0.4 / (iol_ma * 1e-3) if iol_ma > 0 else 10000
+                if min_pu_ohms > r_max_for_vol:
+                    issues.append(
+                        f"Pull-up {min_pu_ohms:.0f}\u03a9 may not meet VOL<0.4V spec "
+                        f"at {speed} mode ({iol_ma}mA sink): max {r_max_for_vol:.0f}\u03a9")
+                    checks["vol_compatibility"] = {
+                        "status": "warning",
+                        "pull_up_ohms": min_pu_ohms,
+                        "max_for_vol": round(r_max_for_vol),
+                        "iol_ma": iol_ma,
+                        "speed_mode": speed,
+                    }
+
+            # I2C bus current budget
+            # Each device on the bus contributes leakage current (typically 1-10µA)
+            # Total must not exceed pull-up sourcing capability
+            n_devices = len(sda_devs)
+            if n_devices > 0 and sda_pullups:
+                # Conservative: 10µA leakage per device
+                total_leakage_ua = n_devices * 10
+                min_pu = min(pu.get("ohms", 10000) for pu in sda_pullups)
+                pu_voltage = checks.get("voltage_compatibility", {}).get("pull_up_voltage")
+                if pu_voltage:
+                    pull_up_current_ua = (pu_voltage / min_pu) * 1e6
+                    if total_leakage_ua > pull_up_current_ua * 0.1:
+                        # Leakage exceeds 10% of pull-up current
+                        checks["bus_current_budget"] = {
+                            "status": "warning",
+                            "device_count": n_devices,
+                            "estimated_leakage_ua": total_leakage_ua,
+                            "pull_up_current_ua": round(pull_up_current_ua),
+                        }
+                        issues.append(
+                            f"I2C bus has {n_devices} devices with ~{total_leakage_ua}\u00b5A "
+                            f"total leakage vs {pull_up_current_ua:.0f}\u00b5A pull-up capacity")
+
             if checks:
                 # Merge SDA + SCL device lists, deduplicate by ref
                 _all_devs = sda.get("devices", []) + (scl.get("devices", []) if scl else [])
@@ -6034,13 +6091,56 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
     # ---- SPI validation ----
     for spi in buses.get("spi", []):
         issues = []
+        spi_checks: dict = {}
         load_count = spi.get("load_count", 0)
         cs_count = spi.get("chip_select_count", 0)
         if load_count > 1 and cs_count < load_count - 1:
             issues.append(f"{load_count} SPI devices but only {cs_count} CS line(s) — need {load_count - 1}")
-        if issues:
-            findings.append({"protocol": "spi", "bus_id": spi.get("bus_id", ""),
-                             "load_count": load_count, "chip_select_count": cs_count, "issues": issues})
+
+        # SPI clock frequency advisory
+        # High device counts (>4 devices) increase capacitive loading on SCK
+        spi_sigs = spi.get("signals", {})
+        sck_sig = spi_sigs.get("SCK", {})
+        n_spi_devs = len(sck_sig.get("devices", [])) if isinstance(sck_sig, dict) else 0
+        if n_spi_devs == 0:
+            n_spi_devs = load_count
+        if n_spi_devs > 4:
+            issues.append(
+                f"SPI bus has {n_spi_devs} devices — capacitive loading may "
+                f"limit maximum clock frequency. Consider buffered clock.")
+            spi_checks["device_loading"] = {
+                "status": "warning",
+                "device_count": n_spi_devs,
+            }
+
+        # SPI signal integrity advisory for high-speed designs
+        # Flag when SPI bus has >2 devices and no series termination detected
+        if n_spi_devs > 2:
+            has_series_r = False
+            for sig_name in ("MOSI", "MISO", "SCK"):
+                sig = spi_sigs.get(sig_name, {})
+                if isinstance(sig, dict):
+                    for dev_ref in sig.get("devices", []):
+                        comp = next((c for c in components if c["reference"] == dev_ref), None)
+                        if comp and comp.get("type") == "resistor":
+                            has_series_r = True
+                            break
+                if has_series_r:
+                    break
+            if not has_series_r:
+                spi_checks["signal_integrity"] = {
+                    "status": "advisory",
+                    "detail": "No series termination detected on multi-device SPI bus",
+                }
+
+        if issues or spi_checks:
+            entry: dict = {"protocol": "spi", "bus_id": spi.get("bus_id", ""),
+                           "load_count": load_count, "chip_select_count": cs_count}
+            if issues:
+                entry["issues"] = issues
+            if spi_checks:
+                entry["checks"] = spi_checks
+            findings.append(entry)
 
     # ---- UART validation ----
     uart_buses = buses.get("uart", [])
@@ -6052,6 +6152,58 @@ def analyze_protocol_compliance(components: list[dict], nets: dict,
                 if len(domains) >= 2:
                     findings.append({"protocol": "uart", "net": xd["net"],
                                      "issues": [f"UART signal crosses voltage domains ({', '.join(domains)}) — level shifter may be needed"]})
+
+    # RS-232 transceiver detection and swing validation
+    if uart_buses:
+        _rs232_keywords = ("max232", "sp232", "sp3232", "max3232", "st3232",
+                           "icl232", "adm232", "sipex", "rs232", "rs-232",
+                           "max202", "max211", "max213")
+        # Build quick lookup from components list
+        _comp_by_ref: dict = {c["reference"]: c for c in components}
+        rs232_xcvrs: list[str] = []
+        for uart_entry in uart_buses:
+            for dev in uart_entry.get("devices", []):
+                dev_ref = dev["ref"] if isinstance(dev, dict) else dev
+                c = _comp_by_ref.get(dev_ref, {})
+                val_lib = (c.get("value", "") + " " + c.get("lib_id", "")).lower()
+                if any(k in val_lib for k in _rs232_keywords):
+                    if dev_ref not in rs232_xcvrs:
+                        rs232_xcvrs.append(dev_ref)
+
+        if rs232_xcvrs:
+            uart_checks: dict = {}
+            uart_issues: list[str] = []
+            uart_checks["rs232_transceiver"] = {
+                "status": "pass",
+                "transceivers": rs232_xcvrs,
+                "detail": f"RS-232 transceiver(s) detected: {', '.join(rs232_xcvrs)}",
+            }
+            # Check for charge pump capacitors (RS-232 transceivers need external caps)
+            cap_count = 0
+            _seen_caps: set[str] = set()
+            for xcvr_ref in rs232_xcvrs:
+                for (pref, _pnum), (net_name, _) in pin_net.items():
+                    if pref != xcvr_ref:
+                        continue
+                    if net_name and net_name in nets:
+                        for p in nets[net_name]["pins"]:
+                            pc = _comp_by_ref.get(p.get("component", ""), {})
+                            if pc.get("type") == "capacitor" and pc["reference"] not in _seen_caps:
+                                _seen_caps.add(pc["reference"])
+                                cap_count += 1
+            if cap_count < 4:  # Most RS-232 transceivers need 4-5 charge pump caps
+                uart_issues.append(
+                    f"RS-232 transceiver {rs232_xcvrs[0]} may have insufficient "
+                    f"charge pump capacitors (found ~{cap_count}, typical: 4-5)")
+                uart_checks["rs232_charge_pump_caps"] = {
+                    "status": "warning",
+                    "caps_found": cap_count,
+                    "typical_required": 4,
+                }
+            uart_finding: dict = {"protocol": "uart", "checks": uart_checks}
+            if uart_issues:
+                uart_finding["issues"] = uart_issues
+            findings.append(uart_finding)
 
     # ---- CAN validation ----
     diff_pairs = design_analysis.get("differential_pairs", [])
@@ -7055,6 +7207,7 @@ def analyze_usb_compliance(ctx: AnalysisContext,
             # ESD/TVS on VBUS
             has_esd = False
             has_decoupling = False
+            vbus_caps: list[dict] = []
             for p in nets[vbus_net]["pins"]:
                 pc = comp_lookup.get(p["component"])
                 if not pc:
@@ -7067,9 +7220,36 @@ def analyze_usb_compliance(ctx: AnalysisContext,
                         has_esd = True
                 if pc["type"] == "capacitor":
                     has_decoupling = True
+                    cap_val = parse_value(pc.get("value", ""), component_type="capacitor")
+                    if cap_val and cap_val > 0:
+                        vbus_caps.append({
+                            "ref": pc["reference"],
+                            "value": pc.get("value", ""),
+                            "farads": cap_val,
+                        })
 
             conn_checks["checks"]["vbus_esd_protection"] = "pass" if has_esd else "fail"
             conn_checks["checks"]["vbus_decoupling"] = "pass" if has_decoupling else "fail"
+
+            # USB VBUS capacitor sizing
+            # USB 2.0: 1-10µF bulk + 100nF local recommended
+            # USB 3.x: 10-120µF for higher power
+            # USB PD: up to 100µF for 100W
+            if vbus_caps:
+                total_uf = sum(c["farads"] for c in vbus_caps) * 1e6
+                if total_uf < 1.0:
+                    conn_checks["checks"]["vbus_capacitance"] = {
+                        "status": "warning",
+                        "total_uf": round(total_uf, 2),
+                        "recommended_min_uf": 1.0,
+                        "detail": (f"VBUS decoupling may be insufficient: {total_uf:.1f}\u00b5F total "
+                                   f"(recommended \u22651\u00b5F for USB 2.0, \u226510\u00b5F for USB 3.x)"),
+                    }
+                else:
+                    conn_checks["checks"]["vbus_capacitance"] = {
+                        "status": "pass",
+                        "total_uf": round(total_uf, 2),
+                    }
 
         # --- USB ESD protection ICs ---
         esd_ic_found = False
@@ -8018,7 +8198,8 @@ def _get_schema():
             "decoupling": "[{capacitor_ref, ic_ref, distance}]",
             "key_matrices": "[{rows, cols, diodes}]",
             "isolation_barriers": "[{isolator_ref, side_a_nets, side_b_nets}]",
-            "ethernet_interfaces": "[{phy_ref, magnetics_ref, connector_ref}]",
+            "ethernet_interfaces": "[{phy_ref, magnetics_ref, connector_ref, impedance_advisory}]",
+            "lvds_interfaces": "[{reference, value, role: serializer|deserializer|unknown, impedance_required}]",
             "memory_interfaces": "[{type, bus_signals}]",
             "rf_chains": "[{components_in_chain}]",
             "rf_matching": "[{antenna, antenna_value, topology: pi_match|L_match|T_match|matching_network, components: [{ref, type, value}], target_ic, target_value}]",

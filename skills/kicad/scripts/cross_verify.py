@@ -274,6 +274,39 @@ def check_diff_pair_routing(sch: dict, pcb: dict) -> list[dict]:
         else:
             entry["status"] = "pass"
 
+        # Intra-pair skew: P vs N trace length within same pair
+        # (tighter than the inter-pair length tolerance above)
+        _intra_pair_tolerance = {
+            "USB": 1.0,
+            "Ethernet": 2.0,
+            "HDMI": 0.5,
+            "LVDS": 0.5,
+            "MIPI": 0.5,
+            "PCIe": 1.0,
+            "SATA": 1.0,
+        }
+
+        intra_skew = abs(pos_len - neg_len)
+        intra_tol = _intra_pair_tolerance.get(protocol, 1.0)
+        if intra_skew > intra_tol:
+            entry["intra_pair_skew"] = {
+                "skew_mm": round(intra_skew, 2),
+                "tolerance_mm": intra_tol,
+                "severity": "HIGH" if intra_skew > intra_tol * 2 else "MEDIUM",
+                "detail": (f"Differential pair {pos_net}/{neg_net} intra-pair "
+                           f"skew {intra_skew:.1f}mm exceeds {protocol} "
+                           f"tolerance ({intra_tol}mm)"),
+            }
+            # Upgrade entry status if the skew check is more severe
+            if entry["status"] == "pass":
+                entry["status"] = "warning"
+                entry["message"] = (f"{protocol} pair {pos_net}/{neg_net}: "
+                                    f"intra-pair skew {intra_skew:.1f}mm "
+                                    f"exceeds {intra_tol}mm tolerance")
+            elif (entry["status"] == "warning"
+                  and intra_skew > intra_tol * 2):
+                entry["status"] = "fail"
+
         # Layer check
         pos_layers = set(pos_data.get("layers", {}).keys())
         neg_layers = set(neg_data.get("layers", {}).keys())
