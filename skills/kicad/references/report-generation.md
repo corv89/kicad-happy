@@ -30,7 +30,9 @@ Use this template. Include sections that are relevant to the design — skip sec
 [2-4 sentence description of the board: MCU, power architecture, key peripherals, domain (IoT/motor control/RF/instrumentation/etc.), form factor context]
 
 ## Previous Review Delta
-[**Optional — include only when a prior design review file exists in the project directory.** Read the previous review and diff against the current findings.]
+[**Include when prior review files or analyzer JSON exist in the project directory.** Scan for `*review*.md`, `*design-review*.md`, and prior `*_analysis.json` files.
+
+If prior analyzer JSON exists, run `diff_analysis.py old.json new.json` to generate a structured component/signal/EMC diff. Present as:]
 
 | Status | Count |
 |--------|-------|
@@ -38,7 +40,11 @@ Use this template. Include sections that are relevant to the design — skip sec
 | Still open | N |
 | New findings | N |
 
-[List fixed items briefly as positive findings ("Thermal via count on U3 increased from 14 to 18 — now meets IPC recommendation"). List still-open items with their original severity. New findings go into their normal sections below. This section helps the designer see progress and avoid re-investigating known issues.]
+[For each fixed item, note it as a positive finding ("Thermal via count on U3 increased from 14 to 18 — now meets IPC recommendation"). For still-open items, carry forward the original severity. For new findings, integrate into their normal sections below.
+
+If prior analyzer JSON does not exist but a prior review markdown does, manually compare findings and track issue status (fixed/open/new) by reading both documents.
+
+If no prior review exists, omit this section entirely.]
 
 ## Critical Findings
 [**This section comes first** so the designer sees the most important issues immediately. Move here after completing the full analysis.]
@@ -243,7 +249,9 @@ Differential pair length matching: For each detected differential pair (USB D+/D
 [Power net routing summary (width, length, current capacity), ground domain identification (AGND/DGND/PGND), zone stitching via density]
 
 ### Thermal Analysis
-[Thermal pad detection, via counting and adequacy for QFN/DFN packages, zone stitching density, thermal relief settings, tombstoning risk assessment (0201/0402 thermal asymmetry). Cross-reference thermal via count and pad area against each IC's datasheet thermal management section — check recommended via count, via diameter, and exposed pad connection. Verify θJA assumptions match the datasheet's specified board conditions (e.g., JEDEC 2s2p vs actual layer count).]
+[Thermal pad detection, via counting and adequacy for QFN/DFN packages, zone stitching density, thermal relief settings, tombstoning risk assessment (0201/0402 thermal asymmetry). Cross-reference thermal via count and pad area against each IC's datasheet thermal management section — check recommended via count, via diameter, and exposed pad connection. Verify θJA assumptions match the datasheet's specified board conditions (e.g., JEDEC 2s2p vs actual layer count).
+
+When `analyze_thermal.py` was run, include its junction temperature estimates (Tj per component, margin to Tj_max, thermal score). Cross-reference against datasheet Tj_max values. When the thermal script was not run, estimate manually from power dissipation and package θJA for components with significant power draw (regulators, drivers, power FETs).]
 
 For every IC with an exposed/thermal pad, explicitly report the via count and adequacy in this format: "[Ref] pad [N] ([net]) connected through [count] thermal vias (recommended range: [min]–[max] per datasheet) — [adequate/insufficient]." Example: "U1 pad 41 (GND thermal pad) connected through 12 thermal vias (recommended range: 9–16) — adequate." The thermal via count is one of the most common QFN/DFN layout errors and is always worth calling out with a specific number, even when adequate — it confirms the designer got it right.
 
@@ -286,7 +294,7 @@ GND pour clearance: Measure the actual clearance between each touch pad and the 
 [Routing completeness, unrouted net count and list]
 
 ## Schematic ↔ PCB Cross-Reference
-[Include when both schematic and PCB were analyzed — this catches the most dangerous bugs]
+[Include when both schematic and PCB were analyzed — this catches the most dangerous bugs. Use `statistics.total_nets` from both analyzers for net count comparison — do not mix net counts from different sections or manual counting methods, as the schematic may include internal unnamed nets that the PCB doesn't.]
 ### Component Count Match — [Schematic (excl. power symbols) vs PCB footprint count]
 ### Pin-Net Verification — [ALL components: schematic pin mapping vs PCB pad mapping. Table: Ref | Pins | All Match | Mismatches. Do not sample — verify every component including connectors, transistors, diodes.]
 This verification must happen at the PCB pad level, not just the schematic pin level. The schematic tells you pin 1 connects to net X; the PCB tells you pad 1 connects to net X. If the library footprint has pad numbering that doesn't match the symbol's pin numbering, the schematic and PCB will be internally consistent but the board will be wrong. For each IC, transistor, and connector, verify both directions: schematic pin N → net X, AND PCB pad N → net X, AND the physical pad position matches the datasheet's pin diagram for that specific package. Example format: "Q1: 1=G(MAP_RED), 2=S(GND), 3=D(+5V)." This catches the most dangerous class of bug — a library footprint with wrong pad numbering passes all consistency checks but produces a non-functional board.
@@ -322,6 +330,9 @@ This verification must happen at the PCB pad level, not just the schematic pin l
 
 ### Sourcing Audit
 [MPN coverage %, missing MPNs list, missing distributor part numbers. Do not recommend or prefer any specific distributor by name — keep sourcing observations neutral.]
+
+### Component Lifecycle Status
+[**Include when `--lifecycle` flag was used on the schematic analyzer.** Report any NRND (not recommended for new designs), EOL (end of life), or obsolete components from the `lifecycle_audit` output. For each flagged part: MPN, current status, last-buy date if known, and suggested action (find alternate, stock up, redesign). If lifecycle audit was not run, note: "Lifecycle audit not performed — [reason: no API keys / no network / no MPNs]."]
 
 ### BOM Optimization
 [Unique passive value counts per type, total unique footprints, single-use passive values, consolidation opportunities]
