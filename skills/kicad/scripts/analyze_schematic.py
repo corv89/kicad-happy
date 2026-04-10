@@ -8403,8 +8403,18 @@ def main():
         except OSError:
             pass
 
-        analysis_dir = ensure_analysis_dir(project_dir, project_file=pro_file,
-                                            config=config if 'config' in dir() else None)
+        # Ensure the target directory exists with manifest
+        os.makedirs(analysis_dir, exist_ok=True)
+        from analysis_cache import MANIFEST_FILENAME, save_manifest, _empty_manifest, GITIGNORE_CONTENT
+        manifest_path = os.path.join(analysis_dir, MANIFEST_FILENAME)
+        if not os.path.isfile(manifest_path):
+            manifest = _empty_manifest()
+            manifest['project'] = pro_file
+            save_manifest(analysis_dir, manifest)
+        gitignore_path = os.path.join(analysis_dir, '.gitignore')
+        if not os.path.isfile(gitignore_path):
+            with open(gitignore_path, 'w') as f:
+                f.write(GITIGNORE_CONTENT)
 
         source_hashes = {os.path.basename(args.schematic): hash_source_file(args.schematic)}
 

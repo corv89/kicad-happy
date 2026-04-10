@@ -473,12 +473,26 @@ def main():
         import tempfile
         from pathlib import Path
         # analysis_cache lives in skills/kicad/scripts/ — already on sys.path
-        from analysis_cache import (ensure_analysis_dir, hash_source_file,
-                                    should_create_new_run, create_run,
-                                    overwrite_current, CANONICAL_OUTPUTS)
+        from analysis_cache import (hash_source_file, should_create_new_run,
+                                    create_run, overwrite_current,
+                                    CANONICAL_OUTPUTS, MANIFEST_FILENAME,
+                                    save_manifest, _empty_manifest, GITIGNORE_CONTENT)
 
         project_dir = str(Path(args.schematic).parent) if args.schematic else '.'
-        analysis_dir = ensure_analysis_dir(project_dir)
+        if not os.path.isabs(args.analysis_dir):
+            analysis_dir = os.path.join(project_dir, args.analysis_dir)
+        else:
+            analysis_dir = args.analysis_dir
+
+        os.makedirs(analysis_dir, exist_ok=True)
+        manifest_path = os.path.join(analysis_dir, MANIFEST_FILENAME)
+        if not os.path.isfile(manifest_path):
+            manifest = _empty_manifest()
+            save_manifest(analysis_dir, manifest)
+        gitignore_path = os.path.join(analysis_dir, '.gitignore')
+        if not os.path.isfile(gitignore_path):
+            with open(gitignore_path, 'w') as f:
+                f.write(GITIGNORE_CONTENT)
 
         # Hash the schematic JSON that was consumed (primary input)
         source_hashes = {}

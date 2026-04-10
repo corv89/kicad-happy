@@ -94,42 +94,53 @@ For the end-to-end walkthrough from S-expression parsing through signal detectio
 
 **OpenAI Codex:**
 
-```
-/plugins                              # open the repo-local plugin marketplace
+Clone the repo, open it in Codex, and run `/plugins`:
+
+```bash
+git clone https://github.com/aklofas/kicad-happy.git
 ```
 
-When you open this repo in Codex, the local marketplace entry comes from `.agents/plugins/marketplace.json` and the 11 bundled skills are exposed through `.agents/skills/`.
+To use the skills in your own hardware projects instead, ask your agent:
 
-If you want to use the skills from another hardware repo instead of working inside `kicad-happy` itself, use the manual install below to symlink them into `~/.codex/skills`.
+> "Clone https://github.com/aklofas/kicad-happy and install all the skills"
 
 <details>
-<summary><strong>Other install methods</strong></summary>
+<summary><strong>Manual install & other platforms</strong></summary>
 
-**Ask your agent:**
-
-> Clone https://github.com/aklofas/kicad-happy and install all the skills
-
-**Claude Code (manual):**
+**macOS / Linux** — symlink skills into your agent's skills directory:
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 cd kicad-happy
-mkdir -p ~/.claude/skills
+mkdir -p ~/.claude/skills   # Claude Code
+mkdir -p ~/.codex/skills    # OpenAI Codex
 for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
-  ln -sf "$(pwd)/skills/$skill" ~/.claude/skills/$skill
+  ln -sf "$(pwd)/skills/$skill" ~/.claude/skills/$skill   # Claude Code
+  ln -sf "$(pwd)/skills/$skill" ~/.codex/skills/$skill    # OpenAI Codex
 done
 ```
 
-**OpenAI Codex (manual):**
+**Windows PowerShell:**
 
-```bash
+```powershell
 git clone https://github.com/aklofas/kicad-happy.git
 cd kicad-happy
-mkdir -p ~/.codex/skills
-for skill in kicad spice emc bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
-  ln -sf "$(pwd)/skills/$skill" ~/.codex/skills/$skill
-done
+New-Item -ItemType Directory -Force "$HOME\.codex\skills" | Out-Null
+"kicad","spice","emc","bom","digikey","mouser","lcsc","element14","jlcpcb","pcbway","kidoc" | ForEach-Object {
+  New-Item -ItemType SymbolicLink -Path "$HOME\.codex\skills\$_" -Target "$(Get-Location)\skills\$_" -Force | Out-Null
+}
 ```
+
+Note: Windows symlinks may require Developer Mode or elevated privileges.
+
+**Selective install** (Codex only — pick specific skills):
+
+```bash
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo aklofas/kicad-happy --path skills/kicad skills/emc skills/spice
+```
+
+Note: Windows symlinks may require Developer Mode or elevated privileges.
 
 </details>
 
