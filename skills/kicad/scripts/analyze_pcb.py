@@ -4923,6 +4923,8 @@ def main():
                         help="Print JSON output schema and exit")
     parser.add_argument("--config", default=None,
                         help="Path to .kicad-happy.json project config file")
+    parser.add_argument("--analysis-dir", default=None,
+                        help="Write output to analysis cache directory (timestamped runs)")
     parser.add_argument("--schematic",
                         help="Schematic analysis JSON for cross-analyzer enrichment")
     args = parser.parse_args()
@@ -4990,7 +4992,50 @@ def main():
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
 
-    if args.output:
+    if args.analysis_dir:
+        import tempfile
+        from analysis_cache import (ensure_analysis_dir, hash_source_file,
+                                     should_create_new_run, create_run,
+                                     overwrite_current, CANONICAL_OUTPUTS)
+
+        project_dir = str(Path(args.pcb).parent)
+        if not os.path.isabs(args.analysis_dir):
+            analysis_dir = os.path.join(project_dir, args.analysis_dir)
+        else:
+            analysis_dir = args.analysis_dir
+
+        # Find .kicad_pro for manifest
+        pro_file = ""
+        try:
+            for f in os.listdir(project_dir):
+                if f.endswith(".kicad_pro"):
+                    pro_file = f
+                    break
+        except OSError:
+            pass
+
+        analysis_dir = ensure_analysis_dir(project_dir, project_file=pro_file,
+                                            config=config if 'config' in dir() else None)
+
+        source_hashes = {os.path.basename(args.pcb): hash_source_file(args.pcb)}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_file = os.path.join(tmp_dir, CANONICAL_OUTPUTS.get("pcb", "pcb.json"))
+            Path(out_file).write_text(output)
+
+            if should_create_new_run(analysis_dir, tmp_dir):
+                run_id = create_run(
+                    analysis_dir=analysis_dir,
+                    outputs_dir=tmp_dir,
+                    source_hashes=source_hashes,
+                    scripts={"pcb": f"analyze_pcb.py {os.path.basename(args.pcb)}"},
+                )
+                print(f"Analysis cached: {analysis_dir}/{run_id}/pcb.json", file=sys.stderr)
+            else:
+                overwrite_current(analysis_dir, tmp_dir, source_hashes=source_hashes)
+                print(f"Analysis cache updated (current run)", file=sys.stderr)
+
+    elif args.output:
         Path(args.output).write_text(output)
         print(f"Written to {args.output}", file=sys.stderr)
     else:

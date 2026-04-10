@@ -309,6 +309,9 @@ def main():
                         help='Use SPICE simulation for improved PDN/filter analysis (requires ngspice/LTspice/Xyce)')
     parser.add_argument('--config', default=None,
                         help='Path to .kicad-happy.json project config file')
+    parser.add_argument('--analysis-dir', default=None,
+                        help='Write output into analysis cache directory '
+                             '(creates/updates manifest)')
     parser.add_argument('--schema', action='store_true',
                         help='Print JSON output schema and exit')
 
@@ -464,6 +467,48 @@ def main():
         'board_info': extract_board_info(schematic, pcb),
         'elapsed_s': round(elapsed, 3),
     }
+
+    # Analysis cache integration
+    if args.analysis_dir:
+        import tempfile
+        from pathlib import Path
+        # analysis_cache lives in skills/kicad/scripts/ — already on sys.path
+        from analysis_cache import (ensure_analysis_dir, hash_source_file,
+                                    should_create_new_run, create_run,
+                                    overwrite_current, CANONICAL_OUTPUTS)
+
+        project_dir = str(Path(args.schematic).parent) if args.schematic else '.'
+        analysis_dir = ensure_analysis_dir(project_dir)
+
+        # Hash the schematic JSON that was consumed (primary input)
+        source_hashes = {}
+        if args.schematic:
+            h = hash_source_file(os.path.abspath(args.schematic))
+            if h:
+                source_hashes[os.path.basename(args.schematic)] = h
+        if args.pcb:
+            h = hash_source_file(os.path.abspath(args.pcb))
+            if h:
+                source_hashes[os.path.basename(args.pcb)] = h
+
+        # Write result to a temp dir, then let cache module decide
+        with tempfile.TemporaryDirectory() as tmpdir:
+            canonical = CANONICAL_OUTPUTS.get('emc', 'emc.json')
+            tmp_out = os.path.join(tmpdir, canonical)
+            with open(tmp_out, 'w') as f:
+                json.dump(result, f, indent=2)
+
+            if should_create_new_run(analysis_dir, tmpdir):
+                run_id = create_run(analysis_dir, tmpdir,
+                                    source_hashes=source_hashes,
+                                    scripts={'emc': 'analyze_emc.py'})
+                print(f'EMC analysis cached: new run {run_id}',
+                      file=sys.stderr)
+            else:
+                overwrite_current(analysis_dir, tmpdir,
+                                  source_hashes=source_hashes)
+                print('EMC analysis cached: updated current run',
+                      file=sys.stderr)
 
     # Output
     if args.output:

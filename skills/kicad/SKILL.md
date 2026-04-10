@@ -69,7 +69,9 @@ In all commands below, `<skill-path>` refers to this skill's base directory (sho
 
 ### Schematic Analyzer
 ```bash
-python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch>
+python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/
+python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/ --compact
+python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --output analysis.json  # one-off, no cache
 ```
 Outputs structured JSON (~60-220KB depending on board complexity) with:
 - **Components & BOM**: inventory with reference, value, footprint, lib_id, type classification, MPN, datasheet; deduplicated BOM with quantities
@@ -113,8 +115,9 @@ See `references/schematic-analysis.md` Step 2 for the full verification checklis
 
 ### PCB Layout Analyzer
 ```bash
-python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb>
-python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --proximity  # add crosstalk analysis
+python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/
+python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/ --proximity  # add crosstalk analysis
+python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --output pcb.json  # one-off, no cache
 ```
 Outputs structured JSON (~50-300KB depending on board complexity) with:
 - **Core**: footprint inventory (pads, courtyards, net assignments, extended attrs, schematic cross-reference), track/via statistics, zone summaries, board outline/dimensions, routing completeness
@@ -229,13 +232,12 @@ board_dimensions, gerbers, drills
 **Workflow:** When analyzing a KiCad project, scan the project directory for all available file types and run every applicable analyzer — not just the one the user mentioned. A complete analysis uses all the data available:
 
 1. **Scan the project directory** for `.kicad_sch`, `.kicad_pcb`, `.kicad_pro`, gerber directories, and `.net`/`.xml` netlist files
-1b. **Initialize analysis cache.** Read `.kicad-happy.json` for `analysis` config (defaults apply if absent). Check for `analysis/manifest.json`:
-    - If present, read current run's `source_hashes` to determine which analyzers need re-running.
-    - If absent, initialize with `ensure_analysis_dir()` from `analysis_cache.py`.
+1b. **Run analyzers with `--analysis-dir analysis/`** — this auto-creates the
+    analysis cache directory, tracks runs with a manifest, handles copy-forward of
+    unchanged outputs, and decides whether to create a new run or overwrite the
+    current one. All three analyzers (schematic, PCB, EMC) support this flag.
 
-    Run analyzers with `--output` targeting a temporary directory. After all analyzers complete, use the analysis cache module to decide: create new run (meaningful changes) or overwrite current (cosmetic changes only). The module handles copy-forward of unchanged outputs, manifest updates, and retention pruning.
-
-    Write outputs using canonical filenames: `schematic.json`, `pcb.json`, `gerber.json`, `spice.json`, `emc.json`, `thermal.json`, `lifecycle.json`.
+    For one-off runs without cache tracking, use `--output file.json` instead.
 2. **Check for prior design reviews** — scan the project directory for existing review files (`*review*.md`, `*design-review*.md`). If found, read the most recent one. Check the analysis manifest for prior runs. If `auto_diff` is enabled and prior runs exist, run `diff_analysis.py` on current vs previous run and include the delta in the "Previous Review Delta" section of the report.
 3. **Run all applicable scripts** — if the schematic exists, run `analyze_schematic.py`. If the PCB exists, run `analyze_pcb.py`. If gerbers exist, run `analyze_gerbers.py`. Run them in parallel when possible.
 3. **Sync datasheets** (see Datasheet Acquisition below) — this step is a prerequisite for verification, not optional. Without datasheets, all subsequent verification is reduced to internal consistency checks — confirming the design agrees with itself, not that it's correct. Run the sync before reading any analyzer output. If sync fails or no API keys are available, use fallback methods (Datasheet property URLs, individual downloads via `digikey` skill, ask the user). If critical IC datasheets can't be obtained, note this prominently in the report as a verification gap.
