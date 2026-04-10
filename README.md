@@ -286,9 +286,28 @@ AP2114H-3.3TRG1 — Diodes Incorporated
 
 ## 🏭 Manufacturing
 
+> "Is this board ready to order?"
+
 > "Generate the BOM for JLCPCB assembly"
 
-Cross-references LCSC part numbers, formats to JLCPCB's exact spec, flags basic vs extended parts. Per-supplier upload files — DigiKey bulk-add CSV, Mouser cart format, LCSC BOM — with quantities already computed for your board count + spares.
+**Fab release gate** — an automated pre-order checklist that cross-references your schematic, PCB, and Gerber data:
+
+```
+Fabrication Release Gate — 8 check categories
+
+  Routing completeness     ✓ PASS  All 240 nets routed
+  BOM readiness            ⚠ WARN  3 components missing MPN
+  DFM compliance           ✓ PASS  No spacing violations, standard tier compatible
+  Documentation            ✓ PASS  Title block, revision, fab notes present
+  Schematic ↔ PCB match    ✓ PASS  296 components matched, 0 orphans
+  Gerber verification      ✓ PASS  All layers present, drill file valid
+  Thermal analysis         ⚠ WARN  U3 junction temp 92°C (margin: 18°C)
+  EMC pre-compliance       ⚠ WARN  Score 73/100 — 2 HIGH findings
+
+  Result: CONDITIONAL PASS (3 warnings to review before ordering)
+```
+
+**BOM export** — cross-references LCSC part numbers, formats to JLCPCB's exact spec, flags basic vs extended parts. Per-supplier upload files — DigiKey bulk-add CSV, Mouser cart format, LCSC BOM — with quantities already computed for your board count + spares.
 
 ## 📄 KiDoc — Engineering documentation (beta)
 
@@ -341,7 +360,9 @@ The scaffold separates auto-generated data sections (component tables, power tre
 
 Figures use a prepare/render pipeline with hash-based caching — if the analysis data hasn't changed, figures aren't re-rendered.
 
-This skill is in **early access / beta**. The figure engine and document pipeline are functional and tested against 100 real projects, but output quality and coverage are still being refined.
+**Beta status:** KiDoc is an early skill that is being actively developed. The figure engine and document pipeline are functional and tested against 100+ real projects, but expect rough edges — some figure types may not render cleanly for all designs, narrative context quality varies by document type, and the PDF styling is still being refined. Feedback and bug reports welcome.
+
+For the full guide — all 8 document types, 12 figure generators, output formats, configuration options, and the prepare/edit/render workflow — see [KiDoc Documentation](kidoc-documentation.md).
 
 ## 🗺️ Workflow
 
@@ -385,19 +406,26 @@ Or just set up the GitHub Action and get automated reviews on every PR.
 | KiCad 6  | Full                          | Full | Full   |
 | KiCad 5  | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
-## 🎯 v1.2 (preview) — Documentation, Domain Detectors, Multi-Platform
+## 🎯 v1.2 — Trust + Reach
 
-New skill: **KiDoc** (beta) for engineering documentation generation. 15 new domain-specific detectors. First-class Codex support alongside Claude Code. Per-finding confidence labels, suppressions, and fabrication release gates.
+v1.1 shipped the analysis engine. v1.2 makes it something you'd actually hand to a teammate. **Trust** — every finding now carries a confidence label, can be suppressed with a reason, and is cross-checked against datasheets and a 5,829-project regression corpus. When it says there's a problem, you can believe it. **Reach** — first-class Codex support, analysis caching with manifests, and CI infrastructure mean it works wherever your team works, not just on one developer's machine.
 
-**What's in v1.2:**
+102 commits. New skill: **KiDoc** (beta) for engineering documentation. 15+ new domain detectors. Datasheet verification bridge. What-if sweep/tolerance/fix tools. Full protocol electrical parameter coverage. Cross-verification. Analysis cache. 25 bug fixes.
 
-| Category              | Capabilities                                                                                                                                                                                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Codex support**     | First-class OpenAI Codex support — 11 skills auto-discovered from `.agents/skills/`, a repo-local marketplace entry in `.agents/plugins/marketplace.json`, and agent-neutral skill docs.                                                                                                                            |
-| **KiDoc (beta)**      | 8 document types (HDD, CE technical file, ICD, design review, manufacturing, power analysis, schematic review, EMC report). 11 auto-generated figure types. PDF/DOCX/ODT/HTML output. Scaffold with auto-updating data sections and narrative placeholders.                                                         |
-| **Domain detectors**  | 15 new detectors: BMS/battery chargers, motor drivers, ESD coverage audit, debug interfaces, power path/load switches, ADC signal conditioning, reset/supervisor, clock distribution, display/touch, sensors, level shifters, audio, LED drivers/audit, RTC, thermocouple/RTD, power sequencing. 40 total (was 25). |
-| **Confidence labels** | Per-finding confidence: deterministic, datasheet-backed, heuristic, or AI-inferred. Reported in findings JSON and formatted output.                                                                                                                                                                                 |
-| **Corpus expansion**  | 5,800+ repos (5.6x growth), 808K+ regression assertions at 100% pass, 193 closed analyzer issues, 86 tracked equations.                                                                                                                                                                                             |
+**Highlights:**
+
+| Category | Capabilities |
+| --- | --- |
+| **Codex support** | First-class OpenAI Codex — 11 skills auto-discovered from `.agents/skills/`, repo-local marketplace, agent-neutral docs. |
+| **KiDoc (beta)** | 8 document types, 12 figure generators, PDF/DOCX/ODT/HTML output. Scaffolds with auto-updating data + narrative placeholders. |
+| **Datasheet verification** | Pin voltage enforcement, required external component checks, per-IC decoupling validation against manufacturer specs. |
+| **What-if tools** | Sweep tables, tolerance analysis, fix suggestions with E-series snapping, EMC impact preview, PCB parasitic awareness. |
+| **Protocol checks** | I2C, SPI, UART, USB, Ethernet, HDMI, LVDS, CAN — complete electrical parameter validation. |
+| **Cross-verification** | 7 schematic-to-PCB cross-checks: component matching, diff pairs, power traces, decoupling, thermal vias. |
+| **Professional checks** | Fab notes, silkscreen completeness, BOM lock, connector ground distribution, certification suggestions. |
+| **Test corpus** | 5,829 repos, 1.2M+ regression assertions at 100% pass, 400+ unit tests, 0 open issues. |
+
+See the full [CHANGELOG](CHANGELOG.md) for all 20 feature sections and 25 bug fixes.
 
 ## 🎯 v1.1 — EMC Pre-Compliance + Analysis Toolkit
 

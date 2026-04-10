@@ -8,25 +8,25 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.2 (unreleased)
 
-**Theme: Trust + Reach** — makes the engine trustworthy to teams and reachable from both platforms.
+**Theme: Trust + Reach** — 102 commits making the engine trustworthy to teams and reachable from both platforms.
 
-### New skill: kidoc
+### New skill: kidoc (beta)
 
-Professional engineering documentation from KiCad projects. Auto-runs all analyses, renders schematics and PCB layouts, generates publication-quality figures, and produces markdown scaffolds with auto-updating data sections and narrative placeholders.
+Professional engineering documentation from KiCad projects. Auto-runs all analyses, renders schematics and PCB layouts, generates publication-quality figures, and produces markdown scaffolds with auto-updating data sections and narrative placeholders. Early skill with rough edges — actively developed.
 
 - 8 report types: Hardware Design Description, CE Technical File, Design Review, Interface Control Document, Manufacturing Transfer, Schematic Review, Power Analysis, EMC Report
 - Custom reports via `--spec` JSON files
-- Output formats: PDF (ReportLab), HTML, Markdown
+- Output formats: PDF (ReportLab), DOCX (python-docx), ODT (odfpy), HTML, Markdown
 - Schematic SVG renderer with KiCad-parity colors, font scaling, pin text, net annotations, crop/focus/highlight
 - PCB layout renderer with 6 layer presets, net highlighting, crop, annotations
-- Publication-quality figures: power tree, architecture, bus topology, connector pinouts
-- Matplotlib charts: thermal margin, EMC severity, SPICE validation, Monte Carlo distributions
+- 12 publication-quality figure generators: power tree, architecture, bus topology, connector pinouts, thermal margin, EMC severity, SPICE validation, Monte Carlo distributions
 - Datasheet integration: comparison tables, pin audits, spec summaries
 - Narrative engine: per-section context builder with writing guidance
+- Hash-based figure caching — unchanged data skips re-render
 
 ### New detectors (15 domain-specific)
 
-Extracted domain-specific detectors into `domain_detectors.py` (~4,400 LOC) alongside core `signal_detectors.py` (~2,960 LOC). 40 total schematic detectors (was 25 in v1.0).
+Extracted domain-specific detectors into `domain_detectors.py` (~4,500 LOC) alongside core `signal_detectors.py` (~3,100 LOC). 40+ total schematic detectors (was 25 in v1.0).
 
 | Detector | What it finds |
 |----------|---------------|
@@ -46,43 +46,181 @@ Extracted domain-specific detectors into `domain_detectors.py` (~4,400 LOC) alon
 | LED lighting audit | Chain tracing (5 hops), current limiting resistor verification, multi-pin exclusion |
 | Thermocouple / RTD | Thermocouple amplifiers, RTD interfaces, cold junction compensation |
 | Power sequencing | Power-good daisy chains, enable chain validation, cross-rail dependencies |
+| LVDS interfaces | FPD-Link, DS90, SN65LVDS families with serializer/deserializer classification |
 
 ### First-class Codex support
 
 - `.agents/skills/` with symlinks to all 11 skills for auto-discovery
 - `.agents/plugins/marketplace.json` for Codex marketplace browsing
 - Enriched `.codex-plugin/plugin.json` with full metadata
-- Agent-neutral language across all SKILL.md files and references (no more `WebFetch`/`WebSearch`/`Claude reads` — works with any LLM agent)
+- Agent-neutral language across all SKILL.md files and references
 - README presents Claude Code and Codex as equal install paths
 - GitHub Action docs cover both `claude-code-action` and `codex-action`
 
 ### Project config and suppressions
 
-- `.kicad-happy.yml` project config: compliance target, derating profile, preferred suppliers, board class, rail overrides
+- `.kicad-happy.json` project config: compliance target, derating profile, preferred suppliers, board class, rail overrides, BOM conventions
 - Per-finding suppressions with reasons: `suppress: [{rule: "DC-001", ref: "C5", reason: "intentional"}]`
 - Suppressed findings listed but marked, not hidden; active vs suppressed counts in summary
-- Cascading config: project defaults merged with per-analysis overrides
+- Cascading config: project-level merges with user-level `~/.kicad-happy.json`
+- Design intent auto-detection (hobby/consumer/industrial/medical/automotive/aerospace)
+- IPC class detection from fab notes with class-aware DFM thresholds
 
 ### Report improvements
 
 - **Per-finding confidence labels**: deterministic, datasheet-backed, heuristic, AI-inferred
-- **Missing information section**: separates "I don't know" from "there's a problem" (missing MPNs, datasheets, unsupported families)
-- **Top-risk summary**: top 3 respin risks, bring-up blockers, and manufacturing blockers in report header
-- **Fabrication release gate**: dedicated "ready for fab?" check (schematic-PCB consistency, Gerber freshness, BOM completeness, assembly file consistency, fab-house compatibility)
+- **Missing information section**: separates "I don't know" from "there's a problem"
+- **Top-risk summary**: top 3 respin risks, bring-up blockers, and manufacturing blockers
+- **Fabrication release gate**: 8-category "ready for fab?" check (routing, BOM, DFM, documentation, schematic-PCB consistency, Gerbers, thermal, EMC)
 
-### Bugfixes
+### Schematic-to-PCB cross-verification
+
+New `cross_verify.py` with 7 cross-checks:
+- Component reference bidirectional matching (orphans, missing, value mismatches, DNP conflicts)
+- Differential pair length matching with per-protocol tolerances (USB 2mm, Ethernet 5mm, HDMI 1mm)
+- Differential pair intra-pair skew check per protocol
+- Power trace width assessment per regulator output rail
+- Decoupling cap placement distance cross-check
+- Bus routing advisory (signal lengths, SPI clock-to-data skew)
+- Thermal via adequacy check
+
+### Protocol electrical parameter checks
+
+Complete coverage across all major protocols:
+- **I2C**: Pull-up rise time validation, speed mode assessment, open-drain VOL compatibility, bus current budget
+- **SPI**: Chip select conflict detection, device loading advisory, signal integrity (series termination)
+- **UART**: TX/RX crossover verification, RS-232 transceiver detection with charge pump cap check
+- **USB**: CC resistor validation (5.1k sink, source levels), D+/D- series resistors, VBUS capacitor sizing
+- **Ethernet**: Bob Smith termination detection, magnetics/impedance advisory
+- **HDMI**: 100ohm TMDS differential termination check
+- **CAN**: 120ohm termination detection
+
+### What-if enhancements
+
+- **Sweep tables**: `R5=1k,2.2k,4.7k,10k` (comma list) and `R5=1k..100k:10` (log range) with markdown table output
+- **Tolerance analysis**: `R5=4.7k+-5%` worst-case corner analysis (2^N combinations)
+- **Fix suggestions**: `--fix voltage_dividers[0] --target 3.3` with E12/E24/E96 snapping
+- **EMC impact preview**: `--emc` runs analyze_emc.py on patched JSON, diffs findings
+- **PCB parasitic awareness**: `--pcb` with auto-discovery, trace R/L injection, footprint compatibility
+
+### Detection schema
+
+Centralized all per-detection-type metadata into `detection_schema.py`. Eliminated 4 hard-coded consumer-side registries (`_DERIVED_FIELDS`, `_recalc_derived`, `SIGNAL_REGISTRY`, `PRIMARY_METRIC`). Adding a new detection type is now 1 schema entry instead of 4-file edits.
+
+### Diff analysis improvements
+
+- **Cache integration**: `--analysis-dir` / `--run` for diffing runs from analysis cache
+- **Multi-run trends**: `--trend N` shows metric evolution across last N runs
+- **Change attribution**: "cutoff_hz changed because R5 went from 1k to 4.7k"
+- **Regression detection**: flags new ERC warnings, removed protections, SPICE pass-to-fail, EMC score increases
+- **Stable detection IDs**: hash-based `detection_id` on every signal detection for ref-renumbering resilience
+
+### Analysis enrichment (complete)
+
+Phase 1-4 enrichment across schematic, PCB, and EMC outputs:
+- Bus electrical parameters: I2C speed mode, voltage, pull-up ohms; CAN termination; bus device dicts with controller field
+- Power dissipation for switching regulators (buck/boost/buck-boost with efficiency estimates)
+- Crystal load cap validation (target, error%, ok/marginal/out_of_spec)
+- ESD device details on connector audit entries
+- Decoupling proximity matrix in PCB output
+- Switching loop area pre-computation in PCB output (via --schematic flag)
+- EMC category summary pre-rollup
+
+### Datasheet verification bridge
+
+New `datasheet_verify.py` bridges extracted datasheet data with schematic analysis:
+- Pin voltage abs_max violation (CRITICAL) and operating range exceeded (HIGH/MEDIUM)
+- Missing required external components per datasheet pin specs
+- Per-IC decoupling verification against application circuit recommendations
+- Activates automatically when `datasheets/extracted/` cache exists
+
+### Professional quick wins
+
+- Fab notes completeness check (IPC class, surface finish, thickness, copper weight, material)
+- Silkscreen completeness audit (revision, board name, ref visibility, connector labels, polarity)
+- BOM lock verification (MPN coverage %, missing MPNs, generic values)
+- Connector ground pin distribution (flag >4 signal pins per ground)
+- Certification requirement identification (FCC/CE/IEC/UL from detected RF, battery, USB, Ethernet, high voltage)
+
+### Analysis cache integration
+
+All analyzers now support `--analysis-dir` for automatic cache management:
+- Timestamped run folders with manifest tracking
+- Copy-forward of unchanged outputs between runs
+- Automatic new-run vs overwrite-current decision based on diff severity
+- Pre-analysis datasheet sync prompt in skill workflow
+
+### Sub-sheet detection (KH-228)
+
+Detection rate improved from 34% to 99% using `.kicad_pro` stem matching as primary heuristic. Zero false positives on root schematics.
+
+### Registry trust & CI
+
+- GitHub Actions CI workflow (py_compile on Python 3.8 + 3.12)
+- CODE_OF_CONDUCT.md (Contributor Covenant v2.1)
+- Dependabot for GitHub Actions version tracking
+- SECURITY.md moved to `.github/` for scanner compatibility
+- Security architecture documentation in SKILL.md (Snyk W011 mitigation)
+
+### Additional analysis improvements
+
+- **Hierarchical context for sub-sheets**: automatic root schematic discovery and cross-sheet net resolution when analyzing individual sub-sheets
+- **Sleep current estimation**: realistic vs worst-case analysis, per-rail breakdown with EN pin detection and GPIO state inference
+- **Keepout zone analysis**: surface area calculation, ESD IC decoupling proximity checks, touch pad GND clearance verification
+- **Lifecycle audit integration**: wired into analyzer via `--lifecycle` flag, queries 4 distributor APIs
+- **Technical debt cleanup**: shared detector helpers (`detector_helpers.py`), hoisted 40+ deferred imports, consolidated duplicate calculations, tightened exception handling
+- **`.kicad_pro` / `.kicad_dru` / library table parsing**: net classes, design rules, text variables from project files
+
+### E-series standard values
+
+- E12, E24, E96 decade tables in `kicad_utils.py`
+- `snap_to_e_series()` function for component value snapping
+- Used by what-if fix suggestions and EMC decoupling recommendations
+
+### Bugfixes (25 issues)
+
+KH-194 through KH-228 — most discovered via automated Layer 3 LLM batch review:
 
 - KH-194: ESD audit "can" word boundary matching "scan"
 - KH-195: USBPDSINK01 assertion update for PD controller detection
 - KH-196: Bare capacitor values parsed as Farads in inrush/PDN calculations
 - KH-197: Key matrix topology false positives (19 boards fixed)
 - KH-198: LC filter reference collision in multi-project schematics
+- KH-199/200: None rail names crash power_tree and narrative
+- KH-204: power_rails uses UUID sheet paths instead of human-readable names
+- KH-206: Global labels with different names merged into one net
+- KH-207: Legacy KiCad 5 matrix decomposition producing wrong pin positions
+- KH-208: Component type classification ignoring lib_id for Connector/Sensor/Motor/CircuitBreaker
+- KH-209: Power rails with nnVn naming pattern (3V3, 12V0) classified as signal
+- KH-210: SPI chip select detection missing CSN/NCS/SSEL patterns
+- KH-211: pin_nets filtering out unnamed nets (hiding sub-sheet connections)
+- KH-212: Bare capacitor values <1.0 parsed as Farads instead of microfarads
+- KH-213: P-MOSFET detection missing PMOS/P-MOS/P-MOSFET keyword variants
+- KH-214: INA2xx power monitors misclassified as opamp circuits
+- KH-215: LM2576/LM2596 switching bucks classified as LDO
+- KH-216: Multi-unit IC pin_nets showing wrong unit's pins
+- KH-217: Crystal frequency parsing case-sensitive (kHZ/MHZ not matched)
+- KH-218: Vref heuristic wrong for TPS62912, TPS73601, LM22676
+- KH-219: Load switches classified as LDO topology
+- KH-220: Active oscillators with custom lib symbols misclassified as connector
+- KH-221: Opamp TIA feedback classified as compensator; false voltage dividers
+- KH-222: Multi-unit symbol duplication in led_audit/sleep_current/usb_compliance
+- KH-223: Power sequencing cascade not resolved (overbar pin name matching)
+- KH-224: Multi-unit IC power_domains only showing one unit's rails
+- KH-225: Charge pump LM2664 classified as LDO (now charge_pump topology)
+- KH-226: NUCLEO dev board module classified as switching regulator
+- KH-227: Logic gates misclassified as level_shifter_ic
+- KH-228: detect_sub_sheet only identifying 34% of sub-sheets
+- AP63357/AP632xx Vref entries added (0.8V)
+- EMC IO-001 jumper false positive exclusion
 
 ### Validation
 
-- 428,291 regression assertions at 100% pass rate
-- 1,036 repos, 40 schematic detectors, 42 EMC rules
-- 270 unit tests, 0 open issues
+- 681,000+ schematic + 517,000+ EMC regression assertions at 100% pass rate
+- 5,829 repos, 40+ schematic detectors, 42 EMC rules, 17 SPICE subcircuit types
+- 400+ unit tests across 22 test files
+- 0 open issues at release
+- 102 commits since v1.1.0
 
 ---
 
