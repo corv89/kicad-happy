@@ -77,7 +77,11 @@ Decoupling: 5 rails, 34 caps total (132µF motor, 110µF logic, 10.8µF 3.3V)
 Connector ground: USB-C has 13:1 signal-to-ground ratio (recommended ≤3:1)
 ```
 
-For a complete example with all sections, see the [full design review report](example-report.md). For the end-to-end walkthrough from S-expression parsing through signal detection and datasheet cross-referencing, see [How It Works](how-it-works.md).
+For complete examples with all sections, see:
+- [Example 1: Robot controller](example-report-1.md) — schematic + PCB + EMC + SPICE, 184 components
+- [Example 2: GNSS disciplined oscillator](example-report-2.md) — full workflow including datasheet sync, 296 components, 10 power rails, Ethernet + USB + SMA
+
+For the end-to-end walkthrough from S-expression parsing through signal detection and datasheet cross-referencing, see [How It Works](how-it-works.md).
 
 ## 🚀 Install
 

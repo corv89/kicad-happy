@@ -231,8 +231,10 @@ def _connector_refs(footprints: list) -> list:
         raw_lib = fp.get('library', fp.get('lib_id', ''))
         lib = (raw_lib if isinstance(raw_lib, str) else str(raw_lib)).lower()
         if ref.startswith('J') or ref.startswith('P') or ref.startswith('CN'):
-            # Exclude internal headers / test points
-            if 'test' in val or 'tp' in val:
+            # Exclude internal headers, test points, and jumpers
+            if 'test' in val or 'tp' in val or 'jumper' in val or 'solder' in val:
+                continue
+            if ref.upper().startswith('JP') or ref.upper().startswith('SJ'):
                 continue
             connectors.append(fp)
         elif 'connector' in lib or 'conn_' in lib or 'usb' in lib:
