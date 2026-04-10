@@ -33,6 +33,8 @@ description: >-
 
 **Handoff guidance:** Use this skill to parse schematics/PCBs and extract structured data. Hand off to `bom` for BOM enrichment, pricing, and ordering. Hand off to `digikey`/`mouser`/`lcsc`/`element14` for part searches and datasheet fetching. Hand off to `jlcpcb`/`pcbway` for fabrication ordering and DFM rule validation. Hand off to `spice` for simulation verification of RC/LC filters, voltage dividers, feedback networks, opamp gain stages, transistor circuits, crystal circuits, current sense resistors, and protection devices — run automatically during design reviews when ngspice is available. Hand off to `emc` for EMC pre-compliance risk analysis — run automatically during design reviews when both schematic and PCB analysis are available.
 
+**Before analysis:** When the user asks to analyze or review a KiCad project, check whether a `datasheets/` directory exists in the project. If not, and DigiKey API keys are available (`DIGIKEY_CLIENT_ID`), offer to sync datasheets first: "I can download datasheets for your components before analysis — this enables pin-level verification and decoupling validation against manufacturer specs. Want me to sync them?" If the user declines or no API keys are set, proceed without datasheets — the analysis works without them but datasheet verification findings won't be available.
+
 ## PDF Schematic Analysis
 
 This skill also handles **PDF schematics** — reference designs, dev board schematics, eval board docs, application notes, and datasheet typical-application circuits. Common use cases:
