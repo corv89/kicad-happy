@@ -92,6 +92,15 @@ For the end-to-end walkthrough from S-expression parsing through signal detectio
 /plugin install kicad-happy@kicad-happy
 ```
 
+> [!NOTE]
+> `/plugin update` may not detect new versions due to a [known Claude Code issue](https://github.com/anthropics/claude-code/issues/36317).
+> To get the latest version, clear the cache and reinstall:
+> ```
+> rm -rf ~/.claude/plugins/cache/kicad-happy ~/.claude/plugins/marketplaces/kicad-happy
+> /plugin marketplace add aklofas/kicad-happy
+> /plugin install kicad-happy@kicad-happy
+> ```
+
 **OpenAI Codex:**
 
 Clone and open the repo in Codex — skills are auto-discovered from `.agents/skills/`:
