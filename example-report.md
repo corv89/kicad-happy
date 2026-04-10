@@ -15,7 +15,7 @@ An RP2350B-based robot controller board featuring dual DRV8411A H-bridge motor d
 |----------|-------|---------|
 | WARNING | Crystal Y1 load capacitance mismatch: effective 10.5pF vs 18pF target (-41.7%) | Crystal Circuits |
 | WARNING | I2C buses missing pull-up resistors (SDA0, SCL0, SDA1) | Bus Protocol Compliance |
-| WARNING | USB-C connector J2 has only partial ESD coverage (D+/D- protected, CC/SBU lines unprotected) | ESD Coverage Audit |
+| WARNING | USB-C connector J2 has only partial ESD coverage (D+/D-/CC protected, SBU and shield lines unprotected) | ESD Coverage Audit |
 | WARNING | Stackup has no dedicated reference planes -- all 6 layers typed as signal | EMC Pre-Compliance |
 | WARNING | U2 (W25Q128JV) thermal pad has 0 vias (recommended minimum 5) | PCB Layout -- Thermal |
 | WARNING | Buck converter U4 hot loop area ~93mm2 (recommended <25mm2) | EMC Pre-Compliance |
@@ -532,7 +532,7 @@ The ICs do have functional value names (AP63357DV-7, DRV8411A, RP2350B, etc.) th
 |---|----------|-------|--------|
 | 1 | WARNING | Crystal load cap mismatch | Y1: effective CL=10.5pF vs target 18pF (-41.7%). Verify crystal spec and adjust C17/C18. |
 | 2 | WARNING | I2C missing pull-ups | SDA0, SCL0, SDA1 have no external pull-up resistors. Add 4.7k to 3.3V. |
-| 3 | WARNING | USB-C partial ESD | Only D+/D- protected by D5. CC, SBU, shield lines unprotected. |
+| 3 | WARNING | USB-C partial ESD | D+/D-/CC protected by D5. SBU and shield lines unprotected. |
 | 4 | WARNING | Stackup lacks reference planes | All 6 layers typed as signal. Reassign In1.Cu/In4.Cu as GND/PWR planes. |
 | 5 | WARNING | U2 thermal pad -- 0 vias | W25Q128JV exposed pad has no thermal/ground vias. Add 4-5 vias. |
 | 6 | WARNING | Buck hot loop oversized | U4 C35-L2 triangle ~93mm2 vs <25mm2 target. Tighten placement. |
