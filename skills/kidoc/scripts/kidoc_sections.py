@@ -5,7 +5,7 @@ No template markers in the output — the generated markdown is the final
 document.  On regeneration, the scaffold is re-generated and the user
 reconciles with their edits via git diff/merge.
 
-Narrative prompts are italic placeholder text that the user or Claude
+Narrative prompts are italic placeholder text that the user or the agent
 replaces with real prose.
 
 Zero external dependencies — Python stdlib only.

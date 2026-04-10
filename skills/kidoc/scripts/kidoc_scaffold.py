@@ -166,7 +166,7 @@ def scaffold_document(project_dir: str, doc_type: str, output_path: str,
 
     # Determine paths for diagrams and schematic SVGs.
     # Figures live under reports/figures/ (git-tracked), separate from
-    # reports/cache/analysis/ (gitignored) which holds only JSON data.
+    # analysis/ (gitignored, managed by analysis_cache.py) which holds JSON data.
     output_abs = os.path.abspath(output_path)
     reports_root = os.path.dirname(output_abs)
     figures_base = os.path.join(reports_root, 'figures')
@@ -267,7 +267,7 @@ def _auto_run_analyses(project_dir: str, analysis_dir: str,
     Returns dict of {analysis_name: was_run_successfully} for reporting.
     """
     if figures_dir is None:
-        # Default: reports/figures/ (sibling of reports/cache/)
+        # Default: reports/figures/ (sibling of analysis output)
         figures_dir = os.path.join(os.path.dirname(os.path.normpath(analysis_dir)),
                                    '..', 'figures')
     results = {}

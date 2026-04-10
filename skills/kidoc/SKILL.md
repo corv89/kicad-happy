@@ -198,13 +198,13 @@ After generating a scaffold, fill the narrative placeholder sections with engine
 1. Run the context builder to get focused data for each section:
    ```bash
    python3 skills/kidoc/scripts/kidoc_narrative.py \
-     --analysis reports/cache/analysis/schematic.json \
+     --analysis analysis/schematic.json \
      --section power_design
    ```
    Or build contexts for all narrative sections at once:
    ```bash
    python3 skills/kidoc/scripts/kidoc_narrative.py \
-     --analysis reports/cache/analysis/schematic.json \
+     --analysis analysis/schematic.json \
      --report reports/HDD.md
    ```
 
@@ -232,12 +232,12 @@ Write as a senior EE explaining to a peer:
 
 - **Python 3.9+** with `python3-venv` (for PDF/DOCX/ODT generation)
 - **KiCad schematic file** (`.kicad_sch`, KiCad 6+) — for SVG rendering
-- **Optional:** Analysis JSONs are auto-generated from `.kicad_sch`/`.kicad_pcb`; pre-generated JSONs in `reports/cache/analysis/` are used if present. Generated figures (diagrams, schematic SVGs) are placed in `reports/figures/` for git tracking
+- **Optional:** Analysis JSONs are auto-generated from `.kicad_sch`/`.kicad_pcb`; pre-generated JSONs in `analysis/` (or the path configured in `.kicad-happy.json`) are used if present. Generated figures (diagrams, schematic SVGs) are placed in `reports/figures/` for git tracking
 
 ## Limitations
 
 - Schematic and PCB renderers support KiCad 6+ formats only (`.kicad_sch`, `.kicad_pcb`)
-- Narrative sections require Claude or manual authoring — the scaffold provides structure and data, not prose
+- Narrative sections require the agent or manual authoring — the scaffold provides structure and data, not prose
 - SPICE simulation results require manual simulation setup (not auto-run by scaffold)
 - PDF vector SVG embedding uses svglib when available; falls back to raster if svglib cannot parse a particular SVG
 

@@ -2,7 +2,7 @@
 """Narrative context builder for kidoc engineering documentation.
 
 Assembles focused context packages for each narrative section in a report.
-The LLM (Claude, in the skill interaction) reads this context and writes
+The LLM reads this context and writes
 engineering prose.  This module does NOT generate prose — it prepares the
 data the LLM needs.
 

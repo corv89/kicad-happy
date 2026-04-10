@@ -45,9 +45,9 @@ PDFs are saved to `datasheets/` in the project directory.
 
 ### Stage 2: LLM extraction
 
-Claude reads the downloaded PDF pages and produces structured JSON for each IC. The page selector (`datasheet_page_selector.py`) identifies which pages contain pin tables, absolute maximum ratings, and application circuits. Claude then fills in the extraction schema documented in `datasheet-extraction.md`.
+The LLM reads the downloaded PDF pages and produces structured JSON for each IC. The page selector (`datasheet_page_selector.py`) identifies which pages contain pin tables, absolute maximum ratings, and application circuits. The agent then fills in the extraction schema documented in `datasheet-extraction.md`.
 
-This step is interactive -- it requires Claude to read PDF pages and produce JSON. It cannot be fully automated.
+This step is interactive — it requires the agent to read PDF pages and produce JSON. It cannot be fully automated.
 
 ### Stage 3: Cache extractions
 

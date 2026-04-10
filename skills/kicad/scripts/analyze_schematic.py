@@ -7248,16 +7248,16 @@ def analyze_usb_compliance(ctx: AnalysisContext,
             if vbus_caps:
                 total_uf = sum(c["farads"] for c in vbus_caps) * 1e6
                 if total_uf < 1.0:
-                    conn_checks["checks"]["vbus_capacitance"] = {
-                        "status": "warning",
+                    conn_checks["checks"]["vbus_capacitance"] = "warning"
+                    conn_checks["vbus_capacitance_detail"] = {
                         "total_uf": round(total_uf, 2),
                         "recommended_min_uf": 1.0,
                         "detail": (f"VBUS decoupling may be insufficient: {total_uf:.1f}\u00b5F total "
                                    f"(recommended \u22651\u00b5F for USB 2.0, \u226510\u00b5F for USB 3.x)"),
                     }
                 else:
-                    conn_checks["checks"]["vbus_capacitance"] = {
-                        "status": "pass",
+                    conn_checks["checks"]["vbus_capacitance"] = "pass"
+                    conn_checks["vbus_capacitance_detail"] = {
                         "total_uf": round(total_uf, 2),
                     }
 
