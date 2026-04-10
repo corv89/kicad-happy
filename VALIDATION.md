@@ -68,8 +68,8 @@ Every analysis script runs against every applicable file in the corpus. Nothing 
 | Schematic (`analyze_schematic.py`) | 36,545 | 100% |
 | PCB (`analyze_pcb.py`) | 18,726 | 100% |
 | Gerber (`analyze_gerbers.py`) | 5,447 | 100% |
-| EMC (`analyze_emc.py`) | 36,513 | 100% |
-| SPICE (`simulate_subcircuits.py`) | 36,545 | 100% |
+| EMC (`analyze_emc.py`) | 36,529 | 100% |
+| SPICE (`simulate_subcircuits.py`) | 36,547 | 100% |
 
 A single unhandled exception across any analyzer on any file in the corpus is treated as a release blocker.
 
@@ -79,56 +79,58 @@ Hard assertions on known-good output values. If a previously correct result chan
 
 | Category | Assertion count | Pass rate |
 |----------|----------------|-----------|
-| **Total** | **2,019,137** | **100%** |
+| **Total** | **2,042,829** | **100%** |
 
 Assertions are seeded from validated output and checked on every run. When analyzer logic changes intentionally (new fields, corrected calculations), affected assertions are re-seeded after manual verification.
 
 ## Signal detector coverage
 
-40 active schematic detectors verified against the corpus:
+42 active schematic detectors verified against the corpus:
 
 | Detector | Repos with hits |
 |----------|----------------|
 | power_sequencing_validation | 5,842 |
-| esd_coverage_audit | 5,073 |
-| design_observations | 4,934 |
-| decoupling_analysis | 3,784 |
-| led_audit | 3,023 |
-| power_regulators | 2,988 |
-| rc_filters | 2,678 |
-| transistor_circuits | 2,297 |
-| voltage_dividers | 2,030 |
-| crystal_circuits | 1,843 |
-| protection_devices | 1,663 |
-| debug_interfaces | 1,019 |
-| lc_filters | 845 |
-| opamp_circuits | 770 |
-| feedback_networks | 517 |
-| memory_interfaces | 440 |
+| rail_voltages | 5,550 |
+| esd_coverage_audit | 5,074 |
+| design_observations | 4,954 |
+| decoupling_analysis | 3,848 |
+| led_audit | 3,021 |
+| power_regulators | 2,986 |
+| rc_filters | 2,657 |
+| transistor_circuits | 2,295 |
+| voltage_dividers | 2,032 |
+| crystal_circuits | 1,852 |
+| protection_devices | 1,676 |
+| debug_interfaces | 1,024 |
+| lc_filters | 833 |
+| opamp_circuits | 741 |
+| feedback_networks | 524 |
+| memory_interfaces | 435 |
 | key_matrices | 423 |
-| level_shifters | 385 |
-| sensor_interfaces | 374 |
+| sensor_interfaces | 373 |
 | addressable_led_chains | 366 |
-| buzzer_speaker_circuits | 311 |
-| adc_circuits | 286 |
+| level_shifters | 359 |
+| buzzer_speaker_circuits | 307 |
+| adc_circuits | 281 |
 | motor_drivers | 274 |
 | battery_chargers | 273 |
-| rf_matching | 243 |
+| rf_matching | 244 |
 | reset_supervisors | 237 |
-| clock_distribution | 208 |
+| clock_distribution | 211 |
 | audio_circuits | 203 |
+| isolation_barriers | 188 |
 | power_path | 187 |
-| current_sense | 181 |
-| isolation_barriers | 176 |
-| rf_chains | 155 |
-| bridge_circuits | 139 |
+| current_sense | 177 |
+| rf_chains | 154 |
+| bridge_circuits | 137 |
 | rtc_circuits | 121 |
 | ethernet_interfaces | 119 |
-| led_driver_ics | 84 |
+| led_driver_ics | 83 |
 | hdmi_dvi_interfaces | 80 |
 | display_interfaces | 55 |
 | thermocouple_rtd | 48 |
 | bms_systems | 25 |
+| lvds_interfaces | 15 |
 
 ## How to reproduce
 
@@ -157,7 +159,7 @@ The harness requires Python 3.8+ and a checkout of the corpus repos. ngspice is 
 
 All analyzer bugs found during validation are tracked with sequential IDs:
 
-- `KH-001` through `KH-206`: analyzer issues (185 filed, 182 closed, 3 open)
+- `KH-001` through `KH-228`: analyzer issues (208 filed, 208 closed, 0 open)
 - `TH-001` through `TH-008`: harness infrastructure issues
 
 Each closed issue has a corresponding bugfix regression guard assertion that prevents the bug from returning.
@@ -170,12 +172,12 @@ Each closed issue has a corresponding bugfix regression guard assertion that pre
 | Schematic files | 36,545 |
 | PCB files | 18,726 |
 | Gerber directories | 5,447 |
-| EMC analyses | 36,513 |
-| SPICE simulations | 36,545 |
+| EMC analyses | 36,529 |
+| SPICE simulations | 36,547 |
 | Components parsed | 1,305,219 |
-| Nets traced | 2,081,954 |
-| Regression assertions | 2,019,137 at 100% |
+| Nets traced | 2,093,210 |
+| Regression assertions | 2,042,829 at 100% |
 | Bugfix guards | 67 (100% — no regressions) |
-| Closed issues | 182 analyzer + 8 harness |
-| Open issues | 3 |
-| Schematic detectors | 40 |
+| Closed issues | 208 analyzer + 8 harness |
+| Open issues | 0 |
+| Schematic detectors | 42 |

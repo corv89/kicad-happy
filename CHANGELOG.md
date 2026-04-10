@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ---
 
-## v1.2 (unreleased)
+## v1.2.0 — 2026-04-09
 
 **Theme: Trust + Reach** — 102 commits making the engine trustworthy to teams and reachable from both platforms.
 
