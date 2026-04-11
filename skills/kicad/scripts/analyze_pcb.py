@@ -4199,17 +4199,62 @@ def analyze_tombstoning_risk(footprints: list[dict], tracks: dict,
     return at_risk
 
 
-def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
+def analyze_thermal_pad_vias(footprints: list[dict], vias: dict,
+                             zones: list[dict],
+                             zone_fills: "ZoneFills") -> list[dict]:
     """Thermal pad via adequacy assessment for QFN/BGA/DFN packages.
 
     For packages with exposed/thermal pads (large center pads), checks:
-    - Number of vias within the thermal pad area
+    - Tier 1: vias inside the rotated 1.5x pad bounding box (any net)
+    - Tier 1b: footprint-embedded thru_hole pads on the pad's net
+    - Tier 2: same-net vias outside the pad bbox but within an expanded
+      search radius (max(w,h)*2.0 + 2.0 mm) whose copper continuity to
+      the pad is verified via the copper_connected helper — catches
+      fanout fillet, adjacent via cluster, and GND-flood-connected via
+      patterns
     - Via density (vias per mm²)
     - Whether vias are tented (solder mask prevents solder wicking)
     - Recommendations based on pad size
 
-    Extends the existing thermal_vias analysis with per-component
-    recommendations focused on via count and tenting.
+    Adequacy is computed from the TOTAL verified thermal path
+    (Tier 1 + Tier 1b + Tier 2), not just the in-bbox strict count.
+    This eliminates the false-positive "no thermal vias" classification
+    on designs that use fillet or flood connection patterns.
+
+    When zone fill data is not available (zones weren't saved with
+    Fill All Zones), the Tier 2 search falls through cleanly:
+    copper_connected returns None for every candidate, so all
+    nearby same-net vias land in `nearby_unverified_vias` and do
+    not influence adequacy. In that case the function's behavior
+    matches pre-Tier 2 semantics.
+
+    Field relationships in each returned entry (important for
+    consumers that read more than one count field):
+
+    - `via_count` is the STRICT in-pad count only — preserved for
+      backward compat with consumers that want the in-bbox breakdown.
+      It counts `vias_in_pad + footprint_via_pads`, unchanged from
+      the pre-Tier 2 meaning.
+    - `effective_via_count` is the drill-weighted strict in-pad count,
+      also preserved unchanged.
+    - `total_verified_via_count` is `via_count + nearby_verified_vias`.
+    - `total_effective_verified_vias` is the drill-weighted version
+      including the nearby_verified contribution.
+    - `adequacy` is derived from `total_effective_verified_vias`
+      (drill-weighted total including Tier 2 contributions), NOT
+      from `via_count` or `effective_via_count`.
+    - `raw_adequacy` is derived from `total_verified_via_count`
+      (raw count total including Tier 2 contributions).
+    - A reader can see `via_count: 2` alongside
+      `adequacy: "adequate"` when the extra contribution comes
+      from fanout-fillet vias outside the strict pad bbox. That
+      is intentional, not a bug — the `adequacy_source` field
+      explains which tier drove the classification.
+    - `adequacy_source` is ALWAYS present on every returned entry
+      and takes one of four values: "in_pad" (Tier 1/1b only),
+      "nearby_fillet" (Tier 2 only), "mixed" (both), or "none"
+      (no vias at all). Consumers that check `adequacy` can rely
+      on `adequacy_source` being present to explain the reasoning.
 
     Returns a list of per-component thermal pad assessments.
     """
@@ -4310,13 +4355,65 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                     fp_drill_sum += fp_drill
                     effective_fp_vias += (fp_drill / 0.3) ** 2
 
-            total_thermal_vias = vias_in_pad + footprint_via_pads
-            effective_thermal_vias = effective_vias_in_pad + effective_fp_vias
+            # Tier 2: nearby same-net vias verified copper-connected to the
+            # pad via the ZoneFills index. Catches fanout-fillet, adjacent
+            # via cluster, and GND-flood-connected patterns that sit past
+            # the 1.5x pad bbox.
+            pad_net_name = pad.get("net_name", "")
+            pad_layer = fp.get("layer", "F.Cu")
+            nearby_search_radius = max(w, h) * 2.0 + 2.0
+            nearby_verified_vias = 0
+            nearby_unverified_vias = 0
+            effective_nearby_verified = 0.0
+            for via in all_vias:
+                vx, vy = via["x"], via["y"]
+                # Skip vias already counted in Tier 1 (inside the 1.5x bbox).
+                # Repeat the rotation-aware rect test from the Tier 1 loop.
+                dx_local, dy_local = vx - ax, vy - ay
+                if total_angle != 0:
+                    dx_local, dy_local = (
+                        dx_local * cos_a - dy_local * sin_a,
+                        dx_local * sin_a + dy_local * cos_a,
+                    )
+                if (abs(dx_local) <= half_w * 1.5 and
+                        abs(dy_local) <= half_h * 1.5):
+                    continue
+                # Skip wrong net
+                if via.get("net", -1) != net_num or net_num < 0:
+                    continue
+                # Skip beyond Tier 2 search radius (Euclidean from pad center).
+                # Rotation is distance-preserving, so dx_local/dy_local give
+                # the same squared distance as (vx-ax)/(vy-ay).
+                if (dx_local * dx_local + dy_local * dy_local >
+                        nearby_search_radius * nearby_search_radius):
+                    continue
+                # Verify copper continuity
+                continuity = copper_connected(
+                    (vx, vy), (ax, ay),
+                    pad_net_name, pad_layer,
+                    zone_fills, zones,
+                )
+                if continuity is True:
+                    nearby_verified_vias += 1
+                    drill = via.get("drill", 0.3)
+                    effective_nearby_verified += (drill / 0.3) ** 2
+                elif continuity is None:
+                    nearby_unverified_vias += 1
+                # continuity is False: via on same net but not copper-connected,
+                # skip (not contributing to thermal path)
 
-            # Compute density using drill-weighted effective via count
+            # Totals combining all three tiers
+            strict_via_count = vias_in_pad + footprint_via_pads
+            total_verified_via_count = strict_via_count + nearby_verified_vias
+            total_effective_verified_vias = (
+                effective_vias_in_pad + effective_fp_vias +
+                effective_nearby_verified)
+
+            # Density is still computed from strict in-pad contribution only —
+            # it's a pad-area metric, not a whole-thermal-path metric
             density = 0.0
             if pad_area > 0:
-                density = effective_thermal_vias / pad_area
+                density = (effective_vias_in_pad + effective_fp_vias) / pad_area
 
             # Recommendations based on pad area
             # Rule of thumb: ~1 via per 1-2mm² of thermal pad area
@@ -4333,22 +4430,23 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 recommended_min = max(9, int(pad_area * 0.5))
                 recommended_ideal = max(16, int(pad_area * 0.8))
 
-            # Assess adequacy using drill-weighted effective via count
-            if effective_thermal_vias >= recommended_ideal:
+            # Assess adequacy using drill-weighted effective count including
+            # nearby-verified contributions
+            if total_effective_verified_vias >= recommended_ideal:
                 adequacy = "good"
-            elif effective_thermal_vias >= recommended_min:
+            elif total_effective_verified_vias >= recommended_min:
                 adequacy = "adequate"
-            elif total_thermal_vias > 0:
+            elif total_verified_via_count > 0:
                 adequacy = "insufficient"
             else:
                 adequacy = "none"
 
-            # Raw adequacy based on actual via count (ignoring drill weighting)
-            if total_thermal_vias >= recommended_ideal:
+            # Raw adequacy based on actual verified via count (ignoring drill)
+            if total_verified_via_count >= recommended_ideal:
                 raw_adequacy = "good"
-            elif total_thermal_vias >= recommended_min:
+            elif total_verified_via_count >= recommended_min:
                 raw_adequacy = "adequate"
-            elif total_thermal_vias > 0:
+            elif total_verified_via_count > 0:
                 raw_adequacy = "insufficient"
             else:
                 raw_adequacy = "none"
@@ -4358,9 +4456,20 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
             # (many manufacturer reference designs use 0.2mm vias in thermal pads)
             drill_penalized = (raw_adequacy in ("adequate", "good") and
                                adequacy in ("insufficient", "none") and
-                               total_thermal_vias > 0)
+                               total_verified_via_count > 0)
             if drill_penalized:
                 adequacy = raw_adequacy
+
+            # Explain which tiers contributed to the adequacy classification
+            # (always present, never None — consumers can rely on this field)
+            if nearby_verified_vias > 0 and strict_via_count > 0:
+                adequacy_source = "mixed"
+            elif nearby_verified_vias > 0:
+                adequacy_source = "nearby_fillet"
+            elif strict_via_count > 0:
+                adequacy_source = "in_pad"
+            else:
+                adequacy_source = "none"
 
             entry: dict = {
                 "component": ref,
@@ -4371,10 +4480,18 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                 "pad_size_mm": [round(w, 2), round(h, 2)],
                 "pad_area_mm2": round(pad_area, 2),
                 "net": pad.get("net_name", ""),
-                "via_count": total_thermal_vias,
-                "effective_via_count": round(effective_thermal_vias, 1),
+                "via_count": strict_via_count,
+                "effective_via_count": round(
+                    effective_vias_in_pad + effective_fp_vias, 1),
                 "standalone_vias": vias_in_pad,
                 "footprint_via_pads": footprint_via_pads,
+                "nearby_verified_vias": nearby_verified_vias,
+                "nearby_unverified_vias": nearby_unverified_vias,
+                "nearby_search_radius_mm": round(nearby_search_radius, 2),
+                "total_verified_via_count": total_verified_via_count,
+                "total_effective_verified_vias": round(
+                    total_effective_verified_vias, 1),
+                "adequacy_source": adequacy_source,
                 "via_density_per_mm2": round(density, 3),
                 "vias_tented": vias_tented,
                 "vias_untented": vias_untented,
@@ -4390,12 +4507,13 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict) -> list[dict]:
                     f"through during reflow, creating voids under the thermal pad"
                 )
 
-            if drill_penalized:
-                avg_drill = (drill_sum + fp_drill_sum) / total_thermal_vias
+            if drill_penalized and strict_via_count > 0:
+                avg_drill = (drill_sum + fp_drill_sum) / strict_via_count
+                strict_effective = effective_vias_in_pad + effective_fp_vias
                 entry["small_via_note"] = (
-                    f"{total_thermal_vias} vias present (avg drill "
+                    f"{strict_via_count} vias present (avg drill "
                     f"{avg_drill:.2f}mm) but effective count "
-                    f"({effective_thermal_vias:.1f}) is below threshold "
+                    f"({strict_effective:.1f}) is below threshold "
                     f"({recommended_min}) due to small drill size — "
                     f"design may follow manufacturer's recommended via pattern"
                 )
@@ -4785,7 +4903,7 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     tombstoning = analyze_tombstoning_risk(footprints, tracks, vias, zones)
 
     # Thermal pad via adequacy for QFN/BGA packages
-    thermal_pad_vias = analyze_thermal_pad_vias(footprints, vias)
+    thermal_pad_vias = analyze_thermal_pad_vias(footprints, vias, zones, zone_fills)
 
     # Build reference layer map from stackup for multi-layer boards
     ref_layer_map = _build_reference_layer_map(setup.get("stackup", []))
