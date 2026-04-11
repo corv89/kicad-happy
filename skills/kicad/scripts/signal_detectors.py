@@ -269,13 +269,23 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
                     if mid_pin_count > 4:
                         continue
 
-                # One end should be power, other should be ground (or another power)
-                # Determine orientation: top is higher voltage, bottom is lower
-                if ctx.is_ground(top_net) and ctx.is_power_net(bot_net):
+                # KH-238: Normalize orientation FIRST so the ordering of
+                # r1/r2 in the outer loop can't drop valid pairs. If
+                # exactly one end is ground, ensure it's bot_net. This
+                # subsumes the previous "is_ground(top) and is_power(bot)"
+                # swap (a strict subset of this condition) and also
+                # catches the unnamed-top-net case that was getting
+                # dropped by the ordering-sensitive fall-through.
+                if ctx.is_ground(top_net) and not ctx.is_ground(bot_net):
                     top_net, bot_net = bot_net, top_net
                     r1, r2 = r2, r1
-                elif not (ctx.is_power_net(top_net) and (ctx.is_ground(bot_net) or ctx.is_power_net(bot_net))):
-                    # Also catch feedback dividers: output -> mid -> ground
+
+                # One end should be power, other should be ground (or another power)
+                if not (ctx.is_power_net(top_net) and (ctx.is_ground(bot_net) or ctx.is_power_net(bot_net))):
+                    # Also catch feedback dividers: output -> mid -> ground.
+                    # After the KH-238 normalization above, an unnamed
+                    # top_net with ground bot_net reaches this branch
+                    # and passes.
                     if not ctx.is_ground(bot_net):
                         continue
 
