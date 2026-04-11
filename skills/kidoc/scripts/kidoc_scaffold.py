@@ -10,6 +10,14 @@ Usage:
     python3 kidoc_scaffold.py --project-dir . --type design_review --output reports/DR.md
     python3 kidoc_scaffold.py --project-dir . --config .kicad-happy.json --output reports/
 
+Explicit analyzer JSON inputs (bypass the analysis cache lookup — useful
+for harness batch runs and any caller that already has analyzer outputs
+on disk but not organised under an analysis/manifest.json convention):
+
+    python3 kidoc_scaffold.py --schematic-json sch.json --pcb-json pcb.json \\
+        --emc-json emc.json --thermal-json thermal.json --type hdd \\
+        --output reports/HDD.md
+
 Zero external dependencies — Python 3.8+ stdlib only.
 """
 
@@ -121,6 +129,41 @@ def load_analysis_cache(project_dir: str,
     return cache
 
 
+def _load_explicit_jsons(paths: dict) -> dict:
+    """Load analyzer JSONs from explicit CLI-provided paths.
+
+    Bypasses the manifest-based analysis cache lookup entirely. Used
+    when a caller (e.g., a batch harness runner) already has analyzer
+    outputs on disk and doesn't want kidoc to run its own discovery.
+
+    Args:
+        paths: dict mapping analysis type key ('schematic', 'pcb', 'emc',
+            'thermal') to file path, or None for unprovided types.
+
+    Returns:
+        dict mapping analysis type to loaded JSON dict, for paths that
+        were provided and loaded successfully. Types with a None path
+        are skipped. Types with an unreadable or malformed file cause
+        an error and sys.exit(1) — this function assumes explicit paths
+        are authoritative and should fail loudly rather than silently
+        skip.
+    """
+    cache = {}
+    for analysis_type, path in paths.items():
+        if path is None:
+            continue
+        if not os.path.isfile(path):
+            print(f"Error: {analysis_type} JSON not found: {path}",
+                  file=sys.stderr)
+            sys.exit(1)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                cache[analysis_type] = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Error: cannot load {analysis_type} JSON {path}: {e}",
+                  file=sys.stderr)
+            sys.exit(1)
+    return cache
 
 
 # ======================================================================
@@ -469,6 +512,21 @@ def main():
                         help='Run KiCad analysis scripts if no analysis data '
                              'exists. Without this flag, errors when analysis '
                              'is missing.')
+    parser.add_argument('--schematic-json', default=None,
+                        help='Explicit path to schematic analyzer JSON. '
+                             'When any of --schematic-json/--pcb-json/'
+                             '--emc-json/--thermal-json is provided, the '
+                             'manifest-based analysis cache lookup is '
+                             'bypassed entirely.')
+    parser.add_argument('--pcb-json', default=None,
+                        help='Explicit path to PCB analyzer JSON. See '
+                             '--schematic-json for mode notes.')
+    parser.add_argument('--emc-json', default=None,
+                        help='Explicit path to EMC analyzer JSON. See '
+                             '--schematic-json for mode notes.')
+    parser.add_argument('--thermal-json', default=None,
+                        help='Explicit path to thermal analyzer JSON. See '
+                             '--schematic-json for mode notes.')
     args = parser.parse_args()
 
     # Load spec (--spec overrides --type)
@@ -500,28 +558,50 @@ def main():
     output_dir = os.path.dirname(os.path.abspath(args.output))
     figures_dir = os.path.join(output_dir, 'figures')
 
-    # Load analysis cache from manifest
-    cache = load_analysis_cache(args.project_dir, analysis_dir)
+    # Explicit JSON inputs bypass the manifest-based cache entirely.
+    # If any of --schematic-json/--pcb-json/--emc-json/--thermal-json
+    # is provided, _load_explicit_jsons is authoritative and we skip
+    # both the cache lookup and --analyze auto-run.
+    explicit_jsons = {
+        'schematic': args.schematic_json,
+        'pcb': args.pcb_json,
+        'emc': args.emc_json,
+        'thermal': args.thermal_json,
+    }
+    has_explicit = any(p is not None for p in explicit_jsons.values())
 
-    if not cache:
+    if has_explicit:
         if args.analyze:
-            # Run analyses using existing _auto_run_analyses
-            auto_results = _auto_run_analyses(args.project_dir, analysis_dir,
-                                               figures_dir=figures_dir)
-            cache = load_analysis_cache(args.project_dir, analysis_dir)
-            _print_analysis_summary(auto_results, analysis_dir,
-                                    figures_dir=figures_dir)
-            if not cache:
-                print('Error: Analysis scripts ran but produced no output.',
-                      file=sys.stderr)
-                sys.exit(1)
-        else:
-            print(f'Error: No analysis data found in '
-                  f'{analysis_dir}.\n'
-                  'Run with --analyze to generate it, or run the '
-                  'KiCad analysis skill first.',
+            print('Error: --analyze cannot be combined with explicit '
+                  '--schematic-json/--pcb-json/--emc-json/--thermal-json '
+                  'flags. Explicit JSONs bypass the analysis pipeline; '
+                  'drop --analyze or drop the explicit flags.',
                   file=sys.stderr)
             sys.exit(1)
+        cache = _load_explicit_jsons(explicit_jsons)
+    else:
+        # Load analysis cache from manifest
+        cache = load_analysis_cache(args.project_dir, analysis_dir)
+
+        if not cache:
+            if args.analyze:
+                # Run analyses using existing _auto_run_analyses
+                auto_results = _auto_run_analyses(args.project_dir, analysis_dir,
+                                                   figures_dir=figures_dir)
+                cache = load_analysis_cache(args.project_dir, analysis_dir)
+                _print_analysis_summary(auto_results, analysis_dir,
+                                        figures_dir=figures_dir)
+                if not cache:
+                    print('Error: Analysis scripts ran but produced no output.',
+                          file=sys.stderr)
+                    sys.exit(1)
+            else:
+                print(f'Error: No analysis data found in '
+                      f'{analysis_dir}.\n'
+                      'Run with --analyze to generate it, or run the '
+                      'KiCad analysis skill first.',
+                      file=sys.stderr)
+                sys.exit(1)
 
     # Generate scaffold
     scaffold_document(
