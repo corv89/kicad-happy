@@ -164,6 +164,93 @@ class ZoneFills:
                 if z.get("net_name")]
 
 
+def copper_connected(p1: tuple[float, float],
+                     p2: tuple[float, float],
+                     net: str,
+                     layer: str,
+                     zone_fills: "ZoneFills",
+                     zones: list[dict],
+                     *,
+                     samples: int = 20) -> bool | None:
+    """Check whether two points are joined by continuous same-net copper.
+
+    Uses line-segment sampling through the ``ZoneFills`` spatial index to
+    determine if a path between ``p1`` and ``p2`` stays entirely within a
+    filled zone on ``net`` and ``layer``. This is a cheap approximation
+    of a full copper connectivity graph — sufficient for verifying that
+    a via near a thermal pad is actually copper-connected (fillet, flood,
+    or cluster pattern) rather than sitting across a clearance slot.
+
+    Args:
+        p1: (x, y) of the first point in board coordinates (mm).
+        p2: (x, y) of the second point in board coordinates (mm).
+        net: Net name both points must share (e.g., "GND", "+3V3").
+        layer: Copper layer name (e.g., "F.Cu", "B.Cu", "In1.Cu").
+        zone_fills: ZoneFills spatial index from the PCB parser.
+        zones: The full zone list the ZoneFills index was built from
+            (needed for looking up net names attached to filled regions).
+            Must be the same list returned alongside the ZoneFills
+            instance during PCB parsing — mismatched pairs produce an
+            IndexError deep inside ZoneFills.zones_at_point.
+        samples: Number of sample points to test along the line segment,
+            including both endpoints. Default 20 gives ~0.26 mm spacing
+            on a 5 mm path (5 mm / 19 gaps). Increase for longer paths
+            or tighter geometry; decrease for very short distances to
+            save work.
+
+    Returns:
+        ``True`` if every sampled point along the segment lies in a filled
+            zone whose net name matches ``net`` on ``layer``.
+        ``False`` if any sample point is outside a same-net filled zone on
+            ``layer`` (i.e., verified disconnected at least at that sample).
+        ``None`` if the zone fill data is not available — the caller
+            cannot distinguish connected from disconnected and should
+            fall back to a proximity heuristic or skip the check.
+
+    Limitations (document for consumers):
+        - **Thermal relief clearances** can cause false negatives: a
+          sample point might land inside the cross-shaped cutout of a
+          thermal relief pattern rather than in the surrounding flood,
+          even though the pad is electrically connected via the four
+          spokes. Consumers that care about thermal-relief patterns
+          should use more samples and/or accept a majority-pass rule
+          rather than strict all-pass.
+        - **Single-layer only.** Does not traverse vias to check
+          cross-layer continuity. A pad connected to an inner plane
+          through a via will look disconnected from a point on the
+          outer layer even if the electrical path is valid. For
+          cross-layer continuity verification, use this helper in
+          combination with via-layer traversal logic.
+        - **Linear sampling.** The function samples along a straight
+          line between ``p1`` and ``p2``. Paths that curve around
+          obstacles (e.g., a trace that routes around a keep-out) will
+          be reported disconnected even though the copper is continuous
+          along the routed path. For proximity-style checks (within a
+          few mm), linear sampling is appropriate; for long-distance
+          connectivity, use a different algorithm.
+    """
+    if not zone_fills.has_data:
+        return None
+
+    if samples < 2:
+        samples = 2
+
+    x1, y1 = p1
+    x2, y2 = p2
+    dx = x2 - x1
+    dy = y2 - y1
+
+    for i in range(samples):
+        t = i / (samples - 1)
+        sx = x1 + t * dx
+        sy = y1 + t * dy
+        nets_at_point = zone_fills.zone_nets_at_point(sx, sy, layer, zones)
+        if net not in nets_at_point:
+            return False
+
+    return True
+
+
 def _arc_length_3pt(sx: float, sy: float, mx: float, my: float,
                     ex: float, ey: float) -> float:
     """Compute arc length from three points (start, mid, end) on a circle."""
