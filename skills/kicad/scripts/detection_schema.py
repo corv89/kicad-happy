@@ -100,10 +100,10 @@ def _recalc_opamp_gain(det: dict) -> None:
     ri = det.get("input_resistor", {}).get("ohms")
     if rf and ri and ri > 0:
         config = det.get("configuration", "")
-        if "inverting" in config:
-            det["gain"] = round(-rf / ri, 4)
-        elif "non-inverting" in config or "non_inverting" in config:
+        if "non-inverting" in config or "non_inverting" in config:
             det["gain"] = round(1.0 + rf / ri, 4)
+        elif "inverting" in config:
+            det["gain"] = round(-rf / ri, 4)
         else:
             det["gain"] = round(rf / ri, 4)
         gain = det["gain"]
@@ -274,7 +274,7 @@ SCHEMAS = {
         identity_fields=["inductor.ref", "capacitor.ref"],
         value_fields=["resonant_hz"],
         derived=[
-            DerivedField("resonant_hz", _recalc_lc_filter),
+            DerivedField("resonant_hz", _recalc_lc_filter, _inverse_lc_resonant),
             DerivedField("impedance_ohms", _recalc_lc_filter),
         ],
         primary_metric="resonant_hz",
