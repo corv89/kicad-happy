@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -152,7 +153,7 @@ def _get_digikey_token() -> tuple[str, str] | None:
         return None
 
     # Token cache
-    cache_path = "/tmp/digikey_token_cache.json"
+    cache_path = os.path.join(tempfile.gettempdir(), "digikey_token_cache.json")
     try:
         with open(cache_path) as f:
             cache = json.load(f)
