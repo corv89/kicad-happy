@@ -4868,10 +4868,11 @@ def analyze_pcb(path: str, *, proximity: bool = False,
             net_classes = extract_net_classes(root)
         pro_rules = extract_pro_design_rules(pro)
         pro_text_vars = extract_pro_text_variables(pro)
+        pcb_dir = os.path.dirname(str(path)) or '.'
         project_settings = {
             'source': os.path.basename(
-                next((os.path.join(os.path.dirname(str(path)), f)
-                      for f in os.listdir(os.path.dirname(str(path)))
+                next((os.path.join(pcb_dir, f)
+                      for f in os.listdir(pcb_dir)
                       if f.endswith('.kicad_pro')), '')),
         }
         if pro_net_classes:
@@ -5245,7 +5246,7 @@ def main():
                     source_hashes=source_hashes,
                     scripts={"pcb": f"analyze_pcb.py {os.path.basename(args.pcb)}"},
                 )
-                print(f"Analysis cached: {analysis_dir}/{run_id}/pcb.json", file=sys.stderr)
+                print(f"Analysis cached: {os.path.join(analysis_dir, run_id, 'pcb.json')}", file=sys.stderr)
             else:
                 overwrite_current(analysis_dir, tmp_dir, source_hashes=source_hashes)
                 print(f"Analysis cache updated (current run)", file=sys.stderr)

@@ -8429,7 +8429,7 @@ def main():
                     source_hashes=source_hashes,
                     scripts={"schematic": f"analyze_schematic.py {os.path.basename(args.schematic)}"},
                 )
-                print(f"Analysis cached: {analysis_dir}/{run_id}/schematic.json", file=sys.stderr)
+                print(f"Analysis cached: {os.path.join(analysis_dir, run_id, 'schematic.json')}", file=sys.stderr)
             else:
                 overwrite_current(analysis_dir, tmp_dir, source_hashes=source_hashes)
                 print(f"Analysis cache updated (current run)", file=sys.stderr)
