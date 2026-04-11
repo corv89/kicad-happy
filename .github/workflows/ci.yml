@@ -28,3 +28,35 @@ jobs:
         run: |
           find skills/ -name "*.py" -exec python -m py_compile {} +
           echo "All scripts compile successfully"
+
+  smoke-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: analyze_schematic.py --help
+        run: python3 skills/kicad/scripts/analyze_schematic.py --help > /dev/null
+
+      - name: analyze_pcb.py --help
+        run: python3 skills/kicad/scripts/analyze_pcb.py --help > /dev/null
+
+      - name: analyze_gerbers.py --help
+        run: python3 skills/kicad/scripts/analyze_gerbers.py --help > /dev/null
+
+      - name: analyze_emc.py --help
+        run: python3 skills/emc/scripts/analyze_emc.py --help > /dev/null
+
+      - name: simulate_subcircuits.py --help
+        run: python3 skills/spice/scripts/simulate_subcircuits.py --help > /dev/null
+
+      - name: bom_manager.py --help
+        run: python3 skills/bom/scripts/bom_manager.py --help > /dev/null
+
+      - name: kidoc_orchestrator.py --help
+        run: python3 skills/kidoc/scripts/kidoc_orchestrator.py --help > /dev/null
