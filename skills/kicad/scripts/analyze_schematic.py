@@ -5491,6 +5491,23 @@ def analyze_sleep_current(ctx: AnalysisContext,
                                     "note": "assuming ~2V forward drop, always-on if no switch",
                                 })
 
+    # KH-239: Drop pull_up entries that are actually LED current-limit
+    # resistors. The LED loop above already emitted led_indicator entries
+    # with series_resistor pointing at these refs, and the LED arithmetic
+    # (V_rail - V_f)/R is the correct one. The pull_up branch's V_rail/R
+    # arithmetic over-states the current by ~50% per LED. Symmetric with
+    # the detection criterion: drop any ref that appears as BOTH a
+    # pull_up entry AND an led_indicator's series_resistor on the same
+    # rail.
+    for _rail_name, _entries in rail_currents.items():
+        _led_series = {e.get("series_resistor") for e in _entries
+                       if e.get("type") == "led_indicator" and e.get("series_resistor")}
+        if _led_series:
+            rail_currents[_rail_name] = [
+                e for e in _entries
+                if not (e.get("type") == "pull_up" and e.get("ref") in _led_series)
+            ]
+
     # --- Regulator quiescent current estimates ---
     # Use detected regulators from signal analysis to estimate Iq per output rail.
     # These are rough estimates based on part family — actual values depend on
