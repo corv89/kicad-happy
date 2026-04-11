@@ -1203,10 +1203,23 @@ def extract_pro_net_classes(pro: dict) -> list[dict]:
         if nc_name and pattern:
             class_nets.setdefault(nc_name, []).append(pattern)
 
-    # Add direct assignments
-    for net_name, nc_name in assignments.items():
-        if nc_name:
-            class_nets.setdefault(nc_name, []).append(net_name)
+    # Add direct assignments.
+    # KH-235: nc_value can be a list when a net belongs to multiple
+    # classes (newer .kicad_pro format). Harness corpus audit confirmed
+    # 139 files with list-valued netclass_assignments, 0 files with
+    # list-valued netclass_patterns — so only the assignments loop
+    # needs coercion. Two list-format variants observed: single-class
+    # wrapped in a 1-element list ("+BATT": ["+BATT"]) and explicit
+    # class-name-as-list ("Net-...": ["Power"]). Both crash the same
+    # way via setdefault() hashing a list. Coerce to iterable and
+    # register the net under each class.
+    for net_name, nc_value in assignments.items():
+        if not nc_value:
+            continue
+        nc_names = nc_value if isinstance(nc_value, list) else [nc_value]
+        for nc_name in nc_names:
+            if nc_name:
+                class_nets.setdefault(nc_name, []).append(net_name)
 
     result = []
     for c in raw_classes:
