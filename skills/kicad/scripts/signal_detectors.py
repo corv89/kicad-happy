@@ -1622,15 +1622,20 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         # Estimate switching frequency for switching regulators
         if reg_info.get("topology") == "switching":
             sw_f = lookup_switching_freq(ic.get("value", ""))
+            freq_source = "lookup_table" if sw_f else None
             if sw_f is None:
                 # Try lib_id part name (after colon)
                 lib_part = ic.get("lib_id", "").split(":")[-1] if ":" in ic.get("lib_id", "") else ""
                 if lib_part:
                     sw_f = lookup_switching_freq(lib_part)
+                    if sw_f:
+                        freq_source = "lookup_table"
             if sw_f is None:
                 sw_f = _default_switching_freq("buck")  # conservative default for switching
+                freq_source = "topology_default"
             if sw_f is not None:
                 reg_info["switching_frequency_hz"] = sw_f
+                reg_info["freq_source"] = freq_source
 
         # Only add if we found meaningful regulator features
         is_regulator = False
