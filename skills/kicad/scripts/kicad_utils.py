@@ -1391,29 +1391,124 @@ def load_lib_tables(file_path: str) -> dict:
 # Switching frequency lookup table — single source of truth for both
 # signal_detectors.py and emc_rules.py.  See KH-237 for collision audit.
 # Sources: DigiKey parametric data + manufacturer datasheets (verified 2026-04-12).
+# ~100 entries: 8 broad collision prefixes replaced with per-sub-family entries.
 # ---------------------------------------------------------------------------
 _KNOWN_FREQS = {
-    'TPS62': 2.5e6,    # TPS62130: 2.5MHz (DigiKey parametric)
-    'TPS61': 1.0e6,    # TPS61023: 1MHz (DigiKey parametric)
-    'TPS54': 570e3,    # TPS54331: 570kHz (DigiKey parametric)
-    'TPS56': 500e3,    # TPS56339: 500kHz (DigiKey parametric)
-    'TPS629': 2.2e6,   # TPS62912: 2.2MHz (DigiKey: 1/2.2MHz modes)
-    'TPS63': 2.4e6,    # TPS63020: 2.4MHz (DigiKey parametric)
-    'LM259': 150e3,    # LM2596: 150kHz (DigiKey parametric)
-    'LM257': 52e3,     # LM2575: 52kHz (DigiKey parametric)
-    'MP2307': 340e3,   # MP2307: 340kHz (DigiKey parametric)
-    'MP1584': 1.5e6,   # MP1584: 1.5MHz max (DigiKey: 100kHz-1.5MHz adj)
-    'MP2359': 1.4e6,   # MP2359: 1.4MHz (DigiKey parametric)
-    'AP3012': 1.5e6,   # AP3012: 1.5MHz (DigiKey parametric)
-    'RT8059': 1.5e6,   # RT8059: 1.5MHz (DigiKey parametric)
-    'SY820': 800e3,    # SY8208: 800kHz (Silergy datasheet)
-    'LTC36': 1.0e6,    # LTC3600: 1MHz typ (DigiKey; adj 400kHz-4MHz)
-    'ADP2': 700e3,     # ADP2302: 700kHz (DigiKey parametric)
-    'MCP1640': 500e3,  # MCP1640: 500kHz (DigiKey parametric)
-    'MCP1603': 2.0e6,  # MCP1603: 2MHz (Microchip DS22042B)
-    'XL6009': 400e3,   # XL6009: 400kHz typ (XLSEMI datasheet, 320-430kHz)
-    'XL4015': 180e3,   # XL4015: 180kHz (XLSEMI datasheet)
-    'MT3608': 1.2e6,   # MT3608: 1.2MHz (Aerosemi datasheet)
+    # --- TPS54 family (was single 'TPS54': 570e3, now split per DigiKey) ---
+    'TPS54331': 570e3,     # TPS54331/54531: 570kHz
+    'TPS54531': 570e3,
+    'TPS5430': 500e3,      # TPS5430: 500kHz (note: overlaps TPS54302 below)
+    'TPS54302': 400e3,     # TPS54302: 400kHz
+    'TPS54308': 350e3,     # TPS54308: 350kHz
+    'TPS54202': 500e3,     # TPS54202: 500kHz
+    'TPS5410': 500e3,      # TPS5410: 500kHz
+    'TPS5450': 500e3,      # TPS5450: 500kHz
+    'TPS5405': 500e3,      # TPS5405: 500kHz
+    'TPS54560': 500e3,     # TPS54560: 500kHz
+    'TPS54226': 700e3,     # TPS54226: 700kHz
+    'TPS54294': 700e3,     # TPS54294: 700kHz
+    'TPS54227': 700e3,     # TPS54227: 700kHz
+    'TPS542951': 700e3,    # TPS542951: 700kHz
+    'TPS54527': 650e3,     # TPS54527: 650kHz
+    'TPS546D': 550e3,      # TPS546D24S: 550kHz
+    # --- TPS62 family (was single 'TPS62': 2.5e6, now split) ---
+    'TPS62130': 2.5e6,     # TPS62130/33/40 family: 2.5MHz
+    'TPS62140': 2.5e6,
+    'TPS62133': 2.5e6,
+    'TPS62150': 2.5e6,
+    'TPS62160': 2.5e6,
+    'TPS62203': 1.0e6,     # TPS62203/77: 1MHz
+    'TPS62175': 1.0e6,
+    'TPS62177': 1.0e6,
+    'TPS62840': 1.8e6,     # TPS62840/42: 1.8MHz
+    'TPS62842': 1.8e6,
+    'TPS62823': 2.2e6,     # TPS6282x: 2.2MHz
+    'TPS62826': 2.2e6,
+    'TPS62824': 2.2e6,
+    'TPS62827': 2.2e6,
+    'TPS62410': 2.25e6,    # TPS62410/290/170 family: 2.25MHz
+    'TPS62290': 2.25e6,
+    'TPS62170': 2.25e6,
+    'TPS62A01': 2.4e6,     # TPS62A01/A02: 2.4MHz
+    'TPS62A02': 2.4e6,
+    'TPS62065': 3.0e6,     # TPS62065: 3MHz
+    'TPS62088': 4.0e6,     # TPS62088: 4MHz
+    'TPS62237': 2.0e6,     # TPS62237: 2MHz
+    # --- TPS61 family (was single 'TPS61': 1.0e6, now split) ---
+    'TPS61023': 1.0e6,     # TPS61023: 1MHz
+    'TPS61235': 1.0e6,     # TPS61235: 1MHz
+    'TPS61090': 600e3,     # TPS61090/030/032: 600kHz
+    'TPS61030': 600e3,
+    'TPS61032': 600e3,
+    'TPS61070': 1.2e6,     # TPS61070/170: 1.2MHz
+    'TPS61170': 1.2e6,
+    'TPS61021': 2.0e6,     # TPS61021A: 2MHz
+    'TPS61230': 2.0e6,     # TPS61230: 2MHz
+    'TPS61253': 3.5e6,     # TPS61253: 3.5MHz
+    'TPS61240': 3.5e6,     # TPS61240: 3.5MHz
+    'TPS61288': 500e3,     # TPS61288: 500kHz
+    'TPS61391': 700e3,     # TPS61391: 700kHz
+    # --- TPS56 family (was single 'TPS56': 500e3, now split) ---
+    'TPS56339': 500e3,     # TPS56339/637: 500kHz
+    'TPS56637': 500e3,
+    'TPS563300': 500e3,    # TPS563300: 500kHz
+    'TPS565208': 500e3,    # TPS565208/201: 500kHz
+    'TPS565201': 500e3,
+    'TPS562201': 580e3,    # TPS562201/563201/563202/562208: 580kHz
+    'TPS563201': 580e3,
+    'TPS563202': 580e3,
+    'TPS562208': 580e3,
+    'TPS566238': 600e3,    # TPS566238: 600kHz
+    'TPS560200': 600e3,    # TPS560200: 600kHz
+    'TPS565242': 600e3,    # TPS565242: 600kHz
+    'TPS563200': 650e3,    # TPS563200: 650kHz
+    'TPS562200': 650e3,    # TPS562200: 650kHz
+    'TPS560430': 1.1e6,    # TPS560430: 1.1MHz
+    'TPS562212': 1.2e6,    # TPS562212: 1.2MHz
+    'TPS564247': 1.2e6,    # TPS564247: 1.2MHz
+    'TPS564208': 560e3,    # TPS564208: 560kHz
+    'TPS561243': 1.28e6,   # TPS561243: 1.28MHz
+    'TPS563240': 1.4e6,    # TPS563240: 1.4MHz
+    # --- TPS63 family (was single 'TPS63': 2.4e6, now split) ---
+    'TPS63020': 2.4e6,     # TPS63020/070/etc: 2.4MHz
+    'TPS63070': 2.4e6,
+    'TPS63060': 2.4e6,
+    'TPS63000': 2.4e6,
+    'TPS63802': 2.1e6,     # TPS63802: 2.1MHz
+    'TPS631000': 2.0e6,    # TPS631000/011: 2MHz
+    'TPS631011': 2.0e6,
+    'TPS630250': 2.5e6,    # TPS630250: 2.5MHz
+    # --- TPS629 family (was single 'TPS629': 2.2e6, now split) ---
+    'TPS62912': 2.2e6,     # TPS62912: 2.2MHz
+    'TPS62913': 2.2e6,     # TPS62913: dual 1/2.2MHz, use typical
+    'TPS629203': 2.5e6,    # TPS629203: 2.5MHz
+    'TPS629206': 2.5e6,    # TPS629206: 2.5MHz
+    'TPS629210': 2.5e6,    # TPS629210: 2.5MHz
+    'TPS62932': 2.2e6,     # TPS62932/33: adjustable 200k-2.2MHz, use typical
+    'TPS62933': 2.2e6,
+    # --- ADP2 family (was single 'ADP2': 700e3, now split) ---
+    'ADP2302': 700e3,      # ADP2302/03: 700kHz
+    'ADP2303': 700e3,
+    'ADP2301': 1.4e6,      # ADP2301: 1.4MHz
+    'ADP2503': 2.5e6,      # ADP2503: 2.5MHz
+    # --- LTC36 family (was single 'LTC36': 1.0e6, now split) ---
+    'LTC3600': 1.0e6,      # LTC3600: 1MHz typ
+    'LTC3601': 2.0e6,      # LTC3601: 2MHz
+    # LTC3631/3632/3638/3642: DigiKey returned no freq param — keep unmatched
+    # --- Clean families (no collisions, kept as-is) ---
+    'LM259': 150e3,    # LM2596/2594: 150kHz (verified clean)
+    'LM257': 52e3,     # LM2575/2576: 52kHz (verified clean)
+    'MP2307': 340e3,   # MP2307: 340kHz
+    'MP1584': 1.5e6,   # MP1584: 1.5MHz
+    'MP2359': 1.4e6,   # MP2359: 1.4MHz
+    'AP3012': 1.5e6,   # AP3012: 1.5MHz
+    'RT8059': 1.5e6,   # RT8059: 1.5MHz
+    'SY820': 800e3,    # SY8208: 800kHz
+    'MCP1640': 500e3,  # MCP1640: 500kHz
+    'MCP1603': 2.0e6,  # MCP1603: 2MHz
+    'XL6009': 400e3,   # XL6009: 400kHz
+    'XL4015': 180e3,   # XL4015: 180kHz
+    'MT3608': 1.2e6,   # MT3608: 1.2MHz
 }
 
 
