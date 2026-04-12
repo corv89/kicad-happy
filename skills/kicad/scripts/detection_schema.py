@@ -368,10 +368,95 @@ SCHEMAS = {
         identity_fields=["isolator_ref"],
         value_fields=[],
     ),
-    "snubber_circuits": DetectionSchema(
+    "snubbers": DetectionSchema(
         identity_fields=[],
         value_fields=[],
         primary_metric="z_min_ohms",
+    ),
+    # --- Detections added for KH-233 (identity-only, no derived fields) ---
+    "rail_voltages": DetectionSchema(
+        identity_fields=[],
+        value_fields=[],
+    ),
+    "addressable_led_chains": DetectionSchema(
+        identity_fields=["first_led"],
+        value_fields=["chain_length", "protocol"],
+    ),
+    "adc_circuits": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "interface"],
+    ),
+    "audio_circuits": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "amplifier_class"],
+    ),
+    "battery_chargers": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["charger_type", "charger_family"],
+    ),
+    "buzzer_speaker_circuits": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["type"],
+    ),
+    "clock_distribution": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type"],
+    ),
+    "connector_ground_audit": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["status", "signal_per_ground"],
+    ),
+    "debug_interfaces": DetectionSchema(
+        identity_fields=["connector"],
+        value_fields=["interface_type"],
+    ),
+    "display_interfaces": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["display_type", "interface"],
+    ),
+    "hdmi_dvi_interfaces": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["type"],
+    ),
+    "key_matrices": DetectionSchema(
+        identity_fields=[],
+        value_fields=["rows", "columns", "estimated_keys"],
+    ),
+    "led_driver_ics": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "interface", "channels"],
+    ),
+    "level_shifters": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "direction", "channel_count"],
+    ),
+    "lvds_interfaces": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["role"],
+    ),
+    "motor_drivers": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["type"],
+    ),
+    "reset_supervisors": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "threshold_voltage"],
+    ),
+    "rtc_circuits": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "interface"],
+    ),
+    "sensor_interfaces": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "interface"],
+    ),
+    "suggested_certifications": DetectionSchema(
+        identity_fields=["standard"],
+        value_fields=["region", "reason"],
+    ),
+    "thermocouple_rtd": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["type", "interface"],
     ),
 }
 
