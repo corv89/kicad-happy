@@ -168,7 +168,8 @@ def format_text_report(result: dict) -> str:
     lines.append(f'EMC risk score:  {score}/100')
     lines.append('')
 
-    lines.append(f'Total checks:  {summary.get("total_checks", 0)}')
+    lines.append(f'Total findings:     {summary.get("total_findings", 0)}')
+    lines.append(f'Categories checked: {summary.get("categories_checked", 0)}')
     lines.append(f'  CRITICAL:    {summary.get("critical", 0)}')
     lines.append(f'  HIGH:        {summary.get("high", 0)}')
     lines.append(f'  MEDIUM:      {summary.get("medium", 0)}')
@@ -451,7 +452,8 @@ def main():
 
     result = {
         'summary': {
-            'total_checks': len(findings),
+            'total_findings': len(findings),
+            'categories_checked': len(category_summary),
             'active': len(findings) - suppressed_count,
             'suppressed': suppressed_count,
             'critical': counts['CRITICAL'],
