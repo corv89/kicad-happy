@@ -416,14 +416,17 @@ def main():
         else:
             active_counts[sev] = active_counts.get(sev, 0) + 1
 
-    risk_score = compute_risk_score(findings)
+    # Use only active (non-suppressed) findings for derived metrics
+    active_findings = [f for f in findings if not f.get('suppressed')]
+
+    risk_score = compute_risk_score(active_findings)
 
     # Generate test plan, per-net scores, and regulatory coverage
-    test_plan = generate_test_plan(schematic, pcb, findings,
+    test_plan = generate_test_plan(schematic, pcb, active_findings,
                                    standard=args.standard)
-    per_net = compute_per_net_scores(findings)
+    per_net = compute_per_net_scores(active_findings)
     regulatory = analyze_regulatory_coverage(args.standard, args.market,
-                                            findings)
+                                            active_findings)
 
     # Pre-rollup by category for downstream consumers
     _sev_order = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
