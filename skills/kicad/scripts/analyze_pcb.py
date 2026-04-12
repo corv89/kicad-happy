@@ -5179,13 +5179,15 @@ def main():
                 'fab_texts', [])
         if 'layers' in result:
             pcb_data_for_intent['layers'] = result['layers']
-        if 'design_rule_compliance' in result:
-            drc = result['design_rule_compliance']
-            if drc and 'net_class_summary' in drc:
-                pcb_data_for_intent['net_classes'] = drc['net_class_summary']
+        pcb_data_for_intent['net_classes'] = result.get('net_classes', [])
         pcb_data_for_intent['footprints'] = result.get('footprints', [])
-        pcb_data_for_intent['metadata'] = result.get('metadata', {})
-        pcb_data_for_intent['net_names'] = {}
+        pcb_data_for_intent['metadata'] = result.get('board_metadata', {})
+        # Build net_names from net_name_to_id if available
+        net_names_dict = {}
+        if 'net_name_to_id' in result:
+            for name, nid in result['net_name_to_id'].items():
+                net_names_dict[nid] = name
+        pcb_data_for_intent['net_names'] = net_names_dict
         bbox = result.get('board_outline', {}).get('bounding_box')
         if bbox:
             pcb_data_for_intent['board_area_mm2'] = (
