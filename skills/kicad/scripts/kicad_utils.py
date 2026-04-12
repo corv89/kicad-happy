@@ -946,6 +946,12 @@ def is_ground_name(net_name: str | None) -> bool:
     if nu in ("GND", "VSS", "AGND", "DGND", "PGND", "GNDPWR", "GNDA", "GNDD",
               "SGND", "COM", "0V"):
         return True
+    # Battery-negative rails used as circuit ground in single-supply designs.
+    # Narrow exact-match set — deliberately excludes V-/VEE which are
+    # legitimate bipolar negative supply rails, not ground.
+    if nu in ("BATT-", "BAT-", "VBAT-", "VBATT-", "BATTERY-",
+              "BATT_N", "BAT_N", "VBAT_N"):
+        return True
     # Prefix/suffix patterns: GND_ISO, GND_SEC, GNDISO, etc.
     if nu.startswith("GND") or nu.endswith("GND"):
         return True
