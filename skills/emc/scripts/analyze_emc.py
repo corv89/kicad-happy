@@ -376,10 +376,10 @@ def main():
         from project_config import load_config_from_path, load_config, apply_suppressions
         if args.config:
             config = load_config_from_path(args.config)
-        elif args.schematic:
-            # Auto-discover from schematic's directory
-            sch_data_file = schematic.get('file', '') if schematic else ''
-            search = os.path.dirname(sch_data_file) if sch_data_file else '.'
+        elif args.schematic or args.pcb:
+            # Auto-discover from the actual input file's directory
+            input_path = args.schematic or args.pcb
+            search = os.path.dirname(os.path.abspath(input_path))
             config = load_config(search)
         else:
             config = load_config('.')

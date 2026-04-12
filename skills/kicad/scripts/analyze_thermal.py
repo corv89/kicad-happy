@@ -802,10 +802,14 @@ def main():
     # Resolve datasheets directory
     extract_dir = args.datasheets
     if not extract_dir:
-        sch_file = schematic.get("file", "")
-        if sch_file:
-            candidate = os.path.join(os.path.dirname(sch_file),
-                                     "datasheets", "extracted")
+        # Prefer directory of actual input file over path stored inside JSON
+        input_path = args.schematic if hasattr(args, 'schematic') and args.schematic else None
+        search_base = os.path.dirname(os.path.abspath(input_path)) if input_path else None
+        if not search_base:
+            sch_file = schematic.get("file", "")
+            search_base = os.path.dirname(sch_file) if sch_file else None
+        if search_base:
+            candidate = os.path.join(search_base, "datasheets", "extracted")
             if os.path.isdir(candidate):
                 extract_dir = candidate
 
@@ -815,8 +819,12 @@ def main():
         if args.config:
             config = load_config_from_path(args.config)
         else:
-            sch_file = schematic.get("file", "")
-            search = os.path.dirname(sch_file) if sch_file else "."
+            input_path = args.schematic if hasattr(args, 'schematic') and args.schematic else None
+            if input_path:
+                search = os.path.dirname(os.path.abspath(input_path))
+            else:
+                sch_file = schematic.get("file", "")
+                search = os.path.dirname(sch_file) if sch_file else "."
             config = load_config(search)
     except ImportError:
         config = {"version": 1, "project": {}, "suppressions": []}
