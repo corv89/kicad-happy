@@ -13,6 +13,9 @@ from kicad_utils import (
     _REGULATOR_VREF,
     format_frequency as _format_frequency,
     lookup_regulator_vref as _lookup_regulator_vref,
+    lookup_switching_freq,
+    match_known_switching,
+    match_known_switching as _match_known_switching,
     parse_value,
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
 )
@@ -21,66 +24,8 @@ from detector_helpers import index_two_pin_components, get_components_by_type
 
 
 # ---------------------------------------------------------------------------
-# Known switching regulator prefixes (used for frequency estimation and
-# topology classification).  Extracted to module level for reuse by
-# _match_known_switching().
-# Sources: DigiKey parametric data + manufacturer datasheets (verified 2026-04-01).
-# ---------------------------------------------------------------------------
-_KNOWN_FREQS = {
-    'TPS62': 2.5e6,    # TPS62130: 2.5MHz (DigiKey parametric)
-    'TPS61': 1.0e6,    # TPS61023: 1MHz (DigiKey parametric)
-    'TPS54': 570e3,    # TPS54331: 570kHz (DigiKey parametric)
-    'TPS56': 500e3,    # TPS56339: 500kHz (DigiKey parametric)
-    'TPS629': 2.2e6,   # TPS62912: 2.2MHz (DigiKey: 1/2.2MHz modes)
-    'TPS63': 2.4e6,    # TPS63020: 2.4MHz (DigiKey parametric)
-    'LM259': 150e3,    # LM2596: 150kHz (DigiKey parametric)
-    'LM257': 52e3,     # LM2575: 52kHz (DigiKey parametric)
-    'MP2307': 340e3,   # MP2307: 340kHz (DigiKey parametric)
-    'MP1584': 1.5e6,   # MP1584: 1.5MHz max (DigiKey: 100kHz-1.5MHz adj)
-    'MP2359': 1.4e6,   # MP2359: 1.4MHz (DigiKey parametric)
-    'AP3012': 1.5e6,   # AP3012: 1.5MHz (DigiKey parametric)
-    'RT8059': 1.5e6,   # RT8059: 1.5MHz (DigiKey parametric)
-    'SY820': 800e3,    # SY8208: 800kHz (Silergy datasheet)
-    'LTC36': 1.0e6,    # LTC3600: 1MHz typ (DigiKey; adj 400kHz-4MHz)
-    'ADP2': 700e3,     # ADP2302: 700kHz (DigiKey parametric)
-    'MCP1640': 500e3,  # MCP1640: 500kHz (DigiKey parametric)
-    'MCP1603': 2.0e6,  # MCP1603: 2MHz (Microchip DS22042B)
-    'XL6009': 400e3,   # XL6009: 400kHz typ (XLSEMI datasheet, 320-430kHz)
-    'XL4015': 180e3,   # XL4015: 180kHz (XLSEMI datasheet)
-    'MT3608': 1.2e6,   # MT3608: 1.2MHz (Aerosemi datasheet)
-}
-
-
-def _match_known_switching(value: str, lib_id: str) -> bool:
-    """Check if a part matches the known switching regulator table."""
-    val_upper = value.upper()
-    lib_part = lib_id.split(":")[-1].upper() if ":" in lib_id else ""
-    for prefix in _KNOWN_FREQS:
-        pu = prefix.upper()
-        if val_upper.startswith(pu) or lib_part.startswith(pu):
-            return True
-    return False
-
-
-# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
-
-def _estimate_switching_freq(part_value: str) -> float | None:
-    """Estimate switching frequency from common regulator part numbers.
-
-    Returns frequency in Hz or None if unknown.
-    """
-    if not part_value:
-        return None
-    val = part_value.upper()
-
-    for prefix, freq in _KNOWN_FREQS.items():
-        if prefix in val:
-            return freq
-
-    return None
-
 
 def _default_switching_freq(topology: str) -> float | None:
     """Fallback switching frequency estimate when part is unrecognized.
@@ -1676,12 +1621,12 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
 
         # Estimate switching frequency for switching regulators
         if reg_info.get("topology") == "switching":
-            sw_f = _estimate_switching_freq(ic.get("value", ""))
+            sw_f = lookup_switching_freq(ic.get("value", ""))
             if sw_f is None:
                 # Try lib_id part name (after colon)
                 lib_part = ic.get("lib_id", "").split(":")[-1] if ":" in ic.get("lib_id", "") else ""
                 if lib_part:
-                    sw_f = _estimate_switching_freq(lib_part)
+                    sw_f = lookup_switching_freq(lib_part)
             if sw_f is None:
                 sw_f = _default_switching_freq("buck")  # conservative default for switching
             if sw_f is not None:
