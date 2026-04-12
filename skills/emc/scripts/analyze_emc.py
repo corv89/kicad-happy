@@ -354,7 +354,7 @@ def main():
             pcb = json.load(f)
 
     # Effective severity threshold
-    severity = 'low' if args.compact else args.severity
+    severity = args.severity
 
     # SPICE-enhanced mode (optional)
     spice_backend = None
@@ -467,6 +467,11 @@ def main():
         'board_info': extract_board_info(schematic, pcb),
         'elapsed_s': round(elapsed, 3),
     }
+
+    # --compact is presentation-only: strip INFO findings from output
+    if args.compact:
+        result['findings'] = [f for f in result['findings']
+                              if f.get('severity', 'INFO') != 'INFO']
 
     # Analysis cache integration
     if args.analysis_dir:
