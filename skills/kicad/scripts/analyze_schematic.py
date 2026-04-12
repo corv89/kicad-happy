@@ -440,12 +440,15 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
         unit_num = int(unit_node[1]) if unit_node and len(unit_node) > 1 else None
 
         ref = get_property(sym, "Reference") or ""
-        value = get_property(sym, "Value") or ""
-        # KH-088: Eagle-imported schematics often have empty instance Value.
-        # Fall back to the lib_symbol's Value property.
-        if not value:
+        value = get_property(sym, "Value")
+        # KH-088: Eagle-imported schematics often have NO instance Value property.
+        # Fall back to the lib_symbol's Value property only when the property is
+        # missing entirely (None), not when it exists but is empty string (KH-230).
+        if value is None:
             sym_def_val = lib_symbols.get(lib_id, {})
-            value = sym_def_val.get("value", "")
+            value = sym_def_val.get("value", "") or ""
+        else:
+            value = value or ""
         footprint = get_property(sym, "Footprint") or ""
         datasheet = get_property(sym, "Datasheet") or ""
         description = get_property(sym, "Description") or ""
