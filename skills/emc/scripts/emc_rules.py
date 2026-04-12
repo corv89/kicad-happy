@@ -2970,7 +2970,10 @@ def check_thermal_emc(pcb: Optional[Dict],
                 continue
 
             cap_ref = cap.get('ref', '?')
-            package = cap.get('package', '0603')
+            package = cap.get('package')
+            if not package:
+                # No package data — skip package-dependent analysis
+                continue
             value_str = cap.get('value', '')
 
             # Try to extract rated voltage from value string (e.g., "100nF/16V")
@@ -3269,7 +3272,10 @@ def check_pdn_impedance(pcb: Optional[Dict],
             farads = cap.get('farads', 0)
             if not farads or farads <= 0:
                 continue
-            package = cap.get('package', '0603')
+            package = cap.get('package')
+            if not package:
+                # No package data — skip package-dependent analysis
+                continue
             esr = cap.get('esr_ohm') or estimate_esr(package)
             esl = cap.get('esl_h') or estimate_esl(package)
             cap_models.append({

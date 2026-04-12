@@ -1741,11 +1741,21 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 if not c_val or c_val <= 0:
                     continue
                 seen_refs.add(cref)
-                output_caps.append({
+                cap_entry = {
                     "ref": cref,
                     "value": comp["value"],
                     "farads": c_val,
-                })
+                }
+                # Carry package from footprint for downstream rules (TH-001, PDN)
+                fp = comp.get("footprint", "")
+                if fp:
+                    import re as _re
+                    _pkg_m = _re.search(r'(\d{4})', fp)
+                    if _pkg_m and _pkg_m.group(1) in (
+                            '0201', '0402', '0603', '0805',
+                            '1206', '1210', '1812', '2220'):
+                        cap_entry["package"] = _pkg_m.group(1)
+                output_caps.append(cap_entry)
             if output_caps:
                 # Sort by value descending (bulk caps first)
                 output_caps.sort(key=lambda c: -c["farads"])
@@ -1767,11 +1777,21 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 if not c_val or c_val <= 0:
                     continue
                 seen_refs_in.add(cref)
-                input_caps.append({
+                cap_entry = {
                     "ref": cref,
                     "value": comp["value"],
                     "farads": c_val,
-                })
+                }
+                # Carry package from footprint for downstream rules (TH-001, PDN)
+                fp = comp.get("footprint", "")
+                if fp:
+                    import re as _re
+                    _pkg_m = _re.search(r'(\d{4})', fp)
+                    if _pkg_m and _pkg_m.group(1) in (
+                            '0201', '0402', '0603', '0805',
+                            '1206', '1210', '1812', '2220'):
+                        cap_entry["package"] = _pkg_m.group(1)
+                input_caps.append(cap_entry)
             if input_caps:
                 input_caps.sort(key=lambda c: -c["farads"])
                 reg["input_capacitors"] = input_caps
