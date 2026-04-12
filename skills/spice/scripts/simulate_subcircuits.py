@@ -140,8 +140,9 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
             cir_content = generator(det_run, out_file_spice,
                                     context=analysis_json,
                                     parasitics=parasitics)
-        except (KeyError, TypeError, ValueError):
-            return None, 0
+        except (KeyError, TypeError, ValueError) as e:
+            return {"_generator_fail": True,
+                    "note": f"testbench generation failed: {type(e).__name__}: {e}"}, 0
 
         if cir_content is None:
             return None, 0
@@ -209,6 +210,17 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
                         "log_file": log_file,
                         "elapsed_s": round(elapsed, 3),
                     })
+                continue
+
+            # Generator-time failure — still emit a skip record
+            if isinstance(result, dict) and result.get("_generator_fail"):
+                results.append({
+                    "subcircuit_type": _singular_type(det_type),
+                    "components": _get_components(det),
+                    "status": "skip",
+                    "note": result.get("note", "testbench generation failed"),
+                    "elapsed_s": 0,
+                })
                 continue
 
             result["cir_file"] = cir_file
