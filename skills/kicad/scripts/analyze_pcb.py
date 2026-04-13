@@ -1637,6 +1637,51 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
     return findings
 
 
+def _min_power_pad_distance(ic_fp: dict, cap_fp: dict) -> float:
+    """Minimum distance between IC power/ground pads and capacitor pads.
+
+    Uses absolute pad coordinates for accurate distance on large packages
+    where footprint center can be 3+ mm from the actual power pin.
+    Falls back to footprint center distance if pad data is missing.
+    """
+    ic_pads = ic_fp.get("pads", [])
+    cap_pads = cap_fp.get("pads", [])
+
+    # Find IC pads on power or ground nets
+    power_pads = []
+    for pad in ic_pads:
+        net = pad.get("net_name", "")
+        if not net:
+            continue
+        nu = net.upper()
+        is_pwr_gnd = (
+            nu in ("GND", "VSS", "AGND", "DGND", "PGND", "VCC", "VDD",
+                   "AVCC", "AVDD", "DVCC", "DVDD") or
+            nu.startswith(("GND", "VSS", "VCC", "VDD", "+")) or
+            nu.endswith(("GND", "VSS")) or
+            "V" in nu and any(c.isdigit() for c in nu)
+        )
+        if is_pwr_gnd:
+            power_pads.append(pad)
+
+    if not power_pads or not cap_pads:
+        # Fallback: footprint center distance
+        dx = ic_fp["x"] - cap_fp["x"]
+        dy = ic_fp["y"] - cap_fp["y"]
+        return math.sqrt(dx * dx + dy * dy)
+
+    # Minimum distance between any IC power pad and any cap pad
+    min_dist = float("inf")
+    for ip in power_pads:
+        ix, iy = ip["abs_x"], ip["abs_y"]
+        for cp in cap_pads:
+            cx, cy = cp["abs_x"], cp["abs_y"]
+            d = math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2)
+            if d < min_dist:
+                min_dist = d
+    return min_dist
+
+
 def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
     """For each IC, find nearby capacitors and report distances.
 
@@ -1654,11 +1699,9 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
 
     results = []
     for ic in ics:
-        ix, iy = ic["x"], ic["y"]
         nearby = []
         for cap in caps:
-            cx, cy = cap["x"], cap["y"]
-            dist = math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2)
+            dist = _min_power_pad_distance(ic, cap)
             if dist <= 10.0:  # Within 10mm
                 # Check if cap shares a net with IC (likely decoupling)
                 ic_nets = {p.get("net_name") for p in ic.get("pads", []) if p.get("net_name")}
@@ -1687,11 +1730,9 @@ def analyze_decoupling_placement(footprints: list[dict]) -> list[dict]:
                and any(fp.get("value", "").lower().startswith(p)
                        for p in _ESD_TVS_PREFIXES)]
     for ic in esd_ics:
-        ix, iy = ic["x"], ic["y"]
         nearby = []
         for cap in caps:
-            cx, cy = cap["x"], cap["y"]
-            dist = math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2)
+            dist = _min_power_pad_distance(ic, cap)
             if dist <= 10.0:
                 ic_nets = {p.get("net_name") for p in ic.get("pads", [])
                            if p.get("net_name")}
