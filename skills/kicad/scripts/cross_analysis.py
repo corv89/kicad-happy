@@ -92,6 +92,59 @@ def _min_trace_width_for_current(current_a: float) -> float:
     return prev_w
 
 
+_NET_NAME_HEURISTICS = [
+    (re.compile(r'(?i)CLK|CLOCK|XTAL|OSC'), 'clock'),
+    (re.compile(r'(?i)USB_D[PM]|USB_D\+|USB_D.|USBDP|USBDM'), 'usb'),
+    (re.compile(r'(?i)ETH_|MDIO|MDC|TX[PN]|RX[PN]'), 'ethernet'),
+    (re.compile(r'(?i)DDR_|DQ\d|DQS|DM\d|CKE|ODT'), 'memory'),
+    (re.compile(r'(?i)^SDA$|^SCL$|I2C'), 'i2c'),
+    (re.compile(r'(?i)CAN[HL]|CAN_[HL]'), 'can'),
+    (re.compile(r'(?i)MISO|MOSI|SCK|SPI'), 'spi'),
+    (re.compile(r'(?i)\bSW$|SW_NODE|^LX$'), 'switching_node'),
+    (re.compile(r'(?i)LVDS|MIPI'), 'lvds'),
+]
+
+_HIGH_SPEED_TYPES = {'clock', 'usb', 'ethernet', 'memory', 'hdmi', 'lvds', 'rf'}
+
+
+def _get_net_classification(net_name, schematic):
+    if schematic:
+        classifications = schematic.get('net_classifications', {})
+        if net_name in classifications:
+            return classifications[net_name]
+    for pattern, net_type in _NET_NAME_HEURISTICS:
+        if pattern.search(net_name):
+            return {'type': net_type, 'source': 'name_heuristic'}
+    return None
+
+
+def _get_highest_frequency(schematic):
+    highest = 0.0
+    if not schematic:
+        return highest
+    sa = schematic.get('signal_analysis', {})
+    for xc in sa.get('crystal_circuits', []):
+        f = xc.get('frequency')
+        if isinstance(f, (int, float)) and f > highest:
+            highest = f
+    for reg in sa.get('power_regulators', []):
+        f = reg.get('switching_frequency_hz')
+        if isinstance(f, (int, float)) and f > highest:
+            highest = f
+    return highest
+
+
+def _point_to_segment_distance(px, py, x1, y1, x2, y2):
+    dx, dy = x2 - x1, y2 - y1
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+    t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / length_sq))
+    proj_x = x1 + t * dx
+    proj_y = y1 + t * dy
+    return math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+
+
 def check_connector_current(schematic: dict, pcb: dict | None) -> list[dict]:
     """CC-001: Check connector pin current capacity vs trace width."""
     findings: list[dict] = []
@@ -348,6 +401,450 @@ def check_cross_validation(schematic: dict, pcb: dict | None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# NR-001: Critical net routing near board edges
+# ---------------------------------------------------------------------------
+
+_EDGE_DISTANCE_ERROR_MM = 1.0
+_EDGE_DISTANCE_WARN_MM = 2.0
+
+
+def check_critical_net_routing(schematic, pcb):
+    """NR-001: Flag high-speed/clock signal traces routed near board edges."""
+    findings = []
+    if not pcb:
+        return findings
+    segments = pcb.get('tracks', {}).get('segments', [])
+    if not segments:
+        return findings
+    outline = pcb.get('board_outline', {})
+    outline_segs = outline.get('segments', [])
+    if not outline_segs:
+        return findings
+    net_id_map = _build_net_id_map(pcb)
+    flagged_nets = {}
+    for seg in segments:
+        net_id = seg.get('net', 0)
+        net_name = net_id_map.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        if not net_name or _is_power_net(net_name) or _is_ground_net(net_name):
+            continue
+        classification = _get_net_classification(net_name, schematic)
+        if not classification or classification.get('type') not in _HIGH_SPEED_TYPES:
+            continue
+        mx = (seg.get('x1', 0) + seg.get('x2', 0)) / 2
+        my = (seg.get('y1', 0) + seg.get('y2', 0)) / 2
+        min_dist = float('inf')
+        for edge in outline_segs:
+            ex1 = edge.get('x1', edge.get('start_x', 0))
+            ey1 = edge.get('y1', edge.get('start_y', 0))
+            ex2 = edge.get('x2', edge.get('end_x', 0))
+            ey2 = edge.get('y2', edge.get('end_y', 0))
+            d = _point_to_segment_distance(mx, my, ex1, ey1, ex2, ey2)
+            if d < min_dist:
+                min_dist = d
+        if min_dist < _EDGE_DISTANCE_WARN_MM:
+            if net_name not in flagged_nets or min_dist < flagged_nets[net_name]:
+                flagged_nets[net_name] = min_dist
+    for net_name, dist in flagged_nets.items():
+        classification = _get_net_classification(net_name, schematic)
+        net_type = classification.get('type', 'signal') if classification else 'signal'
+        severity = 'error' if dist < _EDGE_DISTANCE_ERROR_MM else 'warning'
+        findings.append(make_finding(
+            detector='check_critical_net_routing', rule_id='NR-001',
+            category='signal_routing',
+            summary=f'{net_type} net {net_name}: {dist:.1f}mm from board edge',
+            description=f'High-speed {net_type} net {net_name} is routed {dist:.1f}mm from the board edge. Signals near edges radiate more effectively.',
+            severity=severity, confidence='deterministic', evidence_source='topology',
+            nets=[net_name],
+            recommendation=f'Re-route {net_name} at least {_EDGE_DISTANCE_WARN_MM}mm from board edges.',
+            impact='Increased EMI radiation and susceptibility',
+        ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# RP-002: Enhanced return path validation
+# ---------------------------------------------------------------------------
+
+def check_return_path_enhanced(schematic, pcb):
+    """RP-002: Check for reference plane gaps under classified signal nets."""
+    findings = []
+    if not pcb:
+        return findings
+    segments = pcb.get('tracks', {}).get('segments', [])
+    if not segments:
+        return findings
+    conn_graph = pcb.get('connectivity_graph', {})
+    net_id_map = _build_net_id_map(pcb)
+    plane_gaps = []
+    for net_name, graph in conn_graph.items():
+        if not (_is_ground_net(net_name) or _is_power_net(net_name)):
+            continue
+        for gap in graph.get('gaps', []):
+            plane_gaps.append({**gap, 'net': net_name})
+    if not plane_gaps:
+        rpc = pcb.get('return_path_continuity', [])
+        for entry in rpc:
+            coverage = entry.get('reference_plane_coverage_pct', 100)
+            if coverage < 90:
+                net_name = entry.get('net', '')
+                classification = _get_net_classification(net_name, schematic)
+                if classification and classification.get('type') in _HIGH_SPEED_TYPES:
+                    findings.append(make_finding(
+                        detector='check_return_path_enhanced', rule_id='RP-002',
+                        category='return_path',
+                        summary=f'Net {net_name}: {coverage:.0f}% reference plane coverage',
+                        description=f'High-speed net {net_name} has only {coverage:.0f}% reference plane coverage.',
+                        severity='warning', confidence='heuristic', evidence_source='topology',
+                        nets=[net_name],
+                        recommendation='Re-route signal to avoid reference plane gaps.',
+                        impact='Increased loop area and EMI',
+                    ))
+        return findings
+    flagged = set()
+    for seg in segments:
+        net_id = seg.get('net', 0)
+        net_name = net_id_map.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        if not net_name or _is_power_net(net_name) or _is_ground_net(net_name):
+            continue
+        if net_name in flagged:
+            continue
+        classification = _get_net_classification(net_name, schematic)
+        if not classification:
+            continue
+        sx1, sy1 = seg.get('x1', 0), seg.get('y1', 0)
+        sx2, sy2 = seg.get('x2', 0), seg.get('y2', 0)
+        seg_min_x, seg_max_x = min(sx1, sx2), max(sx1, sx2)
+        seg_min_y, seg_max_y = min(sy1, sy2), max(sy1, sy2)
+        for gap in plane_gaps:
+            bbox = gap.get('bbox', [0, 0, 0, 0])
+            if (seg_max_x >= bbox[0] and seg_min_x <= bbox[2] and
+                    seg_max_y >= bbox[1] and seg_min_y <= bbox[3]):
+                net_type = classification.get('type', 'signal')
+                severity = 'error' if net_type in _HIGH_SPEED_TYPES else 'warning'
+                findings.append(make_finding(
+                    detector='check_return_path_enhanced', rule_id='RP-002',
+                    category='return_path',
+                    summary=f'{net_type} net {net_name} crosses {gap["net"]} plane gap',
+                    description=f'{net_type} signal {net_name} crosses a gap in {gap["net"]} plane on layer {gap.get("layer", "?")}.',
+                    severity=severity, confidence='deterministic', evidence_source='topology',
+                    nets=[net_name, gap['net']],
+                    recommendation=f'Re-route {net_name} to avoid the {gap["net"]} plane gap, or bridge with a stitching capacitor.',
+                    impact='Increased EMI from enlarged return path loop',
+                ))
+                flagged.add(net_name)
+                break
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# TW-001: Trace width validation
+# ---------------------------------------------------------------------------
+
+def check_trace_width_power(schematic, pcb):
+    """TW-001: Check all power net trace widths against IPC-2152."""
+    findings = []
+    if not pcb or not schematic:
+        return findings
+    segments = pcb.get('tracks', {}).get('segments', [])
+    if not segments:
+        return findings
+    net_id_map = _build_net_id_map(pcb)
+    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    net_current = {}
+    for reg in regulators:
+        output_rail = reg.get('output_rail', '')
+        iout = reg.get('estimated_iout_A', 0) or 0
+        if output_rail and iout > 0:
+            net_current[output_rail] = max(net_current.get(output_rail, 0), iout)
+        input_rail = reg.get('input_rail', '')
+        if input_rail and iout > 0:
+            net_current[input_rail] = net_current.get(input_rail, 0) + iout
+    if not net_current:
+        return findings
+    net_min_width = {}
+    for seg in segments:
+        net_id = seg.get('net', 0)
+        net_name = net_id_map.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        w = seg.get('width', 0) or 0
+        if net_name in net_current and w > 0:
+            if net_name not in net_min_width or w < net_min_width[net_name]:
+                net_min_width[net_name] = w
+    for net_name, current in net_current.items():
+        trace_w = net_min_width.get(net_name)
+        if trace_w is None:
+            continue
+        min_w = _min_trace_width_for_current(current)
+        if trace_w < min_w * 0.8:
+            findings.append(make_finding(
+                detector='check_trace_width_power', rule_id='TW-001',
+                category='current_capacity',
+                summary=f'Power net {net_name}: trace {trace_w:.2f}mm too narrow for ~{current:.1f}A',
+                description=f'Power net {net_name} carries ~{current:.1f}A but narrowest trace is {trace_w:.2f}mm. IPC-2152 recommends >= {min_w:.2f}mm.',
+                severity='warning', confidence='heuristic', evidence_source='topology',
+                nets=[net_name],
+                recommendation=f'Widen {net_name} traces to >= {min_w:.1f}mm or use copper pour.',
+                fix_params={'type': 'resistor_value_change', 'change': f'trace width -> {min_w:.1f}mm', 'basis': f'IPC-2152: {current:.1f}A'},
+                standard_ref='IPC-2152', impact='Trace overheating and voltage drop',
+            ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# PS-002: Plane split detection
+# ---------------------------------------------------------------------------
+
+def check_plane_splits(schematic, pcb):
+    """PS-002: Detect ground/power plane splits and signal traces crossing them."""
+    findings = []
+    if not pcb:
+        return findings
+    conn_graph = pcb.get('connectivity_graph', {})
+    if not conn_graph:
+        return findings
+    segments = pcb.get('tracks', {}).get('segments', [])
+    net_id_map = _build_net_id_map(pcb)
+    for plane_net, graph in conn_graph.items():
+        if not (_is_ground_net(plane_net) or _is_power_net(plane_net)):
+            continue
+        if graph.get('islands', 1) <= 1:
+            continue
+        is_intentional = any(plane_net.upper().startswith(p) for p in ('AGND', 'DGND', 'PGND', 'GNDA', 'GNDD'))
+        gaps = graph.get('gaps', [])
+        if not gaps:
+            continue
+        crossing_signals = []
+        for seg in segments:
+            seg_net_id = seg.get('net', 0)
+            seg_net = net_id_map.get(seg_net_id, '') if isinstance(seg_net_id, int) else str(seg_net_id)
+            if not seg_net or _is_power_net(seg_net) or _is_ground_net(seg_net):
+                continue
+            sx1, sy1 = seg.get('x1', 0), seg.get('y1', 0)
+            sx2, sy2 = seg.get('x2', 0), seg.get('y2', 0)
+            for gap in gaps:
+                bbox = gap.get('bbox', [0, 0, 0, 0])
+                if (max(sx1, sx2) >= bbox[0] and min(sx1, sx2) <= bbox[2] and
+                        max(sy1, sy2) >= bbox[1] and min(sy1, sy2) <= bbox[3]):
+                    if seg_net not in crossing_signals:
+                        crossing_signals.append(seg_net)
+                    break
+        if is_intentional:
+            severity = 'info'
+        elif crossing_signals:
+            has_hs = any(_get_net_classification(s, schematic) and
+                         _get_net_classification(s, schematic).get('type') in _HIGH_SPEED_TYPES
+                         for s in crossing_signals)
+            severity = 'error' if has_hs else 'warning'
+        else:
+            severity = 'info'
+        desc_signals = f' Signals crossing: {", ".join(crossing_signals[:5])}.' if crossing_signals else ''
+        findings.append(make_finding(
+            detector='check_plane_splits', rule_id='PS-002',
+            category='plane_integrity',
+            summary=f'{plane_net} plane split: {graph["islands"]} islands{", " + str(len(crossing_signals)) + " signals crossing" if crossing_signals else ""}',
+            description=f'{plane_net} plane has {graph["islands"]} disconnected islands.{desc_signals}',
+            severity=severity, confidence='deterministic', evidence_source='topology',
+            nets=[plane_net] + crossing_signals[:5],
+            recommendation='Bridge the plane gap with copper pour or stitching vias.',
+            impact='Return path discontinuity increases EMI',
+        ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# VS-002: Via stitching density
+# ---------------------------------------------------------------------------
+
+_SPEED_OF_LIGHT = 3e8
+_EFFECTIVE_ER = 4.2
+
+
+def check_via_stitching_density(schematic, pcb):
+    """VS-002: Check ground via stitching density against frequency requirements."""
+    findings = []
+    if not pcb:
+        return findings
+    via_list = pcb.get('vias', {}).get('vias', [])
+    if not via_list:
+        return findings
+    net_id_map = _build_net_id_map(pcb)
+    outline = pcb.get('board_outline', {})
+    bbox = outline.get('bounding_box', {})
+    board_w = bbox.get('width', 0)
+    board_h = bbox.get('height', 0)
+    if board_w <= 0 or board_h <= 0:
+        return findings
+    highest_freq = _get_highest_frequency(schematic)
+    if highest_freq <= 0:
+        highest_freq = 100e6
+    wavelength_mm = (_SPEED_OF_LIGHT / math.sqrt(_EFFECTIVE_ER) / highest_freq) * 1000
+    max_spacing_mm = wavelength_mm / 20
+    board_x0 = bbox.get('x', bbox.get('min_x', 0))
+    board_y0 = bbox.get('y', bbox.get('min_y', 0))
+    gnd_vias = []
+    for via in via_list:
+        net_id = via.get('net', 0)
+        net_name = net_id_map.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        if _is_ground_net(net_name):
+            gnd_vias.append((via.get('x', 0), via.get('y', 0)))
+    if not gnd_vias:
+        findings.append(make_finding(
+            detector='check_via_stitching_density', rule_id='VS-002',
+            category='via_stitching',
+            summary='No ground stitching vias found',
+            description='The board has no ground vias. Ground stitching vias are important for EMC.',
+            severity='warning', confidence='deterministic', evidence_source='topology',
+            recommendation=f'Add ground stitching vias at <= {max_spacing_mm:.0f}mm spacing.',
+            impact='Poor ground plane connectivity between layers',
+        ))
+        return findings
+    cell_size = max_spacing_mm
+    if cell_size <= 0:
+        return findings
+    cells_x = max(1, int(math.ceil(board_w / cell_size)))
+    cells_y = max(1, int(math.ceil(board_h / cell_size)))
+    cell_counts = {}
+    total_cells = cells_x * cells_y
+    for vx, vy in gnd_vias:
+        cx = max(0, min(int((vx - board_x0) / cell_size), cells_x - 1))
+        cy = max(0, min(int((vy - board_y0) / cell_size), cells_y - 1))
+        cell_counts[(cx, cy)] = cell_counts.get((cx, cy), 0) + 1
+    empty_cells = total_cells - len(cell_counts)
+    empty_pct = (empty_cells / total_cells * 100) if total_cells > 0 else 0
+    if empty_pct > 30:
+        findings.append(make_finding(
+            detector='check_via_stitching_density', rule_id='VS-002',
+            category='via_stitching',
+            summary=f'Via stitching sparse: {empty_pct:.0f}% of board lacks ground vias',
+            description=f'{empty_pct:.0f}% of board area (at {cell_size:.1f}mm grid) has no ground stitching vias. For {highest_freq/1e6:.0f}MHz, lambda/20 = {max_spacing_mm:.1f}mm.',
+            severity='warning' if empty_pct > 50 else 'info',
+            confidence='heuristic', evidence_source='topology',
+            recommendation=f'Add ground stitching vias at <= {max_spacing_mm:.0f}mm intervals.',
+            impact='Degraded ground plane connectivity at high frequencies',
+        ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# DP-005: Differential pair routing quality
+# ---------------------------------------------------------------------------
+
+_DIFF_PAIR_SUFFIXES = [
+    (re.compile(r'(.+)[_]?P$'), re.compile(r'(.+)[_]?N$')),
+    (re.compile(r'(.+)\+$'), re.compile(r'(.+)-$')),
+    (re.compile(r'(.+)_DP$'), re.compile(r'(.+)_DN$')),
+    (re.compile(r'(.+)_TXP$'), re.compile(r'(.+)_TXN$')),
+    (re.compile(r'(.+)_RXP$'), re.compile(r'(.+)_RXN$')),
+]
+
+
+def _find_diff_pairs(net_names, schematic):
+    pairs = []
+    seen = set()
+    if schematic:
+        classifications = schematic.get('net_classifications', {})
+        diff_nets = [n for n, c in classifications.items() if c.get('differential')]
+        for p_pat, n_pat in _DIFF_PAIR_SUFFIXES:
+            for net in diff_nets:
+                if net in seen:
+                    continue
+                m = p_pat.match(net)
+                if m:
+                    base = m.group(1)
+                    for net2 in diff_nets:
+                        if net2 in seen:
+                            continue
+                        m2 = n_pat.match(net2)
+                        if m2 and m2.group(1) == base:
+                            pairs.append((net, net2))
+                            seen.add(net)
+                            seen.add(net2)
+                            break
+    for p_pat, n_pat in _DIFF_PAIR_SUFFIXES:
+        for net in net_names:
+            if net in seen:
+                continue
+            m = p_pat.match(net)
+            if m:
+                base = m.group(1)
+                for net2 in net_names:
+                    if net2 in seen or net2 == net:
+                        continue
+                    m2 = n_pat.match(net2)
+                    if m2 and m2.group(1) == base:
+                        pairs.append((net, net2))
+                        seen.add(net)
+                        seen.add(net2)
+                        break
+    return pairs
+
+
+def check_diff_pair_quality(schematic, pcb):
+    """DP-005: Check differential pair routing quality."""
+    findings = []
+    if not pcb:
+        return findings
+    segments = pcb.get('tracks', {}).get('segments', [])
+    via_list = pcb.get('vias', {}).get('vias', [])
+    if not segments:
+        return findings
+    net_id_map = _build_net_id_map(pcb)
+    all_net_names = list(set(net_id_map.values()))
+    pairs = _find_diff_pairs(all_net_names, schematic)
+    if not pairs:
+        return findings
+    net_stats = {}
+    for seg in segments:
+        net_id = seg.get('net', 0)
+        net_name = net_id_map.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        if not net_name:
+            continue
+        x1, y1 = seg.get('x1', 0), seg.get('y1', 0)
+        x2, y2 = seg.get('x2', 0), seg.get('y2', 0)
+        length = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        stats = net_stats.setdefault(net_name, {'length_mm': 0, 'via_count': 0, 'layers': set()})
+        stats['length_mm'] += length
+        stats['layers'].add(seg.get('layer', ''))
+    for via in (via_list or []):
+        net_id = via.get('net', 0)
+        net_name = net_id_map.get(net_id, '') if isinstance(net_id, int) else str(net_id)
+        if net_name in net_stats:
+            net_stats[net_name]['via_count'] = net_stats[net_name].get('via_count', 0) + 1
+    for p_net, n_net in pairs:
+        p_stats = net_stats.get(p_net)
+        n_stats = net_stats.get(n_net)
+        if not p_stats or not n_stats:
+            continue
+        issues = []
+        p_vias = p_stats.get('via_count', 0)
+        n_vias = n_stats.get('via_count', 0)
+        if p_vias != n_vias:
+            issues.append(f'via asymmetry ({p_vias} vs {n_vias})')
+        p_layers = len(p_stats.get('layers', set()))
+        n_layers = len(n_stats.get('layers', set()))
+        if p_layers != n_layers:
+            issues.append(f'layer transition asymmetry ({p_layers} vs {n_layers} layers)')
+        p_len = p_stats.get('length_mm', 0)
+        n_len = n_stats.get('length_mm', 0)
+        avg_len = (p_len + n_len) / 2
+        if avg_len > 0:
+            mismatch_pct = abs(p_len - n_len) / avg_len * 100
+            if mismatch_pct > 5:
+                issues.append(f'length mismatch {abs(p_len - n_len):.1f}mm ({mismatch_pct:.0f}%)')
+        if issues:
+            findings.append(make_finding(
+                detector='check_diff_pair_quality', rule_id='DP-005',
+                category='differential_pair',
+                summary=f'Diff pair {p_net}/{n_net}: {", ".join(issues)}',
+                description=f'Differential pair {p_net}/{n_net} has routing issues: {"; ".join(issues)}.',
+                severity='warning', confidence='deterministic', evidence_source='topology',
+                nets=[p_net, n_net],
+                recommendation='Match via counts, layer transitions, and trace lengths between P and N.',
+                impact='Degraded signal integrity and increased common-mode EMI',
+            ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -357,6 +854,13 @@ def run_all_checks(schematic: dict, pcb: dict | None) -> list[dict]:
     findings.extend(check_esd_coverage_gaps(schematic, pcb))
     findings.extend(check_decoupling_adequacy(schematic, pcb))
     findings.extend(check_cross_validation(schematic, pcb))
+    # PCB intelligence checks
+    findings.extend(check_critical_net_routing(schematic, pcb))
+    findings.extend(check_return_path_enhanced(schematic, pcb))
+    findings.extend(check_trace_width_power(schematic, pcb))
+    findings.extend(check_plane_splits(schematic, pcb))
+    findings.extend(check_via_stitching_density(schematic, pcb))
+    findings.extend(check_diff_pair_quality(schematic, pcb))
     return findings
 
 
