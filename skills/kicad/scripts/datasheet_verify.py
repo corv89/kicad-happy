@@ -30,7 +30,12 @@ def _load_extraction(extract_dir: str, mpn: str) -> dict:
     if os.path.isfile(path):
         try:
             with open(path) as f:
-                return json.load(f)
+                extraction = json.load(f)
+            # Trust gate: skip low-quality extractions
+            meta = extraction.get("meta", {})
+            if meta.get("extraction_score", 0) < 6.0:
+                return None
+            return extraction
         except (json.JSONDecodeError, OSError):
             return {}
 
@@ -46,7 +51,12 @@ def _load_extraction(extract_dir: str, mpn: str) -> dict:
                     fpath = os.path.join(extract_dir, fname)
                     if os.path.isfile(fpath):
                         with open(fpath) as f:
-                            return json.load(f)
+                            extraction = json.load(f)
+                        # Trust gate: skip low-quality extractions
+                        meta = extraction.get("meta", {})
+                        if meta.get("extraction_score", 0) < 6.0:
+                            return None
+                        return extraction
         except (json.JSONDecodeError, OSError):
             pass
 

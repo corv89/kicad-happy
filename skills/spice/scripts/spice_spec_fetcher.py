@@ -576,6 +576,10 @@ def fetch_specs_from_extraction(mpn, project_dir):
             extraction = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+    # Trust gate: skip low-quality extractions
+    meta = extraction.get("meta", {})
+    if meta.get("extraction_score", 0) < 6.0:
+        return None
     spice = extraction.get("spice_specs", {})
     if not spice:
         return None

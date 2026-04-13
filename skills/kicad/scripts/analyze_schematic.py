@@ -8349,14 +8349,14 @@ def _get_schema():
             "voltage_dividers": "[{top_ref, bottom_ref, ratio, vout_estimated, input_net, output_net}]",
             "rc_filters": "[{resistor, capacitor, cutoff_frequency_hz, type: lowpass|highpass}]",
             "lc_filters": "[{inductor, capacitors, resonant_formatted}]",
-            "power_regulators": "[{ref, value, lib_id, topology: ldo|buck|boost|buck_boost|inverting|..., input_rail, output_rail, vout_estimated, vref_source: lookup|heuristic}]",
+            "power_regulators": "[{ref, value, lib_id, topology: ldo|buck|boost|buck_boost|inverting|..., input_rail, output_rail, estimated_vout, vref_source: lookup|heuristic}]",
             "crystal_circuits": "[{reference, value, frequency, type: passive|active_oscillator, load_caps}]",
             "opamp_circuits": "[{reference, configuration, gain}]",
             "transistor_circuits": "[{reference, type, load_classification}]",
             "bridge_circuits": "[{topology, fet_refs}]",
             "protection_devices": "[{type: tvs|esd|fuse|..., reference, protected_net}]",
             "current_sense": "[{shunt: {ref, value, ohms}, sense_ic: {ref, value, type}, high_net, low_net, max_current_50mV_A, max_current_100mV_A}]",
-            "decoupling": "[{capacitor_ref, ic_ref, distance}]",
+            "decoupling_analysis": "[{rail, capacitors: [{ref, value, farads, self_resonant_hz}], total_capacitance_uF, cap_count}]",
             "key_matrices": "[{rows, cols, diodes}]",
             "isolation_barriers": "[{isolator_ref, side_a_nets, side_b_nets}]",
             "ethernet_interfaces": "[{phy_ref, magnetics_ref, connector_ref, impedance_advisory}]",
@@ -8529,8 +8529,14 @@ def main():
             manifest = _empty_manifest()
             manifest['project'] = pro_file
             save_manifest(analysis_dir, manifest)
+        # Respect track_in_git config — skip .gitignore if user wants git tracking
+        _track_in_git = False
+        try:
+            _track_in_git = config.get('analysis', {}).get('track_in_git', False)
+        except (NameError, AttributeError):
+            pass
         gitignore_path = os.path.join(analysis_dir, '.gitignore')
-        if not os.path.isfile(gitignore_path):
+        if not _track_in_git and not os.path.isfile(gitignore_path):
             with open(gitignore_path, 'w') as f:
                 f.write(GITIGNORE_CONTENT)
 

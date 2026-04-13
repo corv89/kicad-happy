@@ -330,7 +330,7 @@ def main():
                 "risk_level": "string (low|moderate|elevated|high|critical)",
                 "categories_checked": "int",
             },
-            "findings": "[{rule_id, category, severity, description, components: [string], nets: [string], recommendation, confidence}]",
+            "findings": "[{rule_id, category, severity, title, description, components: [string], nets: [string], recommendation, confidence}]",
             "test_plan": "[{test: string, standard_clause, equipment, procedure, expected_result}]",
             "regulatory_coverage": "{standard: {applicable_clauses: int, covered: int, coverage_pct: float}}",
             "category_breakdown": "{category: {count: int, max_severity}}",

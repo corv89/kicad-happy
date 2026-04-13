@@ -1481,6 +1481,15 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         if any(k in desc_lower for k in ("load switch", "power switch", "power distribution switch")):
             continue
 
+        # Exclude op-amps, instrumentation amps, and ADCs with FB-like pins
+        _opamp_adc_exclude = ("ada48", "ad8", "opa", "lm358", "lm324",
+                              "lmv3", "tlv9", "mcp60", "mcp61",
+                              "hx711", "ads1", "mcp3", "max11",
+                              "ina21", "ina22", "ina23",
+                              "comparator", "op_amp", "opamp")
+        if any(k in lib_val_lower for k in _opamp_adc_exclude):
+            continue
+
         if not fb_pin and not boot_pin:
             if not sw_pin and not has_reg_keyword:
                 # Only VOUT pin, no regulator keywords → check if VIN+VOUT
