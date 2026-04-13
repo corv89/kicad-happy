@@ -939,3 +939,84 @@ def validate_led_resistors(ctx: AnalysisContext) -> list[dict]:
 
     return findings
 
+
+# ---------------------------------------------------------------------------
+# FS-001: Feedback network stability pre-check
+# ---------------------------------------------------------------------------
+
+_REQUIRES_COMPENSATION_KEYWORDS = (
+    'lm2596', 'lm2576',
+    'tps5430', 'tps5450', 'tps54', 'tps40',
+    'lm259', 'lm317', 'lm337', 'lm350',
+    'lt308', 'lt108',
+    'mc34', 'mc33',
+    'uc384', 'uc282',
+)
+
+_FB_PIN_NAMES = ('FB', 'VFEEDBACK', 'VFB', 'ADJ', 'VADJ', 'COMP', 'VSEN')
+
+_FB_IMPEDANCE_MIN = 1000
+_FB_IMPEDANCE_MAX = 1000000
+
+
+def validate_feedback_stability(
+    ctx: AnalysisContext,
+    power_regulators: list[dict],
+) -> list[dict]:
+    """FS-001: Check regulator feedback networks for stability concerns."""
+    findings: list[dict] = []
+
+    for reg in power_regulators:
+        ref = reg.get('ref', reg.get('reference', ''))
+        fb_div = reg.get('feedback_divider')
+        if not fb_div:
+            continue
+
+        r_top = fb_div.get('r_top', {}).get('ohms')
+        r_bottom = fb_div.get('r_bottom', {}).get('ohms')
+        if r_top is None or r_bottom is None:
+            continue
+
+        parallel_impedance = (r_top * r_bottom) / (r_top + r_bottom) if (r_top + r_bottom) > 0 else 0
+
+        if parallel_impedance < _FB_IMPEDANCE_MIN:
+            findings.append(make_finding(
+                detector='validate_feedback_stability', rule_id='FS-001', category='power_integrity',
+                summary=f'Regulator {ref}: feedback divider impedance too low ({parallel_impedance:.0f}R)',
+                description=f'Feedback divider for {ref} has parallel impedance of {parallel_impedance:.0f} ohms. Low impedance wastes quiescent current.',
+                severity='info', confidence='heuristic', evidence_source='topology',
+                components=[ref, fb_div['r_top'].get('ref', ''), fb_div['r_bottom'].get('ref', '')],
+                recommendation=f'Increase divider resistors to achieve >{_FB_IMPEDANCE_MIN} ohm parallel impedance.',
+            ))
+
+        if parallel_impedance > _FB_IMPEDANCE_MAX:
+            findings.append(make_finding(
+                detector='validate_feedback_stability', rule_id='FS-001', category='power_integrity',
+                summary=f'Regulator {ref}: feedback divider impedance too high ({parallel_impedance/1000:.0f}k)',
+                description=f'Feedback divider for {ref} has parallel impedance of {parallel_impedance/1000:.0f}k ohms. High impedance is noise-susceptible.',
+                severity='warning', confidence='heuristic', evidence_source='topology',
+                components=[ref, fb_div['r_top'].get('ref', ''), fb_div['r_bottom'].get('ref', '')],
+                recommendation=f'Decrease divider resistors to below {_FB_IMPEDANCE_MAX/1000:.0f}k parallel impedance.',
+            ))
+
+        comp = ctx.comp_lookup.get(ref)
+        if comp and match_ic_keywords(comp, _REQUIRES_COMPENSATION_KEYWORDS):
+            fb_net = _get_pin_net(ctx, ref, _FB_PIN_NAMES)
+            comp_net = _get_pin_net(ctx, ref, ('COMP', 'CC', 'RC'))
+            check_net = comp_net or fb_net
+            if check_net:
+                caps_on_fb = [p['component'] for p in ctx.nets.get(check_net, {}).get('pins', [])
+                              if ctx.comp_lookup.get(p['component'], {}).get('type') == 'capacitor']
+                if not caps_on_fb:
+                    findings.append(make_finding(
+                        detector='validate_feedback_stability', rule_id='FS-001', category='power_integrity',
+                        summary=f'Regulator {ref}: missing compensation capacitor',
+                        description=f'Regulator {ref} ({comp.get("value", "")}) typically requires external compensation on {check_net}.',
+                        severity='warning', confidence='heuristic', evidence_source='heuristic_rule',
+                        components=[ref], nets=[check_net],
+                        recommendation=f'Add a compensation network per {comp.get("value", "")} datasheet.',
+                        fix_params={'type': 'add_component', 'components': [{'type': 'capacitor', 'value': '10n', 'net_from': check_net, 'net_to': 'GND'}], 'basis': f'{comp.get("value", "")} requires external compensation'},
+                        impact='Regulator may oscillate or have poor transient response',
+                    ))
+
+    return findings
