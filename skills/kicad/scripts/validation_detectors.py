@@ -705,3 +705,118 @@ def validate_usb_bus(ctx: AnalysisContext) -> list[dict]:
                     standard_ref='USB 2.0 specification section 7.1.2',
                 ))
     return findings
+
+
+# ---------------------------------------------------------------------------
+# PS-001: Power sequencing dependency graph
+# ---------------------------------------------------------------------------
+
+_ENABLE_PIN_NAMES = ('EN', 'ENABLE', 'CE', 'SHDN', 'ON', 'nSHDN', 'ON_OFF', 'RUN')
+_PG_PIN_NAMES = ('PG', 'PGOOD', 'POWER_GOOD', 'nPG', 'PGD', 'POK')
+
+_SEQUENCING_SENSITIVE_KEYWORDS = (
+    'stm32', 'esp32', 'nrf52', 'rp2040', 'samd', 'sam3', 'sam4',
+    'zynq', 'artix', 'spartan', 'kintex', 'ecp5', 'ice40',
+    'ddr', 'lpddr', 'sdram',
+    'phy', 'dp83', 'ksz8', 'lan87', 'rtl8',
+)
+
+
+def validate_power_sequencing(
+    ctx: AnalysisContext,
+    power_regulators: list[dict],
+) -> list[dict]:
+    """PS-001: Build enable-pin dependency graph and check for sequencing issues."""
+    findings: list[dict] = []
+    if not power_regulators:
+        return findings
+
+    reg_by_output: dict[str, dict] = {}
+    reg_by_ref: dict[str, dict] = {}
+    for reg in power_regulators:
+        ref = reg.get('ref', reg.get('reference', ''))
+        output = reg.get('output_rail', '')
+        if ref and output:
+            reg_by_output[output] = reg
+            reg_by_ref[ref] = reg
+
+    enable_edges: list[tuple[str, str]] = []
+    for reg in power_regulators:
+        ref = reg.get('ref', reg.get('reference', ''))
+        en_net = _get_pin_net(ctx, ref, _ENABLE_PIN_NAMES)
+        if not en_net:
+            continue
+        if en_net in reg_by_output:
+            enabler = reg_by_output[en_net]
+            enabler_ref = enabler.get('ref', enabler.get('reference', ''))
+            enable_edges.append((enabler_ref, ref))
+
+    adj: dict[str, list[str]] = {}
+    for src, dst in enable_edges:
+        adj.setdefault(src, []).append(dst)
+
+    def _has_cycle(start: str) -> list[str] | None:
+        visited: set[str] = set()
+        path: list[str] = []
+        def dfs(node: str) -> list[str] | None:
+            if node in visited:
+                idx = path.index(node) if node in path else -1
+                if idx >= 0:
+                    return path[idx:] + [node]
+                return None
+            visited.add(node)
+            path.append(node)
+            for nxt in adj.get(node, []):
+                cycle = dfs(nxt)
+                if cycle:
+                    return cycle
+            path.pop()
+            return None
+        return dfs(start)
+
+    reported_cycles: set[str] = set()
+    for start in adj:
+        cycle = _has_cycle(start)
+        if cycle:
+            cycle_key = '->'.join(sorted(cycle))
+            if cycle_key not in reported_cycles:
+                reported_cycles.add(cycle_key)
+                findings.append(make_finding(
+                    detector='validate_power_sequencing', rule_id='PS-001', category='power_integrity',
+                    summary=f'Circular enable dependency: {" -> ".join(cycle)}',
+                    description=f'Power regulator enable chain forms a cycle: {" -> ".join(cycle)}. No regulator in the cycle can start.',
+                    severity='error', confidence='deterministic', evidence_source='topology',
+                    components=list(set(cycle)),
+                    recommendation='Break the cycle by connecting one enable pin to an always-on rail.',
+                    impact='System fails to power on', report_section='Power Integrity',
+                ))
+
+    for reg in power_regulators:
+        ref = reg.get('ref', reg.get('reference', ''))
+        output_rail = reg.get('output_rail', '')
+        if not output_rail:
+            continue
+        sensitive_loads = []
+        for net_name, net_info in ctx.nets.items():
+            if net_name != output_rail:
+                continue
+            for p in net_info.get('pins', []):
+                comp = ctx.comp_lookup.get(p['component'])
+                if comp and match_ic_keywords(comp, _SEQUENCING_SENSITIVE_KEYWORDS):
+                    sensitive_loads.append(p['component'])
+        if not sensitive_loads:
+            continue
+        pg_net = _get_pin_net(ctx, ref, _PG_PIN_NAMES)
+        if not pg_net:
+            findings.append(make_finding(
+                detector='validate_power_sequencing', rule_id='PS-001', category='power_integrity',
+                summary=f'Regulator {ref}: no power-good feedback, feeds {", ".join(sensitive_loads[:3])}',
+                description=f'Regulator {ref} supplies {output_rail} to sequencing-sensitive device(s) ({", ".join(sensitive_loads[:3])}) but has no PG output connected.',
+                severity='warning', confidence='heuristic', evidence_source='topology',
+                components=[ref] + sensitive_loads[:3], nets=[output_rail],
+                recommendation=f'Connect {ref} PG output to downstream regulator enable pins.',
+                report_section='Power Integrity', impact='Downstream devices may latch up or boot incorrectly',
+            ))
+
+    return findings
+
