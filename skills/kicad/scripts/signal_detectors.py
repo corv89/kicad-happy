@@ -326,11 +326,37 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
                             for mp in mid_pins:
                                 if "FB" in mp.get("pin_name", "").upper():
                                     divider["is_feedback"] = True
+                                    divider["detector"] = "detect_voltage_dividers"
+                                    divider["rule_id"] = "VD-DET"
+                                    divider["category"] = "voltage_dividers"
+                                    divider["severity"] = "info"
+                                    divider["confidence"] = "deterministic"
+                                    divider["evidence_source"] = "topology"
+                                    divider["summary"] = f"Voltage divider {r_top_ref}/{r_bot_ref}"
+                                    divider["description"] = "Feedback network voltage divider detected"
+                                    divider["components"] = [r_top_ref, r_bot_ref]
+                                    divider["nets"] = []
+                                    divider["pins"] = []
+                                    divider["recommendation"] = ""
+                                    divider["report_context"] = {"section": "Voltage Dividers", "impact": "", "standard_ref": ""}
                                     feedback_networks.append(divider)
                                     break
 
                     # Classify divider purpose from connected pin names
                     divider["purpose"] = _classify_divider_purpose(divider)
+                    divider["detector"] = "detect_voltage_dividers"
+                    divider["rule_id"] = "VD-DET"
+                    divider["category"] = "voltage_dividers"
+                    divider["severity"] = "info"
+                    divider["confidence"] = "deterministic"
+                    divider["evidence_source"] = "topology"
+                    divider["summary"] = f"Voltage divider {r_top_ref}/{r_bot_ref}"
+                    divider["description"] = "Resistive voltage divider detected"
+                    divider["components"] = [r_top_ref, r_bot_ref]
+                    divider["nets"] = []
+                    divider["pins"] = []
+                    divider["recommendation"] = ""
+                    divider["report_context"] = {"section": "Voltage Dividers", "impact": "", "standard_ref": ""}
 
                     voltage_dividers.append(divider)
 
@@ -603,6 +629,19 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
                 }
 
                 rc_entry["cutoff_formatted"] = _format_frequency(fc)
+                rc_entry["detector"] = "detect_rc_filters"
+                rc_entry["rule_id"] = "RC-DET"
+                rc_entry["category"] = "passive_filters"
+                rc_entry["severity"] = "info"
+                rc_entry["confidence"] = "deterministic"
+                rc_entry["evidence_source"] = "topology"
+                rc_entry["summary"] = f"RC filter {res['reference']}/{cap_ref} at {round(fc, 2)}Hz"
+                rc_entry["description"] = f"{filter_type} RC filter"
+                rc_entry["components"] = [res["reference"], cap_ref]
+                rc_entry["nets"] = []
+                rc_entry["pins"] = []
+                rc_entry["recommendation"] = ""
+                rc_entry["report_context"] = {"section": "Passive Filters", "impact": "", "standard_ref": ""}
 
                 seen_rc_pairs.add(rc_pair)
                 results_rc.append(rc_entry)
@@ -724,6 +763,19 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
                 }
 
                 lc_entry["resonant_formatted"] = _format_frequency(f0)
+                lc_entry["detector"] = "detect_lc_filters"
+                lc_entry["rule_id"] = "LC-DET"
+                lc_entry["category"] = "passive_filters"
+                lc_entry["severity"] = "info"
+                lc_entry["confidence"] = "deterministic"
+                lc_entry["evidence_source"] = "topology"
+                lc_entry["summary"] = f"LC filter at {round(f0, 2)}Hz"
+                lc_entry["description"] = "LC filter or resonant network detected"
+                lc_entry["components"] = [ind["reference"], cap["reference"]]
+                lc_entry["nets"] = []
+                lc_entry["pins"] = []
+                lc_entry["recommendation"] = ""
+                lc_entry["report_context"] = {"section": "Passive Filters", "impact": "", "standard_ref": ""}
 
                 cap_other_net_for_group = (c_nets - {shared_net_lc}).pop()
                 _lc_groups.setdefault((ind["reference"], shared_net_lc, cap_other_net_for_group), []).append(lc_entry)
@@ -763,6 +815,19 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
                 "shared_net": _shared_net,
             }
             merged["resonant_formatted"] = _format_frequency(f0)
+            merged["detector"] = "detect_lc_filters"
+            merged["rule_id"] = "LC-DET"
+            merged["category"] = "passive_filters"
+            merged["severity"] = "info"
+            merged["confidence"] = "deterministic"
+            merged["evidence_source"] = "topology"
+            merged["summary"] = f"LC filter at {round(f0, 2)}Hz"
+            merged["description"] = "LC filter with parallel capacitors"
+            merged["components"] = [entries[0]["inductor"]["ref"]] + cap_refs
+            merged["nets"] = []
+            merged["pins"] = []
+            merged["recommendation"] = ""
+            merged["report_context"] = {"section": "Passive Filters", "impact": "", "standard_ref": ""}
             lc_filters.append(merged)
 
     # KH-119: Suppress overcounting — if one inductor pairs with caps on BOTH
@@ -899,6 +964,22 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
                 else:
                     xtal_entry["load_cap_status"] = "out_of_spec"
 
+        _xtal_freq = xtal_entry.get("frequency")
+        _xtal_freq_str = f" at {_xtal_freq}Hz" if _xtal_freq else ""
+        xtal_entry["detector"] = "detect_crystal_circuits"
+        xtal_entry["rule_id"] = "XL-DET"
+        xtal_entry["category"] = "timing"
+        xtal_entry["severity"] = "info"
+        xtal_entry["confidence"] = "deterministic"
+        xtal_entry["evidence_source"] = "topology"
+        xtal_entry["summary"] = f"Crystal {xtal['reference']}{_xtal_freq_str}"
+        xtal_entry["description"] = "Crystal oscillator circuit detected"
+        xtal_entry["components"] = [xtal["reference"]]
+        xtal_entry["nets"] = []
+        xtal_entry["pins"] = []
+        xtal_entry["recommendation"] = ""
+        xtal_entry["report_context"] = {"section": "Timing", "impact": "", "standard_ref": ""}
+
         crystal_circuits.append(xtal_entry)
 
     # Detect active oscillators (TCXO, VCXO, MEMS, etc.)
@@ -946,13 +1027,28 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
                     out_net = net_name
                     break
 
+        _osc_freq = _parse_crystal_frequency(comp.get("value", ""))
+        _osc_freq_str = f" at {_osc_freq}Hz" if _osc_freq else ""
         crystal_circuits.append({
             "reference": ref,
             "value": comp.get("value", ""),
-            "frequency": _parse_crystal_frequency(comp.get("value", "")),
+            "frequency": _osc_freq,
             "type": "active_oscillator",
             "output_net": out_net,
             "load_caps": [],
+            "detector": "detect_crystal_circuits",
+            "rule_id": "XL-DET",
+            "category": "timing",
+            "severity": "info",
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "summary": f"Crystal {ref}{_osc_freq_str}",
+            "description": "Active oscillator detected",
+            "components": [ref],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Timing", "impact": "", "standard_ref": ""},
         })
 
     # IC pin-based crystal detection: find ICs with crystal-related pin names
@@ -1039,6 +1135,19 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
                     c2 = load_caps[1]["farads"]
                     cl_eff = (c1 * c2) / (c1 + c2) + 3e-12
                     entry["effective_load_pF"] = round(cl_eff * 1e12, 2)
+                entry["detector"] = "detect_crystal_circuits"
+                entry["rule_id"] = "XL-DET"
+                entry["category"] = "timing"
+                entry["severity"] = "info"
+                entry["confidence"] = "deterministic"
+                entry["evidence_source"] = "topology"
+                entry["summary"] = f"Crystal {ic['reference']}"
+                entry["description"] = "Crystal circuit inferred from IC XTAL pins"
+                entry["components"] = [ic["reference"]]
+                entry["nets"] = []
+                entry["pins"] = []
+                entry["recommendation"] = ""
+                entry["report_context"] = {"section": "Timing", "impact": "", "standard_ref": ""}
                 crystal_circuits.append(entry)
 
     return crystal_circuits
@@ -1085,6 +1194,19 @@ def detect_decoupling(ctx: AnalysisContext) -> list[dict]:
                 "capacitors": rail_caps,
                 "total_capacitance_uF": round(total_cap * 1e6, 3),
                 "cap_count": len(rail_caps),
+                "detector": "detect_decoupling",
+                "rule_id": "DC-DET",
+                "category": "decoupling",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Decoupling on {rail_name}",
+                "description": f"Decoupling capacitors on power rail {rail_name}",
+                "components": [c["ref"] for c in rail_caps],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Decoupling", "impact": "", "standard_ref": ""},
             })
     return decoupling_analysis
 
@@ -1264,6 +1386,19 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
                 "low_net": s_n2,
                 "max_current_50mV_A": round(0.05 / shunt_ohms, 3) if shunt_ohms > 0 else None,
                 "max_current_100mV_A": round(0.1 / shunt_ohms, 3) if shunt_ohms > 0 else None,
+                "detector": "detect_current_sense",
+                "rule_id": "CS-DET",
+                "category": "current_measurement",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Current sense {shunt['reference']}",
+                "description": "Current sense shunt with amplifier IC detected",
+                "components": [shunt["reference"], ic_ref],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Current Measurement", "impact": "", "standard_ref": ""},
             })
     # Second pass: detect shunts with IC-integrated current sense amplifiers.
     # These ICs have sense pins (CSA, SEN, SNS, ISENSE, IMON, CSP, CSN, SH)
@@ -1315,6 +1450,19 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
                         "low_net": s_n2,
                         "max_current_50mV_A": round(0.05 / shunt_ohms, 3) if shunt_ohms > 0 else None,
                         "max_current_100mV_A": round(0.1 / shunt_ohms, 3) if shunt_ohms > 0 else None,
+                        "detector": "detect_current_sense",
+                        "rule_id": "CS-DET",
+                        "category": "current_measurement",
+                        "severity": "info",
+                        "confidence": "deterministic",
+                        "evidence_source": "topology",
+                        "summary": f"Current sense {shunt['reference']}",
+                        "description": "Current sense shunt with integrated CSA detected",
+                        "components": [shunt["reference"], p["component"]],
+                        "nets": [],
+                        "pins": [],
+                        "recommendation": "",
+                        "report_context": {"section": "Current Measurement", "impact": "", "standard_ref": ""},
                     })
                     matched_shunts.add(shunt["reference"])
                     break
@@ -1437,6 +1585,19 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 "estimated_vout": None,
                 "feedback_divider": None,
                 "inductor": None,
+                "detector": "detect_power_regulators",
+                "rule_id": "PR-DET",
+                "category": "power_management",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Regulator {ref} unknown",
+                "description": "Power regulator detected by keyword match (no pin data)",
+                "components": [ref],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Power Management", "impact": "", "standard_ref": ""},
             })
             continue
 
@@ -1722,6 +1883,20 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 is_regulator = True
 
         if is_regulator and any(k in reg_info for k in ("topology", "input_rail", "output_rail", "estimated_vout")):
+            _reg_topo = reg_info.get("topology", "unknown")
+            reg_info["detector"] = "detect_power_regulators"
+            reg_info["rule_id"] = "PR-DET"
+            reg_info["category"] = "power_management"
+            reg_info["severity"] = "info"
+            reg_info["confidence"] = "deterministic"
+            reg_info["evidence_source"] = "topology"
+            reg_info["summary"] = f"Regulator {ref} {_reg_topo}"
+            reg_info["description"] = f"Power regulator ({_reg_topo}) detected"
+            reg_info["components"] = [ref]
+            reg_info["nets"] = []
+            reg_info["pins"] = []
+            reg_info["recommendation"] = ""
+            reg_info["report_context"] = {"section": "Power Management", "impact": "", "standard_ref": ""}
             power_regulators.append(reg_info)
 
     # KH-084: Cross-reference feedback dividers with regulators.
@@ -1964,6 +2139,19 @@ def detect_integrated_ldos(ctx: AnalysisContext, power_regulators: list[dict]) -
                         "topology": "integrated_ldo",
                         "output_rail": net_name,
                         "output_pin": pin_name,
+                        "detector": "detect_integrated_ldos",
+                        "rule_id": "IL-DET",
+                        "category": "power_management",
+                        "severity": "info",
+                        "confidence": "deterministic",
+                        "evidence_source": "topology",
+                        "summary": f"Integrated LDO {ref}",
+                        "description": f"IC with integrated LDO output ({pin_name} → {net_name})",
+                        "components": [ref],
+                        "nets": [],
+                        "pins": [],
+                        "recommendation": "",
+                        "report_context": {"section": "Power Management", "impact": "", "standard_ref": ""},
                     })
                     existing_refs.add(ref)
                     break
@@ -2013,6 +2201,19 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                     "protected_net": sorted_nets[0],
                     "protected_nets": sorted_nets,
                     "clamp_net": None,
+                    "detector": "detect_protection_devices",
+                    "rule_id": "PD-DET",
+                    "category": "protection",
+                    "severity": "info",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Protection {comp['reference']} esd_ic",
+                    "description": "Multi-pin ESD protection array detected",
+                    "components": [comp["reference"]],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": "",
+                    "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
                 })
             continue
 
@@ -2050,6 +2251,19 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "type": prot_type,
                 "protected_net": protected_net,
                 "clamp_net": d_n1 if protected_net == d_n2 else d_n2,
+                "detector": "detect_protection_devices",
+                "rule_id": "PD-DET",
+                "category": "protection",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Protection {comp['reference']} {prot_type}",
+                "description": f"Protection device ({prot_type}) on {protected_net}",
+                "components": [comp["reference"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
             })
 
     # Also detect varistors and surge arresters (already typed correctly)
@@ -2077,6 +2291,19 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "type": comp["type"],
                 "protected_net": protected_net,
                 "clamp_net": d_n1 if protected_net == d_n2 else d_n2,
+                "detector": "detect_protection_devices",
+                "rule_id": "PD-DET",
+                "category": "protection",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Protection {comp['reference']} {comp['type']}",
+                "description": f"Protection device ({comp['type']}) on {protected_net}",
+                "components": [comp["reference"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
             })
 
     # PTC fuses / polyfuses used as overcurrent protection
@@ -2102,6 +2329,19 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "type": "fuse",
                 "protected_net": protected_net,
                 "clamp_net": d_n1 if protected_net == d_n2 else d_n2,
+                "detector": "detect_protection_devices",
+                "rule_id": "PD-DET",
+                "category": "protection",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Protection {comp['reference']} fuse",
+                "description": f"Fuse/polyfuse protection on {protected_net}",
+                "components": [comp["reference"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
             })
 
     # ---- IC-based ESD Protection ----
@@ -2134,6 +2374,19 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "protected_net": sorted_nets[0],
                 "protected_nets": sorted_nets,
                 "clamp_net": None,
+                "detector": "detect_protection_devices",
+                "rule_id": "PD-DET",
+                "category": "protection",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Protection {comp['reference']} esd_ic",
+                "description": "IC-based ESD protection device detected",
+                "components": [comp["reference"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
             })
 
     return protection_devices
@@ -2236,6 +2489,19 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
                 "lib_id": ic.get("lib_id", ""),
                 "configuration": "unknown",
                 "unit": unit,
+                "detector": "detect_opamp_circuits",
+                "rule_id": "OA-DET",
+                "category": "analog",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Op-amp {ref} unknown",
+                "description": "Op-amp detected (no pin data available)",
+                "components": [ref],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Analog", "impact": "", "standard_ref": ""},
             })
             continue
 
@@ -2440,6 +2706,19 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
         dedup_key = (ref, out_net, neg_net)
         if dedup_key not in seen_opamp_units:
             seen_opamp_units.add(dedup_key)
+            entry["detector"] = "detect_opamp_circuits"
+            entry["rule_id"] = "OA-DET"
+            entry["category"] = "analog"
+            entry["severity"] = "info"
+            entry["confidence"] = "deterministic"
+            entry["evidence_source"] = "topology"
+            entry["summary"] = f"Op-amp {ref} {config}"
+            entry["description"] = f"Op-amp circuit in {config} configuration"
+            entry["components"] = [ref]
+            entry["nets"] = []
+            entry["pins"] = []
+            entry["recommendation"] = ""
+            entry["report_context"] = {"section": "Analog", "impact": "", "standard_ref": ""}
             opamp_circuits.append(entry)
 
     # ---- Unused channel detection for multi-channel opamps ----
@@ -2583,12 +2862,28 @@ def detect_bridge_circuits(ctx: AnalysisContext) -> tuple[list[dict], set, dict]
                                 hb[gate_key + "_resistor"] = {"ref": p["component"], "ohms": r_val}
                                 break
 
+        _bridge_refs = [hb["high_side"] for hb in half_bridges] + [hb["low_side"] for hb in half_bridges]
+        _bridge_driver_ref = next(iter(driver_ics), None)
+        _bridge_summary_ref = _bridge_driver_ref or (_bridge_refs[0] if _bridge_refs else "")
         bridge_circuits.append({
             "topology": topology,
             "half_bridges": half_bridges,
             "driver_ics": list(driver_ics),
             "driver_values": {ref: ctx.comp_lookup[ref]["value"] for ref in driver_ics if ref in ctx.comp_lookup},
             "fet_values": {hb["high_side"]: fet_pins[hb["high_side"]]["value"] for hb in half_bridges},
+            "detector": "detect_bridge_circuits",
+            "rule_id": "BR-DET",
+            "category": "power_switching",
+            "severity": "info",
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "summary": f"Bridge/gate driver {_bridge_summary_ref}",
+            "description": f"{topology} bridge circuit detected",
+            "components": _bridge_refs + list(driver_ics),
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Power Switching", "impact": "", "standard_ref": ""},
         })
 
     return bridge_circuits, matched, fet_pins
@@ -2790,11 +3085,12 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
                      "2n5457", "2n5458", "2n5459", "2n3819", "2n4416")
         is_jfet = any(k in lib_lower or k in val_lower for k in _jfet_kw)
 
+        _tr_type = "jfet" if is_jfet else "mosfet"
         circuit = {
             "reference": ref,
             "value": comp.get("value", ""),
             "lib_id": comp.get("lib_id", ""),
-            "type": "jfet" if is_jfet else "mosfet",
+            "type": _tr_type,
             "is_pchannel": is_pchannel,
             "gate_net": gate_net,
             "drain_net": drain_net,
@@ -2811,6 +3107,19 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
             "has_snubber": has_snubber,
             "snubber_data": snubber_data,
             "source_sense_resistor": source_sense,
+            "detector": "detect_transistor_circuits",
+            "rule_id": "TR-DET",
+            "category": "discrete_semiconductors",
+            "severity": "info",
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "summary": f"Transistor {ref} {_tr_type}",
+            "description": f"Transistor circuit ({_tr_type}) detected",
+            "components": [ref],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Discrete Semiconductors", "impact": "", "standard_ref": ""},
         }
         if topology:
             circuit["topology"] = topology
@@ -2871,6 +3180,19 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
             "base_driver_ics": [{"reference": ic["reference"], "value": ic["value"]} for ic in base_ics],
             "base_pulldown": base_pulldown,
             "emitter_resistor": emitter_resistor,
+            "detector": "detect_transistor_circuits",
+            "rule_id": "TR-DET",
+            "category": "discrete_semiconductors",
+            "severity": "info",
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "summary": f"Transistor {ref} bjt",
+            "description": "BJT transistor circuit detected",
+            "components": [ref],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Discrete Semiconductors", "impact": "", "standard_ref": ""},
         }
         transistor_circuits.append(circuit)
 
@@ -2983,6 +3305,20 @@ def detect_led_drivers(ctx: AnalysisContext, transistor_circuits: list[dict]) ->
                     ohms = ctx.parsed_values.get(dc["reference"])
                     if ohms and led_power:
                         tc["led_driver"]["resistor_ohms"] = ohms
+                    # Update envelope fields on the transistor circuit dict
+                    tc["detector"] = "detect_led_drivers"
+                    tc["rule_id"] = "LD-DET"
+                    tc["category"] = "led_control"
+                    tc["severity"] = "info"
+                    tc["confidence"] = "deterministic"
+                    tc["evidence_source"] = "topology"
+                    tc["summary"] = f"LED driver {tc['reference']}"
+                    tc["description"] = f"Transistor {tc['reference']} driving LED {oc['reference']}"
+                    tc["components"] = [tc["reference"], oc["reference"], dc["reference"]]
+                    tc["nets"] = []
+                    tc["pins"] = []
+                    tc["recommendation"] = ""
+                    tc["report_context"] = {"section": "LED Control", "impact": "", "standard_ref": ""}
                     break
             if "led_driver" in tc:
                 break
@@ -3020,6 +3356,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "value": ic["value"],
                 "rails_without_caps": undecoupled,
                 "rails_with_caps": [r for r in ic_power_nets if r in decoupled_rails],
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"IC {ref} missing decoupling on {', '.join(undecoupled)}",
+                "description": "IC power pin(s) without decoupling capacitors",
+                "components": [ref],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 2. Regulator capacitor status
@@ -3038,6 +3386,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "value": reg["value"],
                 "topology": reg.get("topology"),
                 "missing_caps": missing,
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"Regulator {reg['ref']} missing capacitors",
+                "description": "Regulator missing input or output capacitors",
+                "components": [reg["ref"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 3. Single-pin signal nets
@@ -3070,6 +3430,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
             "category": "single_pin_nets",
             "count": len(single_pin_nets),
             "nets": single_pin_nets,
+            "detector": "detect_design_observations",
+            "rule_id": "DO-DET",
+            "severity": "info",
+            "confidence": "heuristic",
+            "evidence_source": "topology",
+            "summary": f"Single-pin nets ({len(single_pin_nets)} nets)",
+            "description": "Signal nets connected to only one pin",
+            "components": [n["component"] for n in single_pin_nets],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
         })
 
     # 4. I2C bus pull-up status
@@ -3115,6 +3487,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "has_pullup": has_pullup,
                 "pullup_resistor": pullup_ref,
                 "pullup_rail": pullup_to,
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"I2C {line} bus on {net_name}",
+                "description": f"I2C {line} bus detected with {len(ic_refs)} device(s)",
+                "components": ic_refs,
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 5. Reset pin configuration
@@ -3153,6 +3537,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "has_pullup": has_resistor,
                 "has_filter_cap": has_capacitor,
                 "connected_components": connected_to,
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"Reset pin on {ref} ({pin_name})",
+                "description": f"Reset pin configuration for {ref}",
+                "components": [ref],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 6. Regulator feedback voltage estimation
@@ -3181,6 +3577,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                         "estimated_vout": reg["estimated_vout"],
                         "percent_diff": round(pct_diff * 100, 1),
                     }
+            obs["detector"] = "detect_design_observations"
+            obs["rule_id"] = "DO-DET"
+            obs["severity"] = "info"
+            obs["confidence"] = "heuristic"
+            obs["evidence_source"] = "topology"
+            obs["summary"] = f"Regulator {reg['ref']} estimated Vout={reg['estimated_vout']}V"
+            obs["description"] = "Regulator output voltage estimated from feedback divider"
+            obs["components"] = [reg["ref"]]
+            obs["nets"] = []
+            obs["pins"] = []
+            obs["recommendation"] = ""
+            obs["report_context"] = {"section": "Design Observations", "impact": "", "standard_ref": ""}
             design_observations.append(obs)
 
     # 7. Switching regulator bootstrap status
@@ -3194,6 +3602,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "has_bootstrap": reg.get("has_bootstrap", False),
                 "input_rail": reg.get("input_rail"),
                 "output_rail": reg.get("output_rail"),
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"Switching regulator {reg['ref']}",
+                "description": f"Switching regulator with inductor {reg.get('inductor')}",
+                "components": [reg["ref"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 8. USB data line protection status
@@ -3210,12 +3630,25 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                             is_usb = True
                             break
         if is_usb:
+            _usb_devices = [p["component"] for p in ctx.nets[net_name]["pins"]
+                            if not ctx.comp_lookup.get(p["component"], {}).get("type") in (None,)]
             design_observations.append({
                 "category": "usb_data",
                 "net": net_name,
                 "has_esd_protection": net_name in protected_nets,
-                "devices": [p["component"] for p in ctx.nets[net_name]["pins"]
-                           if not ctx.comp_lookup.get(p["component"], {}).get("type") in (None,)],
+                "devices": _usb_devices,
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"USB data line {net_name}",
+                "description": f"USB data net {net_name} detected",
+                "components": _usb_devices,
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 9. Crystal load capacitance
@@ -3228,6 +3661,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "effective_load_pF": xtal["effective_load_pF"],
                 "load_caps": xtal.get("load_caps", []),
                 "in_typical_range": 4 <= xtal["effective_load_pF"] <= 30,
+                "detector": "detect_design_observations",
+                "rule_id": "DO-DET",
+                "severity": "info",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "summary": f"Crystal load cap {xtal['reference']} = {xtal['effective_load_pF']}pF",
+                "description": "Crystal load capacitance observation",
+                "components": [xtal["reference"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
             })
 
     # 10. Decoupling frequency coverage per rail
@@ -3245,6 +3690,18 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
             "has_bulk": has_bulk,
             "has_bypass": has_bypass,
             "has_high_freq": has_hf,
+            "detector": "detect_design_observations",
+            "rule_id": "DO-DET",
+            "severity": "info",
+            "confidence": "heuristic",
+            "evidence_source": "topology",
+            "summary": f"Decoupling coverage on {decoup['rail']}",
+            "description": f"Decoupling frequency coverage for rail {decoup['rail']}",
+            "components": [c["ref"] for c in caps],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
         })
 
     return design_observations
