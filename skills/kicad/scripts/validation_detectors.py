@@ -457,3 +457,251 @@ def validate_voltage_levels(ctx: AnalysisContext, level_shifters: list[dict] | N
         ))
 
     return findings
+
+
+# ---------------------------------------------------------------------------
+# PR-001..004: Protocol pin validation
+# ---------------------------------------------------------------------------
+
+_I2C_IC_KEYWORDS = (
+    'pca9', 'tca9', 'pcf8574', 'pcf8575', 'mcp23', 'at24', 'eeprom',
+    'ina219', 'ina226', 'ina228', 'ina260', 'ina3221',
+    'tmp1', 'tmp4', 'lm75', 'sht3', 'sht4', 'bme280', 'bme680', 'bmp280',
+    'mpu6050', 'mpu9250', 'icm20', 'lsm6', 'lis3', 'adxl3',
+    'ads1015', 'ads1115', 'mcp4725', 'dac8', 'max517',
+    'ds1307', 'ds3231', 'pcf8523', 'rv3028', 'rv8803',
+    'si5351', 'pll', 'cdce',
+    'tca6408', 'sx1509', 'pca6416',
+    'as5600', 'as5048', 'vl53l',
+    'is31fl', 'lp5024', 'pca9685',
+    'stusb', 'fusb302', 'bq2597',
+)
+_I2C_SDA_NAMES = ('SDA', 'I2C_SDA', 'TWI_SDA', 'SDAI', 'SDA1', 'SDA2', 'SDATA')
+_I2C_SCL_NAMES = ('SCL', 'I2C_SCL', 'TWI_SCL', 'SCLI', 'SCL1', 'SCL2', 'SCLK')
+_I2C_PULLUP_RANGES = {
+    'standard': (1000, 10000),
+    'fast': (1000, 4700),
+    'fast_plus': (470, 2200),
+}
+
+_SPI_IC_KEYWORDS = (
+    'w25q', 'mx25', 'at25', 'sst26', 'is25', 'gd25',
+    'mcp3', 'ads8', 'ad7', 'max11',
+    'mcp49', 'dac8',
+    'sx127', 'rfm9', 'cc1101', 'nrf24', 'si446',
+    'enc28j', 'w5500', 'ksz8',
+    'max7219', 'apa102', 'dotstar',
+    'sd_card', 'sdcard',
+    'lis3', 'adxl3', 'bmi160', 'icm42',
+)
+_SPI_CS_NAMES = ('CS', 'SS', 'NSS', 'SPI_CS', 'SPI_SS', 'CSN', 'NCS', 'CE0', 'CE1')
+
+_CAN_IC_KEYWORDS = (
+    'mcp2515', 'mcp2551', 'mcp2562', 'mcp25625',
+    'sn65hvd', 'sn65hvd230', 'sn65hvd231', 'sn65hvd232',
+    'tja1', 'tja1050', 'tja1051', 'tja1040', 'tja1042', 'tja1043',
+    'iso1050', 'iso1042',
+    'max3', 'max33',
+    'adm3053',
+)
+_CAN_H_NAMES = ('CANH', 'CAN_H', 'CANHI', 'CAN_HIGH')
+_CAN_L_NAMES = ('CANL', 'CAN_L', 'CANLO', 'CAN_LOW')
+
+_USB_DP_NAMES = ('D+', 'DP', 'USB_DP', 'USB_D+', 'USBDP', 'D_P')
+_USB_DM_NAMES = ('D-', 'DM', 'USB_DM', 'USB_D-', 'USBDM', 'D_N')
+
+
+def validate_i2c_bus(ctx: AnalysisContext) -> list[dict]:
+    """PR-001: Validate I2C bus integrity — pull-ups, values, address conflicts."""
+    findings: list[dict] = []
+    resistors = get_components_by_type(ctx, 'resistor')
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, resistors)
+
+    i2c_buses: dict[str, dict] = {}
+    for ic in get_unique_ics(ctx):
+        ref = ic['reference']
+        if not match_ic_keywords(ic, _I2C_IC_KEYWORDS):
+            continue
+        sda_net = _get_pin_net(ctx, ref, _I2C_SDA_NAMES)
+        scl_net = _get_pin_net(ctx, ref, _I2C_SCL_NAMES)
+        if not sda_net or not scl_net:
+            continue
+        bus_key = f'{sda_net}:{scl_net}'
+        bus = i2c_buses.setdefault(bus_key, {'sda_net': sda_net, 'scl_net': scl_net, 'devices': []})
+        bus['devices'].append(ref)
+
+    for bus_key, bus in i2c_buses.items():
+        sda, scl = bus['sda_net'], bus['scl_net']
+        refs = bus['devices']
+
+        sda_pullups = _find_pullups_on_net(ctx, sda, resistor_nets, net_to_resistors)
+        if not sda_pullups:
+            findings.append(make_finding(
+                detector='validate_i2c_bus', rule_id='PR-001', category='protocol_integrity',
+                summary=f'I2C bus {sda}/{scl}: SDA missing pull-up',
+                description=f'I2C bus with {len(refs)} device(s) ({", ".join(refs)}) has no pull-up on SDA net {sda}.',
+                severity='error', confidence='deterministic', evidence_source='topology',
+                components=refs, nets=[sda, scl],
+                recommendation='Add a 4.7k pull-up resistor from SDA to VDD.',
+                fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '4.7k', 'net_from': sda, 'net_to': '<VDD>'}], 'basis': 'I2C spec requires pull-ups on SDA'},
+                standard_ref='I2C specification UM10204 section 3.1.1', impact='I2C bus non-functional',
+            ))
+
+        scl_pullups = _find_pullups_on_net(ctx, scl, resistor_nets, net_to_resistors)
+        if not scl_pullups:
+            findings.append(make_finding(
+                detector='validate_i2c_bus', rule_id='PR-001', category='protocol_integrity',
+                summary=f'I2C bus {sda}/{scl}: SCL missing pull-up',
+                description=f'I2C bus with {len(refs)} device(s) ({", ".join(refs)}) has no pull-up on SCL net {scl}.',
+                severity='error', confidence='deterministic', evidence_source='topology',
+                components=refs, nets=[sda, scl],
+                recommendation='Add a 4.7k pull-up resistor from SCL to VDD.',
+                fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '4.7k', 'net_from': scl, 'net_to': '<VDD>'}], 'basis': 'I2C spec requires pull-ups on SCL'},
+                standard_ref='I2C specification UM10204 section 3.1.1', impact='I2C bus non-functional',
+            ))
+
+        for net_label, pullups in [('SDA', sda_pullups), ('SCL', scl_pullups)]:
+            for pu in pullups:
+                if pu['ohms'] is not None:
+                    low, high = _I2C_PULLUP_RANGES['standard']
+                    if pu['ohms'] < low or pu['ohms'] > high:
+                        findings.append(make_finding(
+                            detector='validate_i2c_bus', rule_id='PR-001', category='protocol_integrity',
+                            summary=f'I2C {net_label} pull-up {pu["ref"]} out of range ({pu["ohms"]:.0f}R)',
+                            description=f'I2C {net_label} pull-up {pu["ref"]} is {pu["ohms"]:.0f} ohms. Recommended: {low}-{high} ohms for standard-mode.',
+                            severity='info', confidence='heuristic', evidence_source='topology',
+                            components=[pu['ref']], nets=[bus['sda_net'] if net_label == 'SDA' else bus['scl_net']],
+                            recommendation=f'Use a pull-up in the {low}-{high} ohm range.',
+                            fix_params={'type': 'resistor_value_change', 'component': pu['ref'], 'current_value': pu['ohms'], 'target_range': [low, high], 'suggested_value': 4700},
+                            standard_ref='I2C specification UM10204 Table 10',
+                        ))
+
+        # Address conflict: flag multiple same-IC-type on same bus
+        if len(refs) >= 2:
+            value_counts: dict[str, list[str]] = {}
+            for ref in refs:
+                comp = ctx.comp_lookup.get(ref)
+                if comp:
+                    val = comp.get('value', '').lower()
+                    value_counts.setdefault(val, []).append(ref)
+            for val, refs_with_val in value_counts.items():
+                if len(refs_with_val) > 1:
+                    findings.append(make_finding(
+                        detector='validate_i2c_bus', rule_id='PR-001', category='protocol_integrity',
+                        summary=f'I2C bus: possible address conflict — {len(refs_with_val)}x {val}',
+                        description=f'Multiple {val} ({", ".join(refs_with_val)}) on same I2C bus. Verify address pins differ.',
+                        severity='warning', confidence='heuristic', evidence_source='topology',
+                        components=refs_with_val, nets=[bus['sda_net'], bus['scl_net']],
+                        recommendation='Verify address pin configurations (A0/A1/A2) differ.',
+                        impact='Address conflict causes bus corruption',
+                    ))
+
+    return findings
+
+
+def validate_spi_bus(ctx: AnalysisContext) -> list[dict]:
+    """PR-002: Validate SPI bus — CS pull-ups."""
+    findings: list[dict] = []
+    resistors = get_components_by_type(ctx, 'resistor')
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, resistors)
+
+    for ic in get_unique_ics(ctx):
+        ref = ic['reference']
+        if not match_ic_keywords(ic, _SPI_IC_KEYWORDS):
+            continue
+        cs_net = _get_pin_net(ctx, ref, _SPI_CS_NAMES)
+        if cs_net and not ctx.is_power_net(cs_net) and not ctx.is_ground(cs_net):
+            pullups = _find_pullups_on_net(ctx, cs_net, resistor_nets, net_to_resistors)
+            if not pullups:
+                findings.append(make_finding(
+                    detector='validate_spi_bus', rule_id='PR-002', category='protocol_integrity',
+                    summary=f'SPI device {ref}: CS pin ({cs_net}) missing pull-up',
+                    description=f'SPI CS on {ref} ({ic.get("value", "")}) net {cs_net} has no pull-up. Device may be inadvertently selected during reset.',
+                    severity='warning', confidence='heuristic', evidence_source='topology',
+                    components=[ref], nets=[cs_net],
+                    recommendation=f'Add a 10k pull-up on {cs_net}.',
+                    fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '10k', 'net_from': cs_net, 'net_to': '<VDD>'}], 'basis': 'SPI CS should be pulled high when not driven'},
+                    impact='Device may be selected during reset causing bus contention',
+                ))
+    return findings
+
+
+def validate_can_bus(ctx: AnalysisContext) -> list[dict]:
+    """PR-003: Validate CAN bus — termination resistors."""
+    findings: list[dict] = []
+    resistors = get_components_by_type(ctx, 'resistor')
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, resistors)
+
+    can_transceivers = []
+    for ic in get_unique_ics(ctx):
+        if match_ic_keywords(ic, _CAN_IC_KEYWORDS):
+            ref = ic['reference']
+            canh = _get_pin_net(ctx, ref, _CAN_H_NAMES)
+            canl = _get_pin_net(ctx, ref, _CAN_L_NAMES)
+            if canh or canl:
+                can_transceivers.append({'ref': ref, 'value': ic.get('value', ''), 'canh': canh, 'canl': canl})
+
+    for xcvr in can_transceivers:
+        canh, canl = xcvr['canh'], xcvr['canl']
+        if not canh or not canl:
+            continue
+        term_found = False
+        for rref in net_to_resistors.get(canh, []):
+            n1, n2 = resistor_nets.get(rref, (None, None))
+            if not n1 or not n2:
+                continue
+            other = n2 if n1 == canh else n1
+            if other == canl:
+                ohms = ctx.parsed_values.get(rref)
+                if ohms is not None and 100 <= ohms <= 150:
+                    term_found = True
+                    break
+        if not term_found:
+            findings.append(make_finding(
+                detector='validate_can_bus', rule_id='PR-003', category='protocol_integrity',
+                summary=f'CAN transceiver {xcvr["ref"]}: no 120R termination',
+                description=f'CAN transceiver {xcvr["ref"]} ({xcvr["value"]}) has no 120R termination between CANH ({canh}) and CANL ({canl}).',
+                severity='warning', confidence='deterministic', evidence_source='topology',
+                components=[xcvr['ref']], nets=[n for n in [canh, canl] if n],
+                recommendation=f'Add a 120R resistor between {canh} and {canl} if at bus end.',
+                fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '120', 'net_from': canh, 'net_to': canl}], 'basis': 'ISO 11898 requires 120R termination'},
+                standard_ref='ISO 11898-2 section 7.3', impact='Bus reflections cause communication errors',
+            ))
+    return findings
+
+
+def validate_usb_bus(ctx: AnalysisContext) -> list[dict]:
+    """PR-004: Validate USB data lines — series resistors."""
+    findings: list[dict] = []
+    resistors = get_components_by_type(ctx, 'resistor')
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, resistors)
+
+    for comp in ctx.components:
+        if comp['type'] != 'connector':
+            continue
+        val_lib = (comp.get('value', '') + ' ' + comp.get('lib_id', '')).lower()
+        if 'usb' not in val_lib:
+            continue
+        ref = comp['reference']
+        dp_net = _get_pin_net(ctx, ref, _USB_DP_NAMES)
+        dm_net = _get_pin_net(ctx, ref, _USB_DM_NAMES)
+        if not dp_net and not dm_net:
+            continue
+
+        for net_label, net in [('D+', dp_net), ('D-', dm_net)]:
+            if not net:
+                continue
+            series_r = [rref for rref in net_to_resistors.get(net, [])
+                        if ctx.parsed_values.get(rref) is not None and 15 <= ctx.parsed_values[rref] <= 33]
+            if not series_r and 'usb_c' not in val_lib and 'usb3' not in val_lib:
+                findings.append(make_finding(
+                    detector='validate_usb_bus', rule_id='PR-004', category='protocol_integrity',
+                    summary=f'USB connector {ref}: {net_label} ({net}) missing series resistor',
+                    description=f'USB {net_label} on {ref} has no series resistor (typically 22R for USB 2.0).',
+                    severity='info', confidence='heuristic', evidence_source='topology',
+                    components=[ref], nets=[net],
+                    recommendation=f'Add a 22R series resistor on {net_label} near the connector.',
+                    fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '22', 'net_from': net, 'net_to': f'{net}_MCU'}], 'basis': 'USB 2.0 recommends 22R series termination'},
+                    standard_ref='USB 2.0 specification section 7.1.2',
+                ))
+    return findings
