@@ -78,9 +78,9 @@ jobs:
           cd /tmp/harness
           git checkout 1719c052b02
 
-      - name: Run smoke tests (396 tests, <1s, no corpus dependency)
+      - name: Run quick-sanity tests (<1s, no corpus dependency)
         env:
           KICAD_HAPPY_DIR: ${{ github.workspace }}
         run: |
           cd /tmp/harness
-          python3 run_tests.py --smoke
+          python3 run_tests.py --quick-sanity
