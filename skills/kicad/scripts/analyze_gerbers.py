@@ -1121,7 +1121,7 @@ def scan_zip_archives(gerber_dir: Path, loose_gerber_files: list[Path],
 
         except zipfile.BadZipFile:
             entry["error"] = "not a valid zip file"
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             entry["error"] = str(e)
 
         results.append(entry)

@@ -459,7 +459,8 @@ def audit_component(mpn: str, sources: list[str], project_dir: str | None = None
                         "temp_max_c": data["temp_max_c"],
                         "source": f"api:{source_name}",
                     }
-        except Exception:
+        except (urllib.error.URLError, OSError, json.JSONDecodeError,
+                KeyError, ValueError, TypeError):
             continue
 
     result["status"] = best_status

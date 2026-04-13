@@ -2222,7 +2222,7 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
                 if lib_path.exists():
                     parsed = _parse_legacy_lib(str(lib_path))
                     slt_symbols.update(parsed)
-        except Exception:
+        except (ValueError, IndexError, KeyError, OSError):
             pass  # Don't crash on malformed sym-lib-table
         if slt_symbols:
             # Add standard library fallbacks
