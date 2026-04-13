@@ -102,6 +102,12 @@ from domain_detectors import (
     detect_thermocouple_rtd,
     suggest_certifications,
     validate_power_sequencing,
+    detect_wireless_modules,
+    detect_transformer_feedback,
+    detect_i2c_address_conflicts,
+    detect_energy_harvesting,
+    detect_pwm_led_dimming,
+    detect_headphone_jack,
 )
 from validation_detectors import (
     validate_pullups,
@@ -680,6 +686,14 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     led_resistor_findings = validate_led_resistors(ctx)
     feedback_stability_findings = validate_feedback_stability(ctx, power_regulators)
 
+    # New domain detectors (rich format)
+    wireless_modules = detect_wireless_modules(ctx)
+    transformer_feedback = detect_transformer_feedback(ctx)
+    i2c_address_conflicts = detect_i2c_address_conflicts(ctx)
+    energy_harvesting = detect_energy_harvesting(ctx)
+    pwm_led_dimming = detect_pwm_led_dimming(ctx, transistor_circuits)
+    headphone_jacks = detect_headphone_jack(ctx)
+
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
     # as RC filters (e.g., "10M + 22pF = 723Hz RC filter").
@@ -870,6 +884,12 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "thermocouple_rtd": thermocouple_rtd,
         "power_sequencing_validation": power_sequencing_validation,
         "connector_ground_audit": connector_ground_audit,
+        "wireless_modules": wireless_modules,
+        "transformer_feedback": transformer_feedback,
+        "i2c_address_conflicts": i2c_address_conflicts,
+        "energy_harvesting": energy_harvesting,
+        "pwm_led_dimming": pwm_led_dimming,
+        "headphone_jacks": headphone_jacks,
         "validation_findings": (
             pullup_findings +
             voltage_level_findings +
