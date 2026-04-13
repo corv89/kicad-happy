@@ -458,6 +458,34 @@ SCHEMAS = {
         identity_fields=["ref"],
         value_fields=["type", "interface"],
     ),
+    "validation_findings": DetectionSchema(
+        identity_fields=["rule_id", "components"],
+        value_fields=["severity", "summary"],
+    ),
+    "wireless_modules": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["wireless_type", "antenna_net"],
+    ),
+    "transformer_feedback": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["controller_type", "optocoupler"],
+    ),
+    "i2c_address_conflicts": DetectionSchema(
+        identity_fields=["rule_id", "components"],
+        value_fields=["severity"],
+    ),
+    "energy_harvesting": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["harvester_type"],
+    ),
+    "pwm_led_dimming": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["leds", "switch_type"],
+    ),
+    "headphone_jacks": DetectionSchema(
+        identity_fields=["reference"],
+        value_fields=["associated_codec"],
+    ),
 }
 
 

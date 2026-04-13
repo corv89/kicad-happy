@@ -137,6 +137,16 @@ Add `--full` to include individual track/via coordinates, per-segment trace impe
 
 **Verify after every run:** Confirm footprint count and board outline dimensions against the raw `.kicad_pcb` file. Verify pad-to-net assignments for IC footprints against the schematic's pin-to-net mapping — this catches library footprint errors where pad numbering doesn't match the symbol pinout. If the script fails, see `references/manual-pcb-parsing.md` for the fallback methodology.
 
+### Cross-Domain Analysis
+
+After running both schematic and PCB analyzers, run the cross-domain analyzer:
+
+```
+python3 <skill-path>/scripts/cross_analysis.py --schematic analysis/schematic.json --pcb analysis/pcb.json --output analysis/cross_analysis.json
+```
+
+Checks: CC-001 connector current capacity, EG-001 ESD protection gaps, DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync. PCB JSON optional.
+
 ### Gerber & Drill Analyzer
 ```bash
 python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/>
