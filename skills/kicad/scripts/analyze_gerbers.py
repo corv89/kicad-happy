@@ -1182,7 +1182,7 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
     for gf in gerber_files:
         try:
             gerbers.append(parse_gerber(str(gf)))
-        except Exception as e:
+        except (OSError, ValueError, UnicodeDecodeError) as e:
             gerbers.append({"file": str(gf), "filename": gf.name, "error": str(e),
                             "layer_type": "unknown"})
 
@@ -1190,7 +1190,7 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
     for df in drill_files:
         try:
             drills.append(parse_drill(str(df)))
-        except Exception as e:
+        except (OSError, ValueError, UnicodeDecodeError) as e:
             drills.append({"file": str(df), "filename": df.name, "error": str(e)})
 
     job_info = None

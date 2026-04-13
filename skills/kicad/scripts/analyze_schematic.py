@@ -7994,7 +7994,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
             try:
                 hierarchy_ctx, root_si = build_hierarchy_context(path, root_path)
                 _root_si_override = root_si
-            except Exception as e:
+            except (OSError, KeyError, ValueError, IndexError) as e:
                 hierarchy_warning = f"Hierarchy context failed: {e}"
         else:
             hierarchy_warning = (
@@ -8478,7 +8478,7 @@ def main():
                 print("Lifecycle: no components with MPNs to check", file=sys.stderr)
         except ImportError:
             print("Warning: lifecycle_audit.py not found", file=sys.stderr)
-        except Exception as e:
+        except (OSError, ValueError, TypeError, KeyError) as e:
             print(f"Warning: lifecycle audit failed: {e}", file=sys.stderr)
 
     # Datasheet verification — cross-check extracted datasheet data against schematic
@@ -8490,7 +8490,7 @@ def main():
             result["datasheet_verification"] = ds_verify
     except ImportError:
         pass
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError) as e:
         result["datasheet_verification"] = {
             "findings": [],
             "summary": {"error": str(e)},

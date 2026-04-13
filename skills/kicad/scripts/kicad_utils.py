@@ -1296,7 +1296,7 @@ def classify_inductor_shielding(footprint_lib='', value_str='', mpn=''):
 
 
 # Regex for rated voltage in value strings: "100nF/16V", "10uF 6.3V", etc.
-_RATED_V_RE = re.compile(r'(\d+\.?\d*)\s*V(?:\b|[^a-zA-Z])')
+_RATED_V_RE = re.compile(r'(\d+\.?\d*)\s*V(?:DC)?(?:\b|[^a-zA-Z0-9])', re.IGNORECASE)
 
 
 def parse_rated_voltage(value_str):

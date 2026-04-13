@@ -286,7 +286,7 @@ def check_diff_pair_routing(sch: dict, pcb: dict) -> list[dict]:
             "SATA": 1.0,
         }
 
-        intra_skew = abs(pos_len - neg_len)
+        intra_skew = delta  # same as abs(pos_len - neg_len) computed above
         intra_tol = _intra_pair_tolerance.get(protocol, 1.0)
         if intra_skew > intra_tol:
             entry["intra_pair_skew"] = {

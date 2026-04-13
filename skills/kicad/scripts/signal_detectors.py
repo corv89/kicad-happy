@@ -10,7 +10,6 @@ import re
 
 from kicad_utils import (
     _LOAD_TYPE_KEYWORDS,
-    _REGULATOR_VREF,
     format_frequency as _format_frequency,
     lookup_regulator_vref as _lookup_regulator_vref,
     lookup_switching_freq,
