@@ -517,6 +517,11 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
             r_val = ctx.parsed_values[res["reference"]]
             c_val = ctx.parsed_values[cap_ref]
 
+            # Skip pairs where R or C has no valid value (None or zero) — a
+            # 0-ohm resistor or unparsed capacitor is not a filter.
+            if not r_val or not c_val:
+                continue
+
             # EQ-020: f_c = 1/(2πRC) (RC filter cutoff frequency)
             if r_val > 0 and c_val > 0:
                 fc = 1.0 / (2.0 * math.pi * r_val * c_val)
