@@ -92,6 +92,11 @@ def generate_pdn_netlist(caps, plane_cap_f=0):
         lines.append(f'* Interplane capacitance')
         lines.append(f'C_plane rail 0 {_format_eng(plane_cap_f)}')
 
+    # Check if any caps were actually included
+    cap_count = sum(1 for c in caps if c.get('farads', 0) > 0)
+    if cap_count == 0:
+        lines.insert(2, f'* WARNING: 0 of {len(caps)} caps had valid farads — netlist is empty')
+
     lines.append('')
     lines.append('* Bias resistor (prevents floating node)')
     lines.append('R_bias rail 0 1Meg')
