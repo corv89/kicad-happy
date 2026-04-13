@@ -118,6 +118,8 @@ def dm_radiation_v_m(freq_hz: float, area_m2: float, current_a: float,
     Returns:
         Electric field in V/m.
     """
+    if freq_hz <= 0 or distance_m <= 0:
+        return 0.0
     # EQ-001: E = K × f² × A × I / r (differential-mode loop radiation)
     # Source: Ott "EMC Engineering" (Wiley, 2009) Eq. 6.4
     # Source: Paul "Introduction to EMC" (Wiley, 2006) Eq. 10.12
@@ -176,6 +178,8 @@ def cm_radiation_v_m(freq_hz: float, cable_length_m: float,
     Ref: Ott, "EMC Engineering" (Wiley, 2009), Chapter 6.
          Paul, "Introduction to EMC" (Wiley, 2006), Chapter 10.
     """
+    if freq_hz <= 0 or distance_m <= 0:
+        return 0.0
     # EQ-003: E = 1.257e-6 × f × L × I_CM / r (common-mode cable radiation)
     # Source: Ott "EMC Engineering" (Wiley, 2009) Ch. 6
     # Source: Paul "Introduction to EMC" (Wiley, 2006) Ch. 10
@@ -296,6 +300,8 @@ def harmonic_spectrum(switching_freq_hz: float, v_peak: float,
     Returns:
         List of dicts with keys: harmonic, freq_hz, amplitude_v, amplitude_dbuv.
     """
+    if switching_freq_hz <= 0:
+        return []
     # EQ-028: Full harmonic spectrum using EQ-004 per harmonic
     results = []
     n = 1
