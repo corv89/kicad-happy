@@ -103,6 +103,17 @@ from domain_detectors import (
     suggest_certifications,
     validate_power_sequencing,
 )
+from validation_detectors import (
+    validate_pullups,
+    validate_voltage_levels,
+    validate_i2c_bus,
+    validate_spi_bus,
+    validate_can_bus,
+    validate_usb_bus,
+    validate_power_sequencing as validate_power_seq_deps,
+    validate_led_resistors,
+    validate_feedback_stability,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +669,17 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         ctx, power_regulators, power_path, reset_supervisors)
     connector_ground_audit = audit_connector_ground_distribution(ctx)
 
+    # Validation detectors (rich findings)
+    pullup_findings = validate_pullups(ctx)
+    voltage_level_findings = validate_voltage_levels(ctx, level_shifters)
+    i2c_findings = validate_i2c_bus(ctx)
+    spi_findings = validate_spi_bus(ctx)
+    can_findings = validate_can_bus(ctx)
+    usb_findings = validate_usb_bus(ctx)
+    power_seq_dep_findings = validate_power_seq_deps(ctx, power_regulators)
+    led_resistor_findings = validate_led_resistors(ctx)
+    feedback_stability_findings = validate_feedback_stability(ctx, power_regulators)
+
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
     # as RC filters (e.g., "10M + 22pF = 723Hz RC filter").
@@ -848,6 +870,17 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "thermocouple_rtd": thermocouple_rtd,
         "power_sequencing_validation": power_sequencing_validation,
         "connector_ground_audit": connector_ground_audit,
+        "validation_findings": (
+            pullup_findings +
+            voltage_level_findings +
+            i2c_findings +
+            spi_findings +
+            can_findings +
+            usb_findings +
+            power_seq_dep_findings +
+            led_resistor_findings +
+            feedback_stability_findings
+        ),
     }
 
     # Certification suggestions cross-reference all domain detections
