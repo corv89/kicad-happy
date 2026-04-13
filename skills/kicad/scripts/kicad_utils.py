@@ -1208,6 +1208,91 @@ def classify_dielectric(value_str, desc_str=''):
     return 'X7R'
 
 
+# ---------------------------------------------------------------------------
+# Inductor shielding classification
+# ---------------------------------------------------------------------------
+
+# Known shielded inductor families by MPN prefix or footprint keyword.
+# Sources: Coilcraft, Wurth, TDK, Vishay, Murata product catalogs.
+_SHIELDED_PATTERNS = (
+    # Coilcraft composite/metal alloy (fully shielded)
+    'XAL', 'XFL', 'XGL', 'XEL', 'XPL',
+    # Wurth metal alloy power inductor
+    'WE-MAPI', 'WE-LHMI', 'WE-MASH',
+    # TDK shielded power inductors
+    'SPM', 'SLF', 'VLF', 'CLF',
+    # Vishay IHLP (integrated high-current low-profile, shielded)
+    'IHLP',
+    # Murata shielded
+    'LQM', 'DFE',
+)
+
+_SEMI_SHIELDED_PATTERNS = (
+    # Coilcraft semi-shielded
+    'MSS', 'MSD',
+    # Bourns semi-shielded
+    'SRR', 'SRN', 'SRP',
+    # Wurth semi-shielded
+    'WE-PD', 'WE-TPC',
+    # Murata semi-shielded
+    'LQH',
+)
+
+_UNSHIELDED_PATTERNS = (
+    # Bourns open wire-wound
+    'SDR', 'SLR',
+    # Coilcraft open
+    'DO', 'DT',
+)
+
+
+def classify_inductor_shielding(footprint_lib='', value_str='', mpn=''):
+    """Classify inductor shielding type from footprint, value, or MPN.
+
+    Checks for known manufacturer family patterns. Through-hole inductors
+    are assumed unshielded. Generic SMD without recognizable family returns
+    'unknown'.
+
+    Args:
+        footprint_lib: KiCad footprint library string
+            (e.g., 'Inductor_SMD:L_Coilcraft_XGL4020')
+        value_str: Component value string
+        mpn: Manufacturer part number
+
+    Returns:
+        One of: 'shielded', 'semi-shielded', 'unshielded', 'unknown'
+    """
+    # Combine all available text for pattern matching
+    text = ((footprint_lib or '') + ' ' + (value_str or '') + ' ' + (mpn or '')).upper()
+
+    if not text.strip():
+        return 'unknown'
+
+    # Explicit keywords in footprint name
+    if 'SHIELDED' in text and 'UNSHIELDED' not in text:
+        return 'shielded'
+    if 'UNSHIELDED' in text:
+        return 'unshielded'
+
+    # Check known manufacturer families
+    for pat in _SHIELDED_PATTERNS:
+        if pat.upper() in text:
+            return 'shielded'
+    for pat in _SEMI_SHIELDED_PATTERNS:
+        if pat.upper() in text:
+            return 'semi-shielded'
+    for pat in _UNSHIELDED_PATTERNS:
+        if pat.upper() in text:
+            return 'unshielded'
+
+    # Through-hole inductors are typically unshielded drum/toroid cores
+    fp_upper = (footprint_lib or '').upper()
+    if 'THT' in fp_upper or 'THROUGH' in fp_upper:
+        return 'unshielded'
+
+    return 'unknown'
+
+
 # Regex for rated voltage in value strings: "100nF/16V", "10uF 6.3V", etc.
 _RATED_V_RE = re.compile(r'(\d+\.?\d*)\s*V(?:\b|[^a-zA-Z])')
 

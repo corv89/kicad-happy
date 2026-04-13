@@ -1332,3 +1332,55 @@ def cross_rail_transient_current(downstream_node: dict,
         i_transient = i_in_avg * 0.5
 
     return (max(i_transient, 0.01), sw_freq)
+
+
+# ---------------------------------------------------------------------------
+# Inductor near-field H-field estimation
+# ---------------------------------------------------------------------------
+
+def estimate_inductor_h_field(peak_current_a, distance_m,
+                              inductor_size_mm=5.0):
+    """Estimate peak H-field from a power inductor at a given distance.
+
+    Uses a magnetic dipole approximation for the near-field region.
+    The inductor is modeled as a small current loop with area derived
+    from the package size. This is a worst-case estimate — actual fields
+    depend on core material, winding geometry, and shielding.
+
+    H = (m * sin(theta)) / (4 * pi * r^3)  [near-field dipole]
+
+    where m = N * I * A (magnetic moment), N=1 for single-turn approximation,
+    I = peak current, A = effective loop area.
+
+    For a typical power inductor, the effective radiating area is roughly
+    (package_size/2)^2, much smaller than the full footprint because the
+    magnetic circuit is partially closed by the core.
+
+    Args:
+        peak_current_a: Peak inductor current in amperes
+        distance_m: Distance from inductor center in meters
+        inductor_size_mm: Package dimension in mm (e.g., 5.0 for a 5x5mm inductor)
+
+    Returns:
+        Estimated H-field in A/m. Returns 0.0 if inputs are invalid.
+
+    Reference:
+        Ott, "Electromagnetic Compatibility Engineering", Ch. 2.
+        Paul, "Introduction to Electromagnetic Compatibility", near-field model.
+    """
+    if peak_current_a <= 0 or distance_m <= 0 or inductor_size_mm <= 0:
+        return 0.0
+
+    # Effective loop area: half the package dimension squared (conservative)
+    # Accounts for core partially containing the flux
+    a_eff = ((inductor_size_mm / 2.0) * 1e-3) ** 2  # m^2
+
+    # Magnetic moment (single-turn approximation)
+    m = peak_current_a * a_eff  # A*m^2
+
+    # Near-field H at broadside (theta=90, sin=1, worst case)
+    # H = m / (4 * pi * r^3)
+    import math
+    h = m / (4.0 * math.pi * distance_m ** 3)
+
+    return h

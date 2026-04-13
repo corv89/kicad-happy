@@ -3993,6 +3993,170 @@ def analyze_regulatory_coverage(standard: str, market: Optional[str],
 
 
 # ---------------------------------------------------------------------------
+# Inductor Magnetic Leakage
+# ---------------------------------------------------------------------------
+
+def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
+    """ML-001: Flag unshielded switching inductors near sensitive circuits.
+
+    Checks proximity of unshielded/unknown-shielding power inductors to
+    sensitive analog components (ADCs, opamps, crystals, RF chains).
+    Uses magnetic dipole H-field estimate to quantify coupling risk.
+
+    Ref: Ott, "EMC Engineering" Ch. 11 — near-field coupling from
+    switching inductor leakage flux causes noise injection into
+    high-impedance analog circuits.
+    """
+    findings = []
+    if not pcb or not schematic:
+        return findings
+
+    from kicad_utils import classify_inductor_shielding
+    from emc_formulas import estimate_inductor_h_field
+
+    footprints = pcb.get('footprints', [])
+    signal = schematic.get('signal_analysis', {})
+    regulators = signal.get('power_regulators', [])
+
+    # Build ref → footprint position map
+    fp_pos = {}
+    fp_info = {}
+    for fp in footprints:
+        ref = fp.get('reference', '')
+        if ref:
+            fp_pos[ref] = (fp.get('x') or 0, fp.get('y') or 0)
+            fp_info[ref] = fp
+
+    # Collect switching inductor refs with shielding classification
+    sw_inductors = []
+    for reg in regulators:
+        if reg.get('topology', '').lower() not in ('switching', 'buck', 'boost',
+                                                    'buck-boost', 'sepic'):
+            continue
+        ind_ref = reg.get('inductor')
+        if not ind_ref or ind_ref not in fp_pos:
+            continue
+        fp = fp_info.get(ind_ref, {})
+        shielding = classify_inductor_shielding(
+            footprint_lib=fp.get('library', fp.get('footprint', '')),
+            value_str=fp.get('value', ''),
+            mpn=fp.get('mpn', ''))
+        if shielding == 'shielded':
+            continue  # Shielded inductors have minimal leakage
+        sw_inductors.append({
+            'ref': ind_ref,
+            'x': fp_pos[ind_ref][0],
+            'y': fp_pos[ind_ref][1],
+            'shielding': shielding,
+            'reg_ref': reg.get('ref', reg.get('reference', '')),
+            'sw_freq': reg.get('switching_frequency_hz', 0),
+        })
+
+    if not sw_inductors:
+        return findings
+
+    # Collect sensitive component positions from signal analysis
+    sensitive_refs = set()
+    # ADCs
+    for adc in signal.get('adc_circuits', []):
+        r = adc.get('ic', {}).get('ref') or adc.get('reference', '')
+        if r:
+            sensitive_refs.add(r)
+    # Opamps
+    for op in signal.get('opamp_circuits', []):
+        r = op.get('ic', {}).get('ref') or op.get('reference', '')
+        if r:
+            sensitive_refs.add(r)
+    # Crystal oscillators
+    for xtal in signal.get('crystal_circuits', []):
+        r = xtal.get('reference', '')
+        if r:
+            sensitive_refs.add(r)
+        # Also flag the IC driving the crystal
+        for conn in xtal.get('connected_ic', []):
+            ic_ref = conn if isinstance(conn, str) else conn.get('ref', '')
+            if ic_ref:
+                sensitive_refs.add(ic_ref)
+    # RF chains
+    for rf in signal.get('rf_chains', []):
+        for comp in rf.get('components', []):
+            r = comp.get('ref') or comp.get('reference', '')
+            if r:
+                sensitive_refs.add(r)
+
+    # Filter to those with PCB positions
+    sensitive = []
+    for ref in sensitive_refs:
+        if ref in fp_pos:
+            sensitive.append({'ref': ref, 'x': fp_pos[ref][0], 'y': fp_pos[ref][1]})
+
+    if not sensitive:
+        return findings
+
+    # Check proximity: flag when unshielded inductor is within 15mm of sensitive component
+    import math
+    proximity_threshold_mm = 15.0
+
+    for ind in sw_inductors:
+        for sens in sensitive:
+            dx = ind['x'] - sens['x']
+            dy = ind['y'] - sens['y']
+            dist_mm = math.sqrt(dx * dx + dy * dy)
+            if dist_mm > proximity_threshold_mm:
+                continue
+            if dist_mm < 0.1:
+                dist_mm = 0.1  # Avoid division by zero
+
+            # Estimate H-field (assume 1A peak ripple current, 5mm package)
+            h_field = estimate_inductor_h_field(
+                peak_current_a=1.0,
+                distance_m=dist_mm * 1e-3,
+                inductor_size_mm=5.0)
+
+            shielding_note = ind['shielding']
+            if shielding_note == 'unknown':
+                shielding_note = 'unknown (assumed unshielded)'
+
+            severity = 'MEDIUM'
+            if dist_mm < 8.0 and ind['shielding'] == 'unshielded':
+                severity = 'HIGH'
+
+            findings.append({
+                'category': 'inductor_leakage',
+                'severity': severity,
+                'rule_id': 'ML-001',
+                'confidence': 'heuristic',
+                'title': '{ind} ({shield}) is {dist:.1f}mm from sensitive {sens}'.format(
+                    ind=ind['ref'], shield=shielding_note,
+                    dist=dist_mm, sens=sens['ref']),
+                'description': (
+                    'Switching inductor {ind} ({shield} shielding, '
+                    '{reg} at {freq}) is {dist:.1f}mm from {sens}. '
+                    'Estimated H-field at this distance: {h:.2f} A/m '
+                    '(1A peak ripple assumption). '
+                    'Unshielded inductor magnetic leakage can couple '
+                    'into nearby high-impedance analog circuits, '
+                    'injecting switching noise.'
+                ).format(
+                    ind=ind['ref'], shield=shielding_note,
+                    reg=ind['reg_ref'],
+                    freq='{:.0f} kHz'.format(ind['sw_freq'] / 1e3) if ind['sw_freq'] else 'unknown freq',
+                    dist=dist_mm, sens=sens['ref'],
+                    h=h_field),
+                'components': [ind['ref'], sens['ref']],
+                'nets': [],
+                'recommendation': (
+                    'Use a shielded inductor (Coilcraft XGL/XAL, Wurth '
+                    'WE-MAPI, Vishay IHLP, TDK SPM) or increase '
+                    'separation to >15mm. Orient inductor axis '
+                    'perpendicular to sensitive traces.'
+                ),
+            })
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Master runner
 # ---------------------------------------------------------------------------
 
@@ -4065,6 +4229,7 @@ def run_all_checks(schematic: Optional[Dict], pcb: Optional[Dict],
         all_findings.extend(check_thermal_emc(pcb, schematic))
         all_findings.extend(check_switching_node_area(pcb, schematic, net_id_map))
         all_findings.extend(check_input_cap_loop_area(pcb, schematic, spice_backend))
+        all_findings.extend(check_inductor_leakage(pcb, schematic))
 
     # Filter by severity
     if severity_threshold.lower() != 'all':
