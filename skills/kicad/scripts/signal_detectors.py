@@ -882,12 +882,23 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
         if target_load_pF and "effective_load_pF" in xtal_entry:
             error_pct = (xtal_entry["effective_load_pF"] - target_load_pF) / target_load_pF * 100
             xtal_entry["load_cap_error_pct"] = round(error_pct, 1)
-            if abs(error_pct) <= 10:
-                xtal_entry["load_cap_status"] = "ok"
-            elif abs(error_pct) <= 25:
-                xtal_entry["load_cap_status"] = "marginal"
+            if target_load_source == "frequency_default":
+                # Target is a statistical default, not from the actual crystal
+                # datasheet. Don't report as out_of_spec — the default itself
+                # may be wrong for this specific crystal part.
+                if abs(error_pct) <= 10:
+                    xtal_entry["load_cap_status"] = "ok"
+                else:
+                    xtal_entry["load_cap_status"] = "unverified"
             else:
-                xtal_entry["load_cap_status"] = "out_of_spec"
+                # Target is parsed from the crystal value string or datasheet —
+                # high confidence, use normal thresholds.
+                if abs(error_pct) <= 10:
+                    xtal_entry["load_cap_status"] = "ok"
+                elif abs(error_pct) <= 25:
+                    xtal_entry["load_cap_status"] = "marginal"
+                else:
+                    xtal_entry["load_cap_status"] = "out_of_spec"
 
         crystal_circuits.append(xtal_entry)
 
