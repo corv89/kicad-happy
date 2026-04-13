@@ -14,7 +14,6 @@ from kicad_utils import (
     format_frequency as _format_frequency,
     lookup_regulator_vref as _lookup_regulator_vref,
     lookup_switching_freq,
-    match_known_switching,
     match_known_switching as _match_known_switching,
     parse_value,
     parse_voltage_from_net_name as _parse_voltage_from_net_name,

@@ -469,7 +469,7 @@ def audit_component(mpn: str, sources: list[str], project_dir: str | None = None
     return result
 
 
-def find_alternatives(mpn: str, description: str = "",
+def find_alternatives(mpn: str,
                       sources: list[str] | None = None,
                       delay: float = 1.0) -> list[dict]:
     """Search for active alternative parts when a component is EOL/NRND/obsolete.
@@ -654,13 +654,8 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
                     break
             # Search for alternatives if requested
             if suggest_alternatives:
-                desc = ""
-                for entry in bom:
-                    if entry.get("mpn", "").strip() == mpn:
-                        desc = entry.get("description", "")
-                        break
                 print(f"  Searching for alternatives...", file=sys.stderr)
-                alts = find_alternatives(mpn, desc, sources, delay)
+                alts = find_alternatives(mpn, sources, delay)
                 if alts:
                     finding["alternatives"] = alts
 
