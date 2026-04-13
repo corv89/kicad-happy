@@ -593,6 +593,82 @@ def extract_components(root: list, lib_symbols: dict, instance_uuid: str = "",
     return components
 
 
+def _build_net_classifications(results: dict) -> dict[str, dict]:
+    """Build net classification dict from existing detector results.
+
+    Tags nets with signal type and characteristics for downstream PCB
+    intelligence checks.
+    """
+    classifications: dict[str, dict] = {}
+
+    for xc in results.get('crystal_circuits', []):
+        freq = xc.get('frequency')
+        for net in xc.get('oscillator_nets', []):
+            if net:
+                classifications[net] = {'type': 'clock', 'frequency_hz': freq, 'source': 'crystal_circuits'}
+        for lc in xc.get('load_caps', []):
+            net = lc.get('net')
+            if net and net not in classifications:
+                classifications[net] = {'type': 'clock_passive', 'source': 'crystal_circuits'}
+
+    for reg in results.get('power_regulators', []):
+        sw_net = reg.get('sw_net')
+        if sw_net:
+            classifications[sw_net] = {'type': 'switching_node', 'frequency_hz': reg.get('switching_frequency_hz'), 'source': 'power_regulators'}
+        output_rail = reg.get('output_rail')
+        if output_rail and output_rail not in classifications:
+            classifications[output_rail] = {'type': 'power_rail', 'source': 'power_regulators'}
+
+    for eth in results.get('ethernet_interfaces', []):
+        for key in ('tx_p', 'tx_n', 'rx_p', 'rx_n', 'txp', 'txn', 'rxp', 'rxn'):
+            net = eth.get(key)
+            if net:
+                classifications[net] = {'type': 'ethernet', 'differential': True, 'source': 'ethernet_interfaces'}
+
+    for hdmi in results.get('hdmi_dvi_interfaces', []):
+        for net in hdmi.get('data_nets', []):
+            if net:
+                classifications[net] = {'type': 'hdmi', 'differential': True, 'source': 'hdmi_dvi_interfaces'}
+
+    for mem in results.get('memory_interfaces', []):
+        for net in mem.get('data_nets', mem.get('connected_nets', [])):
+            if net and net not in classifications:
+                classifications[net] = {'type': 'memory', 'source': 'memory_interfaces'}
+
+    for lvds in results.get('lvds_interfaces', []):
+        for net in lvds.get('data_nets', lvds.get('connected_nets', [])):
+            if net and net not in classifications:
+                classifications[net] = {'type': 'lvds', 'differential': True, 'source': 'lvds_interfaces'}
+
+    for rf in results.get('rf_chains', []):
+        for net in rf.get('signal_nets', rf.get('connected_nets', [])):
+            if net and net not in classifications:
+                classifications[net] = {'type': 'rf', 'source': 'rf_chains'}
+
+    for clk in results.get('clock_distribution', []):
+        for net in clk.get('output_nets', []):
+            if net and net not in classifications:
+                classifications[net] = {'type': 'clock', 'frequency_hz': clk.get('frequency_hz'), 'source': 'clock_distribution'}
+
+    for vf in results.get('validation_findings', []):
+        rule = vf.get('rule_id', '')
+        nets = vf.get('nets', [])
+        if rule == 'PR-001':
+            for net in nets:
+                if net not in classifications:
+                    classifications[net] = {'type': 'i2c', 'source': 'protocol_detection'}
+        elif rule == 'PR-003':
+            for net in nets:
+                if net not in classifications:
+                    classifications[net] = {'type': 'can', 'differential': True, 'source': 'protocol_detection'}
+        elif rule == 'PR-004':
+            for net in nets:
+                if net not in classifications:
+                    classifications[net] = {'type': 'usb', 'differential': True, 'source': 'protocol_detection'}
+
+    return classifications
+
+
 def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     """Analyze signal processing circuits: filters, dividers, feedback networks.
 
@@ -902,6 +978,10 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
             feedback_stability_findings
         ),
     }
+
+    net_classifications = _build_net_classifications(results)
+    if net_classifications:
+        results["net_classifications"] = net_classifications
 
     # Certification suggestions cross-reference all domain detections
     cert_suggestions = suggest_certifications(ctx, results)
