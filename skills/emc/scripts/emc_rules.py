@@ -253,7 +253,24 @@ def check_return_path_coverage(pcb: Dict, severity_threshold: str = 'all') -> Li
     Uses the PCB analyzer's return_path_continuity data (requires --full).
     """
     findings = []
-    rpc = pcb.get('return_path_continuity', [])
+    rpc = pcb.get('return_path_continuity') if pcb else None
+    if rpc is None:
+        findings.append({
+            'category': 'ground_plane',
+            'severity': 'INFO',
+            'rule_id': 'GP-001',
+            'confidence': 'deterministic',
+            'title': 'Return path analysis data not available',
+            'description': (
+                'PCB analysis did not include return path continuity data. '
+                'Run the PCB analyzer with --full flag to enable GP-001 '
+                'reference plane coverage checking.'
+            ),
+            'components': [],
+            'nets': [],
+            'recommendation': 'Re-run PCB analysis with: python3 analyze_pcb.py <file> --full',
+        })
+        return findings
 
     for entry in rpc:
         net_name = entry.get('net', '')
