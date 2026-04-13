@@ -123,6 +123,55 @@ def _parse_crystal_frequency(value_str: str) -> float | None:
     return None
 
 
+# Typical crystal load capacitance by frequency — used as fallback when the
+# crystal value string doesn't include a pF specification.
+# Sources: ECS crystal catalog (2024), Abracon AB series, Murata SA series.
+_CRYSTAL_DEFAULT_CL = {
+    32768: 12.5,         # Watch crystals: almost universally 12.5 pF
+    100e3: 12.5,
+    1e6: 12.5,
+    2e6: 12.5,
+    3.579545e6: 20.0,    # NTSC colorburst — historically 20 pF
+    4e6: 12.5,
+    8e6: 18.0,
+    10e6: 20.0,
+    12e6: 20.0,
+    16e6: 20.0,
+    20e6: 18.0,
+    24e6: 10.0,           # 24 MHz: 10 pF (STM32 standard)
+    25e6: 10.0,           # 25 MHz: 10 pF (Ethernet PHY standard)
+    26e6: 10.0,           # 26 MHz: 10 pF (Bluetooth/WiFi common)
+    27e6: 10.0,
+    32e6: 10.0,
+    48e6: 10.0,
+}
+
+
+def _crystal_default_cl(freq_hz: float) -> float | None:
+    """Look up typical crystal load capacitance for a given frequency.
+
+    Returns CL in pF or None if frequency is unknown. Uses exact match
+    first (within 1% tolerance), then falls back to frequency-band default.
+    """
+    if not freq_hz or freq_hz <= 0:
+        return None
+    # Exact match (within 1% tolerance for frequency rounding)
+    for table_freq, cl in _CRYSTAL_DEFAULT_CL.items():
+        if abs(freq_hz - table_freq) / table_freq < 0.01:
+            return cl
+    # Broad frequency-band fallback
+    if freq_hz <= 100e3:
+        return 12.5
+    elif freq_hz <= 4e6:
+        return 12.5
+    elif freq_hz <= 16e6:
+        return 18.0
+    elif freq_hz <= 30e6:
+        return 10.0
+    else:
+        return 10.0
+
+
 # ---------------------------------------------------------------------------
 # Divider purpose classification
 # ---------------------------------------------------------------------------
@@ -821,17 +870,13 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
         if load_match:
             target_load_pF = float(load_match.group(1))
             target_load_source = "parsed_from_value"
-        # Frequency-based defaults
+        # Frequency-based defaults — use granular lookup table
         if target_load_pF is None:
             freq = xtal_entry.get("frequency")
             if freq:
-                if freq <= 100e3:
-                    target_load_pF = 12.5
-                elif freq <= 20e6:
-                    target_load_pF = 18.0
-                else:
-                    target_load_pF = 12.0
-                target_load_source = "frequency_default"
+                target_load_pF = _crystal_default_cl(freq)
+                if target_load_pF is not None:
+                    target_load_source = "frequency_default"
         xtal_entry["target_load_pF"] = target_load_pF
         xtal_entry["target_load_source"] = target_load_source
         if target_load_pF and "effective_load_pF" in xtal_entry:
