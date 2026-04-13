@@ -18,7 +18,7 @@ from kicad_utils import (
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
 )
 from kicad_types import AnalysisContext
-from detector_helpers import index_two_pin_components, get_components_by_type
+from detector_helpers import index_two_pin_components, get_components_by_type, get_unique_ics
 
 
 # ---------------------------------------------------------------------------
@@ -1351,7 +1351,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
     power_regulators: list[dict] = []
 
     # KH-148: Deduplicate multi-unit ICs
-    for ic in list({c["reference"]: c for c in ctx.components if c["type"] == "ic"}.values()):
+    for ic in get_unique_ics(ctx):
         ref = ic["reference"]
 
         # KH-089: Skip components with no mapped pins (title blocks, graphics)
@@ -2996,7 +2996,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
     protected_nets = {p["protected_net"] for p in results.get("protection_devices", [])}
 
     # KH-148: Deduplicate multi-unit ICs (same ref, different units)
-    unique_ics = list({c["reference"]: c for c in ctx.components if c["type"] == "ic"}.values())
+    unique_ics = get_unique_ics(ctx)
 
     # 1. IC power pin decoupling status
     for ic in unique_ics:

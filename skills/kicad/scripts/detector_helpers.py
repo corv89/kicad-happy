@@ -55,6 +55,14 @@ def get_components_by_type(
     return result
 
 
+def get_unique_ics(ctx) -> list:
+    """Return deduplicated list of IC components.
+
+    Components with duplicate references are collapsed (keeps first seen).
+    """
+    return list({c["reference"]: c for c in ctx.components if c["type"] == "ic"}.values())
+
+
 def match_ic_keywords(component: dict, keywords: list[str] | tuple[str, ...]) -> bool:
     """Check if an IC's value+lib_id contains any of the given keywords.
 
