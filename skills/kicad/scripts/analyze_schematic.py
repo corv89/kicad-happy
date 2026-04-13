@@ -597,20 +597,25 @@ def _build_net_classifications(results: dict) -> dict[str, dict]:
     """Build net classification dict from existing detector results.
 
     Tags nets with signal type and characteristics for downstream PCB
-    intelligence checks.
+    intelligence checks. Uses the 'nets' field from rich-format detections
+    plus domain-specific fields where available.
     """
     classifications: dict[str, dict] = {}
 
+    # Crystal circuits → clock nets (from load_cap nets and rich 'nets' field)
     for xc in results.get('crystal_circuits', []):
         freq = xc.get('frequency')
-        for net in xc.get('oscillator_nets', []):
-            if net:
+        # Rich format 'nets' field contains the crystal's connected nets
+        for net in xc.get('nets', []):
+            if net and net not in classifications:
                 classifications[net] = {'type': 'clock', 'frequency_hz': freq, 'source': 'crystal_circuits'}
+        # Load cap nets are clock-passive
         for lc in xc.get('load_caps', []):
             net = lc.get('net')
             if net and net not in classifications:
                 classifications[net] = {'type': 'clock_passive', 'source': 'crystal_circuits'}
 
+    # Power regulators → switching nodes and power rails
     for reg in results.get('power_regulators', []):
         sw_net = reg.get('sw_net')
         if sw_net:
@@ -619,37 +624,50 @@ def _build_net_classifications(results: dict) -> dict[str, dict]:
         if output_rail and output_rail not in classifications:
             classifications[output_rail] = {'type': 'power_rail', 'source': 'power_regulators'}
 
+    # Ethernet → differential nets (from rich 'nets' or domain-specific fields)
     for eth in results.get('ethernet_interfaces', []):
+        # Try domain-specific differential net fields first
         for key in ('tx_p', 'tx_n', 'rx_p', 'rx_n', 'txp', 'txn', 'rxp', 'rxn'):
             net = eth.get(key)
             if net:
                 classifications[net] = {'type': 'ethernet', 'differential': True, 'source': 'ethernet_interfaces'}
+        # Fall back to rich 'nets' field
+        for net in eth.get('nets', []):
+            if net and net not in classifications:
+                classifications[net] = {'type': 'ethernet', 'source': 'ethernet_interfaces'}
 
+    # HDMI/DVI
     for hdmi in results.get('hdmi_dvi_interfaces', []):
-        for net in hdmi.get('data_nets', []):
-            if net:
+        for net in hdmi.get('nets', []):
+            if net and net not in classifications:
                 classifications[net] = {'type': 'hdmi', 'differential': True, 'source': 'hdmi_dvi_interfaces'}
 
+    # Memory interfaces
     for mem in results.get('memory_interfaces', []):
-        for net in mem.get('data_nets', mem.get('connected_nets', [])):
+        for net in mem.get('nets', []):
             if net and net not in classifications:
                 classifications[net] = {'type': 'memory', 'source': 'memory_interfaces'}
 
+    # LVDS
     for lvds in results.get('lvds_interfaces', []):
-        for net in lvds.get('data_nets', lvds.get('connected_nets', [])):
+        for net in lvds.get('nets', []):
             if net and net not in classifications:
                 classifications[net] = {'type': 'lvds', 'differential': True, 'source': 'lvds_interfaces'}
 
+    # RF chains
     for rf in results.get('rf_chains', []):
-        for net in rf.get('signal_nets', rf.get('connected_nets', [])):
+        for net in rf.get('nets', []):
             if net and net not in classifications:
                 classifications[net] = {'type': 'rf', 'source': 'rf_chains'}
 
+    # Clock distribution
     for clk in results.get('clock_distribution', []):
-        for net in clk.get('output_nets', []):
+        freq = clk.get('frequency_hz')
+        for net in clk.get('nets', []):
             if net and net not in classifications:
-                classifications[net] = {'type': 'clock', 'frequency_hz': clk.get('frequency_hz'), 'source': 'clock_distribution'}
+                classifications[net] = {'type': 'clock', 'frequency_hz': freq, 'source': 'clock_distribution'}
 
+    # Validation findings → protocol nets (I2C, CAN, USB)
     for vf in results.get('validation_findings', []):
         rule = vf.get('rule_id', '')
         nets = vf.get('nets', [])
