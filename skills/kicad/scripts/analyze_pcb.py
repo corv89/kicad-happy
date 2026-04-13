@@ -36,6 +36,7 @@ from kicad_utils import (is_ground_name, is_power_net_name,
                          load_kicad_pro, extract_pro_net_classes,
                          extract_pro_design_rules, extract_pro_text_variables,
                          load_kicad_dru, load_lib_tables)
+from pcb_connectivity import build_connectivity_graph
 
 
 # ---------------------------------------------------------------------------
@@ -5109,6 +5110,15 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["tracks"]["segments"] = tracks.get("segments", [])
         result["tracks"]["arcs"] = tracks.get("arcs", [])
         result["vias"]["vias"] = vias.get("vias", [])
+
+        # Build copper connectivity graph (requires full track/via data)
+        try:
+            conn_graph = build_connectivity_graph(
+                footprints, tracks, vias, zone_fills, zones, net_names)
+            if conn_graph:
+                result["connectivity_graph"] = conn_graph
+        except Exception:
+            pass  # Non-critical — degrade gracefully
 
     return result
 
