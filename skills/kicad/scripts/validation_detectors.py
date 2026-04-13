@@ -316,3 +316,144 @@ def validate_pullups(ctx: AnalysisContext) -> list[dict]:
                     ))
 
     return findings
+
+
+# ---------------------------------------------------------------------------
+# VM-001: Cross-domain voltage mismatch
+# ---------------------------------------------------------------------------
+
+_VOLTAGE_THRESHOLDS = {
+    1.8: (0.4, 1.35, 0.63, 1.17, 2.0),
+    2.5: (0.4, 2.0, 0.7, 1.7, 2.75),
+    3.3: (0.4, 2.4, 0.8, 2.0, 3.6),
+    5.0: (0.5, 4.4, 1.5, 3.5, 5.5),
+}
+
+
+def _estimate_rail_voltage_for_ic(ctx: AnalysisContext, ref: str) -> float | None:
+    pins = ctx.ref_pins.get(ref, {})
+    for pnum, (net, _) in pins.items():
+        if net and ctx.is_power_net(net) and not ctx.is_ground(net):
+            v = parse_voltage_from_net_name(net)
+            if v is not None:
+                return v
+    return None
+
+
+def _closest_threshold(voltage: float) -> tuple:
+    if voltage is None:
+        return None
+    best = None
+    best_dist = float('inf')
+    for v, thresh in _VOLTAGE_THRESHOLDS.items():
+        dist = abs(v - voltage)
+        if dist < best_dist:
+            best_dist = dist
+            best = thresh
+    return best
+
+
+def validate_voltage_levels(ctx: AnalysisContext, level_shifters: list[dict] | None = None) -> list[dict]:
+    """VM-001: Detect signal nets crossing power domain boundaries without level shifting."""
+    findings: list[dict] = []
+
+    ic_voltages: dict[str, float] = {}
+    for ic in get_unique_ics(ctx):
+        v = _estimate_rail_voltage_for_ic(ctx, ic['reference'])
+        if v is not None:
+            ic_voltages[ic['reference']] = v
+
+    shifted_nets: set[str] = set()
+    if level_shifters:
+        for ls in level_shifters:
+            for net in ls.get('shifted_nets', []):
+                shifted_nets.add(net)
+            ref = ls.get('reference', ls.get('ref', ''))
+            for pnum, (net, _) in ctx.ref_pins.get(ref, {}).items():
+                if net and not ctx.is_power_net(net) and not ctx.is_ground(net):
+                    shifted_nets.add(net)
+
+    checked_nets: set[str] = set()
+
+    for net_name, net_info in ctx.nets.items():
+        if net_name in checked_nets or ctx.is_power_net(net_name) or ctx.is_ground(net_name):
+            continue
+        if net_name in shifted_nets:
+            continue
+
+        ic_pins_on_net = []
+        for p in net_info.get('pins', []):
+            ref = p['component']
+            if ref in ic_voltages:
+                ic_pins_on_net.append({
+                    'ref': ref, 'pin': p.get('pin_name', ''),
+                    'pin_number': p['pin_number'], 'voltage': ic_voltages[ref],
+                })
+
+        if len(ic_pins_on_net) < 2:
+            continue
+
+        voltages = set(p['voltage'] for p in ic_pins_on_net)
+        if len(voltages) <= 1:
+            continue
+
+        checked_nets.add(net_name)
+        v_max = max(voltages)
+        v_min = min(voltages)
+
+        low_thresh = _closest_threshold(v_min)
+        if low_thresh is None:
+            continue
+
+        abs_max = low_thresh[4]
+        if v_max > abs_max:
+            severity = 'error'
+            desc = (
+                f'Net {net_name} connects ICs in {v_max}V and {v_min}V domains. '
+                f'The {v_max}V output may exceed the {v_min}V input absolute maximum '
+                f'rating of {abs_max}V, risking damage.'
+            )
+        else:
+            high_thresh = _closest_threshold(v_max)
+            voh = high_thresh[1] if high_thresh else v_max * 0.7
+            vih = low_thresh[3]
+            if voh < vih:
+                severity = 'warning'
+                desc = (
+                    f'Net {net_name} connects ICs in {v_max}V and {v_min}V domains. '
+                    f'The {v_max}V output VOH ({voh}V) may not meet the {v_min}V '
+                    f'input VIH threshold ({vih}V).'
+                )
+            else:
+                continue
+
+        refs = list(set(p['ref'] for p in ic_pins_on_net))
+        findings.append(make_finding(
+            detector='validate_voltage_levels',
+            rule_id='VM-001',
+            category='signal_integrity',
+            summary=f'Net {net_name}: {v_max}V / {v_min}V domain crossing without level shifter',
+            description=desc,
+            severity=severity,
+            confidence='heuristic',
+            evidence_source='topology',
+            components=refs,
+            nets=[net_name],
+            pins=[{'ref': p['ref'], 'pin': p['pin'], 'function': 'signal_io'}
+                  for p in ic_pins_on_net],
+            recommendation=(
+                f'Add a level shifter between the {v_max}V and {v_min}V domains on net {net_name}, '
+                f'or verify that the connected ICs have tolerant inputs.'
+            ),
+            fix_params={
+                'type': 'add_component',
+                'components': [{'type': 'level_shifter',
+                                'domain_a': f'{v_max}V', 'domain_b': f'{v_min}V',
+                                'nets': [net_name]}],
+                'basis': f'Net crosses {v_max}V to {v_min}V boundary',
+            },
+            report_section='Signal Integrity',
+            impact='Risk of damage or unreliable logic levels',
+        ))
+
+    return findings
