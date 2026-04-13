@@ -814,11 +814,13 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
 
         # Crystal load capacitance validation
         target_load_pF = None
+        target_load_source = None
         xtal_value = xtal.get("value", "")
         # Try parsing from value string: "16MHz/18pF", "8MHz 20pF"
         load_match = re.search(r'(\d+\.?\d*)\s*pF', xtal_value, re.IGNORECASE)
         if load_match:
             target_load_pF = float(load_match.group(1))
+            target_load_source = "parsed_from_value"
         # Frequency-based defaults
         if target_load_pF is None:
             freq = xtal_entry.get("frequency")
@@ -829,7 +831,9 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
                     target_load_pF = 18.0
                 else:
                     target_load_pF = 12.0
+                target_load_source = "frequency_default"
         xtal_entry["target_load_pF"] = target_load_pF
+        xtal_entry["target_load_source"] = target_load_source
         if target_load_pF and "effective_load_pF" in xtal_entry:
             error_pct = (xtal_entry["effective_load_pF"] - target_load_pF) / target_load_pF * 100
             xtal_entry["load_cap_error_pct"] = round(error_pct, 1)
