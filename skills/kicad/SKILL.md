@@ -147,6 +147,10 @@ python3 <skill-path>/scripts/cross_analysis.py --schematic analysis/schematic.js
 
 Checks: CC-001 connector current capacity, EG-001 ESD protection gaps, DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync. PCB JSON optional.
 
+### Connectivity Graph (--full mode)
+
+When `--full` is used with the PCB analyzer, the output includes a `connectivity_graph` section with per-net copper connectivity analysis via union-find over pads, tracks, vias, and zone fills. This enables deterministic plane split detection and return path validation in cross_analysis.py. Each net entry shows island count, component-to-island mapping, gap locations, and disconnected pad pairs.
+
 ### Gerber & Drill Analyzer
 ```bash
 python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/>

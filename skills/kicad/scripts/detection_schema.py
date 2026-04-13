@@ -486,6 +486,14 @@ SCHEMAS = {
         identity_fields=["reference"],
         value_fields=["associated_codec"],
     ),
+    "connectivity_graph": DetectionSchema(
+        identity_fields=["net_name"],
+        value_fields=["islands", "disconnected_pads"],
+    ),
+    "net_classifications": DetectionSchema(
+        identity_fields=["net_name"],
+        value_fields=["type", "frequency_hz"],
+    ),
 }
 
 
