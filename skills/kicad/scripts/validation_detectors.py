@@ -820,3 +820,122 @@ def validate_power_sequencing(
 
     return findings
 
+
+# ---------------------------------------------------------------------------
+# LR-001: LED resistor sizing validation
+# ---------------------------------------------------------------------------
+
+_LED_VF_BY_COLOR = {
+    'red': 1.8, 'orange': 2.0, 'amber': 2.0, 'yellow': 2.1,
+    'green': 2.2, 'blue': 3.2, 'white': 3.2, 'uv': 3.3, 'ir': 1.2,
+}
+_LED_VF_DEFAULT = 2.0
+_LED_IF_MAX_DEFAULT_MA = 20
+_LED_IF_RECOMMENDED_MA = 10
+
+
+def _guess_led_color(value: str, lib_id: str) -> str | None:
+    combined = (value + ' ' + lib_id).lower()
+    for color in _LED_VF_BY_COLOR:
+        if color in combined:
+            return color
+    return None
+
+
+def validate_led_resistors(ctx: AnalysisContext) -> list[dict]:
+    """LR-001: Check LED current-limiting resistor values."""
+    findings: list[dict] = []
+    leds = [c for c in ctx.components if c['type'] == 'led']
+    if not leds:
+        return findings
+
+    resistors = get_components_by_type(ctx, 'resistor')
+    resistor_nets, net_to_resistors = index_two_pin_components(ctx, resistors)
+
+    for led in leds:
+        ref = led['reference']
+        n1, n2 = ctx.get_two_pin_nets(ref)
+        if not n1 or not n2:
+            continue
+
+        anode_net = cathode_net = None
+        if ctx.is_power_net(n1) and not ctx.is_ground(n1):
+            anode_net, cathode_net = n1, n2
+        elif ctx.is_power_net(n2) and not ctx.is_ground(n2):
+            anode_net, cathode_net = n2, n1
+        elif ctx.is_ground(n2):
+            anode_net, cathode_net = n1, n2
+        elif ctx.is_ground(n1):
+            anode_net, cathode_net = n2, n1
+        else:
+            anode_net, cathode_net = n1, n2
+
+        series_resistors = []
+        for net in (n1, n2):
+            for rref in net_to_resistors.get(net, []):
+                rn1, rn2 = resistor_nets.get(rref, (None, None))
+                if not rn1 or not rn2:
+                    continue
+                other = rn2 if rn1 == net else rn1
+                if ctx.is_power_net(other) or ctx.is_ground(other):
+                    ohms = ctx.parsed_values.get(rref)
+                    if ohms is not None and ohms > 0:
+                        series_resistors.append({'ref': rref, 'ohms': ohms, 'rail': other})
+
+        if not series_resistors:
+            has_driver = False
+            for net in (n1, n2):
+                for p in ctx.nets.get(net, {}).get('pins', []):
+                    comp = ctx.comp_lookup.get(p['component'])
+                    if comp and comp['type'] in ('transistor', 'ic'):
+                        has_driver = True
+                        break
+                if has_driver:
+                    break
+            if not has_driver:
+                findings.append(make_finding(
+                    detector='validate_led_resistors', rule_id='LR-001', category='component_integrity',
+                    summary=f'LED {ref}: no current-limiting resistor found',
+                    description=f'LED {ref} ({led.get("value", "")}) has no series current-limiting resistor.',
+                    severity='error', confidence='heuristic', evidence_source='topology',
+                    components=[ref], nets=[n for n in (n1, n2) if n],
+                    recommendation='Add a current-limiting resistor (typically 330R-1k for 3.3V).',
+                    fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '330', 'net_from': n1, 'net_to': n2}], 'basis': 'LED requires series current limiting'},
+                    impact='LED overcurrent causes failure',
+                ))
+            continue
+
+        color = _guess_led_color(led.get('value', ''), led.get('lib_id', ''))
+        vf = _LED_VF_BY_COLOR.get(color, _LED_VF_DEFAULT) if color else _LED_VF_DEFAULT
+
+        for sr in series_resistors:
+            rail_v = parse_voltage_from_net_name(sr['rail'])
+            if rail_v is None or rail_v <= vf:
+                continue
+            current_ma = (rail_v - vf) / sr['ohms'] * 1000
+
+            if current_ma > _LED_IF_MAX_DEFAULT_MA * 2:
+                findings.append(make_finding(
+                    detector='validate_led_resistors', rule_id='LR-001', category='component_integrity',
+                    summary=f'LED {ref}: current too high ({current_ma:.0f}mA via {sr["ref"]})',
+                    description=f'LED {ref} draws ~{current_ma:.0f}mA through {sr["ref"]} ({sr["ohms"]:.0f}R) from {sr["rail"]} ({rail_v}V). Exceeds typical {_LED_IF_MAX_DEFAULT_MA}mA max.',
+                    severity='warning', confidence='heuristic', evidence_source='topology',
+                    components=[ref, sr['ref']], nets=[n for n in (n1, n2) if n],
+                    recommendation=f'Increase {sr["ref"]} to {(rail_v - vf) / (_LED_IF_RECOMMENDED_MA / 1000):.0f}R for ~{_LED_IF_RECOMMENDED_MA}mA.',
+                    fix_params={'type': 'resistor_value_change', 'component': sr['ref'], 'current_value': sr['ohms'], 'target_metric': 'led_current_mA', 'target_value': _LED_IF_RECOMMENDED_MA, 'actual_value': current_ma, 'formula': f'R = (Vrail - Vf) / Iled = ({rail_v} - {vf}) / {_LED_IF_RECOMMENDED_MA/1000}'},
+                    impact='LED overcurrent reduces lifespan',
+                ))
+
+            power_w = (current_ma / 1000) ** 2 * sr['ohms']
+            if power_w > 0.25:
+                findings.append(make_finding(
+                    detector='validate_led_resistors', rule_id='LR-001', category='component_integrity',
+                    summary=f'LED resistor {sr["ref"]}: power dissipation {power_w*1000:.0f}mW',
+                    description=f'Resistor {sr["ref"]} dissipates {power_w*1000:.0f}mW. Exceeds 250mW typical for small packages.',
+                    severity='info', confidence='heuristic', evidence_source='topology',
+                    components=[sr['ref']],
+                    recommendation='Use a larger package resistor or increase resistance.',
+                ))
+
+    return findings
+
