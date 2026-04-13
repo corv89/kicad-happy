@@ -1262,8 +1262,10 @@ def classify_inductor_shielding(footprint_lib='', value_str='', mpn=''):
     Returns:
         One of: 'shielded', 'semi-shielded', 'unshielded', 'unknown'
     """
-    # Combine all available text for pattern matching
-    text = ((footprint_lib or '') + ' ' + (value_str or '') + ' ' + (mpn or '')).upper()
+    # Combine all available text for pattern matching.
+    # Normalize hyphens to underscores — KiCad footprint libraries use
+    # underscores (WE_MAPI) while manufacturer names use hyphens (WE-MAPI).
+    text = ((footprint_lib or '') + ' ' + (value_str or '') + ' ' + (mpn or '')).upper().replace('-', '_')
 
     if not text.strip():
         return 'unknown'
@@ -1274,15 +1276,15 @@ def classify_inductor_shielding(footprint_lib='', value_str='', mpn=''):
     if 'UNSHIELDED' in text:
         return 'unshielded'
 
-    # Check known manufacturer families
+    # Check known manufacturer families (normalize hyphens in patterns too)
     for pat in _SHIELDED_PATTERNS:
-        if pat.upper() in text:
+        if pat.upper().replace('-', '_') in text:
             return 'shielded'
     for pat in _SEMI_SHIELDED_PATTERNS:
-        if pat.upper() in text:
+        if pat.upper().replace('-', '_') in text:
             return 'semi-shielded'
     for pat in _UNSHIELDED_PATTERNS:
-        if pat.upper() in text:
+        if pat.upper().replace('-', '_') in text:
             return 'unshielded'
 
     # Through-hole inductors are typically unshielded drum/toroid cores
