@@ -330,6 +330,7 @@ def check_return_path_coverage(pcb: Dict, severity_threshold: str = 'all') -> Li
                 'Route this signal to avoid ground plane gaps, or fill the void. '
                 'If a split is intentional, add a bridge capacitor across the gap.'
             ),
+            confidence='heuristic',
         ))
 
     return findings
@@ -1186,6 +1187,7 @@ def check_via_stitching(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
                 f'Add ground stitching vias at ≤{required_spacing_mm:.0f}mm '
                 f'intervals, especially at board edges and near connectors.'
             ),
+            confidence='heuristic',
         ))
 
     return findings
@@ -2450,6 +2452,7 @@ def check_crosstalk_3h_rule(pcb: Dict,
                 f'Increase spacing to ≥{threshold_3h:.1f}mm (3× dielectric height) '
                 f'or insert a ground guard trace between them.'
             ),
+            confidence='heuristic',
         ))
 
         if len(findings) > 15:
@@ -2458,6 +2461,7 @@ def check_crosstalk_3h_rule(pcb: Dict,
                 title=f'{len(flagged)}+ trace pairs with close spacing (truncated)',
                 description='Multiple net pairs violate the 3H spacing rule. Review trace spacing board-wide.',
                 recommendation=f'Increase trace spacing to ≥{threshold_3h:.1f}mm on outer layers.',
+                confidence='heuristic',
             ))
             break
 

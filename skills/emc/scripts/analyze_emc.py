@@ -33,6 +33,14 @@ from emc_formulas import STANDARDS, MARKET_STANDARDS
 # Shared severity weights — used by both risk score and per-net scoring
 SEVERITY_WEIGHTS = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
 
+# Confidence discount — heuristic findings carry less weight because the
+# underlying data is sampled or averaged, not exhaustively computed.
+CONFIDENCE_WEIGHTS = {
+    'deterministic': 1.0,
+    'datasheet-backed': 1.0,
+    'heuristic': 0.5,
+}
+
 # Maximum findings per rule_id that contribute to the risk score.
 # Prevents per-net rules like GP-001 (which fires once per net) from
 # saturating the score to 0 on 2-layer boards with many nets.
@@ -64,7 +72,9 @@ def compute_risk_score(findings: list) -> int:
         # Sort by severity (worst first)
         rule_findings.sort(key=lambda f: sev_order.get(f.get('severity', 'INFO'), 4))
         for f in rule_findings[:MAX_FINDINGS_PER_RULE]:
-            penalty += SEVERITY_WEIGHTS.get(f.get('severity', 'INFO'), 0)
+            w = SEVERITY_WEIGHTS.get(f.get('severity', 'INFO'), 0)
+            w *= CONFIDENCE_WEIGHTS.get(f.get('confidence', 'deterministic'), 1.0)
+            penalty += w
 
     return max(0, min(100, 100 - penalty))
 
@@ -85,9 +95,10 @@ def compute_per_net_scores(findings: list) -> list:
         penalty = 0
         for f in net_f:
             w = SEVERITY_WEIGHTS.get(f['severity'], 0)
+            w *= CONFIDENCE_WEIGHTS.get(f.get('confidence', 'deterministic'), 1.0)
             # SPICE-verified findings are more trustworthy — weight 1.5×
             if f.get('spice_verified'):
-                w = int(w * 1.5)
+                w *= 1.5
             penalty += w
         score = max(0, min(100, 100 - penalty))
         rules = sorted(set(f['rule_id'] for f in net_f))
