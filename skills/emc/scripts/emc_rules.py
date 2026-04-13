@@ -2842,73 +2842,9 @@ def check_esd_protection_path(pcb: Dict,
 # Thermal-EMC Interaction
 # ---------------------------------------------------------------------------
 
-# MLCC DC bias derating — approximate effective capacitance as a fraction
-# of nominal at given voltage ratio (applied / rated). Dielectric-dependent.
-# Source: Murata/TDK DC bias characteristic data, Analog Devices MT-101.
-_DC_BIAS_DERATING = {
-    # (dielectric, package): {voltage_ratio: remaining_fraction}
-    # Interpolate linearly between points
-    'X5R_0402': [(0.0, 1.0), (0.25, 0.85), (0.5, 0.50), (0.75, 0.25), (1.0, 0.10)],
-    'X5R_0603': [(0.0, 1.0), (0.25, 0.90), (0.5, 0.60), (0.75, 0.35), (1.0, 0.15)],
-    'X5R_0805': [(0.0, 1.0), (0.25, 0.92), (0.5, 0.70), (0.75, 0.45), (1.0, 0.20)],
-    'X7R_0402': [(0.0, 1.0), (0.25, 0.90), (0.5, 0.65), (0.75, 0.40), (1.0, 0.15)],
-    'X7R_0603': [(0.0, 1.0), (0.25, 0.93), (0.5, 0.75), (0.75, 0.50), (1.0, 0.25)],
-    'X7R_0805': [(0.0, 1.0), (0.25, 0.95), (0.5, 0.80), (0.75, 0.55), (1.0, 0.30)],
-    'X7R_1206': [(0.0, 1.0), (0.25, 0.96), (0.5, 0.85), (0.75, 0.65), (1.0, 0.40)],
-    'C0G_any':  [(0.0, 1.0), (0.5, 1.0), (1.0, 1.0)],  # C0G has no DC bias effect
-}
-
-
-def _estimate_dc_bias_derating(dielectric: str, package: str,
-                               voltage_ratio: float) -> float:
-    """Estimate remaining capacitance fraction under DC bias.
-
-    Returns a value between 0 and 1 (1 = no derating).
-    """
-    if voltage_ratio <= 0:
-        return 1.0
-    voltage_ratio = min(voltage_ratio, 1.0)
-
-    # Look for specific dielectric+package, fall back to generic
-    key = f'{dielectric}_{package}'
-    if key not in _DC_BIAS_DERATING:
-        # Try generic dielectric
-        key_generic = f'{dielectric}_0603'
-        if key_generic in _DC_BIAS_DERATING:
-            key = key_generic
-        elif 'C0G' in dielectric.upper() or 'NP0' in dielectric.upper():
-            return 1.0  # C0G/NP0: no DC bias derating
-        else:
-            # Default: moderate derating
-            return max(0.1, 1.0 - voltage_ratio * 0.7)
-
-    curve = _DC_BIAS_DERATING[key]
-    # Linear interpolation
-    for i in range(len(curve) - 1):
-        v0, f0 = curve[i]
-        v1, f1 = curve[i + 1]
-        if v0 <= voltage_ratio <= v1:
-            t = (voltage_ratio - v0) / (v1 - v0) if v1 > v0 else 0
-            return f0 + t * (f1 - f0)
-    return curve[-1][1]
-
-
-def _classify_dielectric(value_str: str, desc_str: str = '') -> str:
-    """Extract MLCC dielectric type from component value/description."""
-    text = (value_str + ' ' + desc_str).upper()
-    for d in ('C0G', 'NP0', 'COG'):
-        if d in text:
-            return 'C0G'
-    for d in ('X7R', 'X7S', 'X6S'):
-        if d in text:
-            return 'X7R'
-    for d in ('X5R', 'X5S'):
-        if d in text:
-            return 'X5R'
-    for d in ('Y5V', 'Z5U', 'X7T'):
-        if d in text:
-            return 'Y5V'
-    return 'X7R'  # default assumption for unmarked MLCC
+# MLCC DC bias derating — imported from kicad_utils (single source of truth)
+from kicad_utils import (classify_dielectric as _classify_dielectric,
+                         estimate_dc_bias_derating as _estimate_dc_bias_derating)
 
 
 def check_thermal_emc(pcb: Optional[Dict],
@@ -2948,32 +2884,28 @@ def check_thermal_emc(pcb: Optional[Dict],
             cap_ref = cap.get('ref', '?')
             package = cap.get('package')
             if not package:
-                # No package data — skip package-dependent analysis
                 continue
             value_str = cap.get('value', '')
 
-            # Try to extract rated voltage from value string (e.g., "100nF/16V")
-            rated_v = None
-            rv_match = re.search(r'(\d+\.?\d*)\s*V(?:\b|[^a-zA-Z])', value_str)
-            if rv_match:
-                rv_candidate = float(rv_match.group(1))
-                if 1.0 <= rv_candidate <= 100:
-                    rated_v = rv_candidate
-            # Fallback: estimate from rail voltage
-            if rated_v is None:
-                rated_v = 10.0  # conservative default
-                if vout <= 1.8:
-                    rated_v = 6.3
-                elif vout <= 3.3:
-                    rated_v = 6.3
-                elif vout <= 5.0:
+            # Use pre-computed derating from schematic analyzer when available
+            remaining = cap.get('derating_factor')
+            dielectric = cap.get('dielectric')
+            if remaining is None:
+                # Fallback: compute inline (EMC-only runs without schematic enrichment)
+                if dielectric is None:
+                    dielectric = _classify_dielectric(value_str)
+                rated_v = cap.get('rated_voltage_V')
+                if rated_v is None:
                     rated_v = 10.0
-                elif vout <= 12.0:
-                    rated_v = 25.0
-
-            voltage_ratio = vout / rated_v
-            dielectric = _classify_dielectric(value_str)
-            remaining = _estimate_dc_bias_derating(dielectric, package, voltage_ratio)
+                    if vout <= 1.8:
+                        rated_v = 6.3
+                    elif vout <= 3.3:
+                        rated_v = 6.3
+                    elif vout <= 5.0:
+                        rated_v = 10.0
+                    elif vout <= 12.0:
+                        rated_v = 25.0
+                remaining = _estimate_dc_bias_derating(dielectric, package, vout / rated_v)
 
             effective_uf = farads * remaining * 1e6
             nominal_uf = farads * 1e6

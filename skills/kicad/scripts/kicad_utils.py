@@ -1155,6 +1155,126 @@ def estimate_cap_esl(package):
     return esl_nh * 1e-9  # Convert nH to H
 
 
+# ---------------------------------------------------------------------------
+# MLCC DC bias derating
+# ---------------------------------------------------------------------------
+
+# Approximate remaining capacitance fraction at given voltage ratio
+# (applied_V / rated_V). Class II ceramics (X5R, X7R) lose significant
+# capacitance under DC bias; smaller packages derate more aggressively.
+# Source: Murata/TDK DC bias characteristic data, Analog Devices MT-101.
+# Format: [(voltage_ratio, remaining_fraction), ...]  — interpolate linearly.
+_DC_BIAS_DERATING = {
+    'X5R_0402': [(0.0, 1.0), (0.25, 0.85), (0.5, 0.50), (0.75, 0.25), (1.0, 0.10)],
+    'X5R_0603': [(0.0, 1.0), (0.25, 0.90), (0.5, 0.60), (0.75, 0.35), (1.0, 0.15)],
+    'X5R_0805': [(0.0, 1.0), (0.25, 0.92), (0.5, 0.70), (0.75, 0.45), (1.0, 0.20)],
+    'X5R_1206': [(0.0, 1.0), (0.25, 0.94), (0.5, 0.78), (0.75, 0.55), (1.0, 0.30)],
+    'X7R_0402': [(0.0, 1.0), (0.25, 0.90), (0.5, 0.65), (0.75, 0.40), (1.0, 0.15)],
+    'X7R_0603': [(0.0, 1.0), (0.25, 0.93), (0.5, 0.75), (0.75, 0.50), (1.0, 0.25)],
+    'X7R_0805': [(0.0, 1.0), (0.25, 0.95), (0.5, 0.80), (0.75, 0.55), (1.0, 0.30)],
+    'X7R_1206': [(0.0, 1.0), (0.25, 0.96), (0.5, 0.85), (0.75, 0.65), (1.0, 0.40)],
+    'Y5V_0402': [(0.0, 1.0), (0.25, 0.60), (0.5, 0.25), (0.75, 0.10), (1.0, 0.05)],
+    'Y5V_0603': [(0.0, 1.0), (0.25, 0.65), (0.5, 0.30), (0.75, 0.15), (1.0, 0.08)],
+    'C0G_any':  [(0.0, 1.0), (0.5, 1.0), (1.0, 1.0)],
+}
+
+
+def classify_dielectric(value_str, desc_str=''):
+    """Extract MLCC dielectric type from component value/description string.
+
+    Checks for C0G/NP0, X7R/X7S/X6S, X5R/X5S, Y5V/Z5U in that order.
+    Returns 'X7R' as default for unmarked MLCCs (most common general-purpose).
+
+    Args:
+        value_str: Component value string (e.g., '100nF/16V/X7R')
+        desc_str: Optional description field
+
+    Returns:
+        Dielectric code string: 'C0G', 'X7R', 'X5R', or 'Y5V'
+    """
+    text = ((value_str or '') + ' ' + (desc_str or '')).upper()
+    for d in ('C0G', 'NP0', 'COG'):
+        if d in text:
+            return 'C0G'
+    for d in ('X7R', 'X7S', 'X6S'):
+        if d in text:
+            return 'X7R'
+    for d in ('X5R', 'X5S'):
+        if d in text:
+            return 'X5R'
+    for d in ('Y5V', 'Z5U', 'X7T'):
+        if d in text:
+            return 'Y5V'
+    return 'X7R'
+
+
+# Regex for rated voltage in value strings: "100nF/16V", "10uF 6.3V", etc.
+_RATED_V_RE = re.compile(r'(\d+\.?\d*)\s*V(?:\b|[^a-zA-Z])')
+
+
+def parse_rated_voltage(value_str):
+    """Extract rated voltage from a capacitor value string.
+
+    Looks for patterns like '16V', '6.3V', '50 V' in the value string.
+    Ignores implausible values (less than 1V or greater than 100V for standard MLCCs).
+
+    Args:
+        value_str: Component value string (e.g., '100nF/16V/X7R')
+
+    Returns:
+        Rated voltage in volts (float), or None if not found
+    """
+    if not value_str:
+        return None
+    m = _RATED_V_RE.search(value_str)
+    if m:
+        v = float(m.group(1))
+        if 1.0 <= v <= 100:
+            return v
+    return None
+
+
+def estimate_dc_bias_derating(dielectric, package, voltage_ratio):
+    """Estimate remaining capacitance fraction under DC bias.
+
+    Class II ceramic capacitors (X5R, X7R, Y5V) lose capacitance when
+    DC bias approaches rated voltage. Smaller packages derate more.
+    C0G/NP0 has negligible DC bias effect.
+
+    Args:
+        dielectric: Dielectric code ('X7R', 'X5R', 'C0G', 'Y5V')
+        package: Package code ('0402', '0603', '0805', '1206')
+        voltage_ratio: Applied voltage / rated voltage (0.0 to 1.0+)
+
+    Returns:
+        Remaining fraction (0.0 to 1.0). 1.0 = no derating.
+    """
+    if voltage_ratio <= 0:
+        return 1.0
+    voltage_ratio = min(voltage_ratio, 1.0)
+
+    key = '{0}_{1}'.format(dielectric, package)
+    if key not in _DC_BIAS_DERATING:
+        # Try generic fallback for this dielectric (use 0603 as reference)
+        key_generic = '{0}_0603'.format(dielectric)
+        if key_generic in _DC_BIAS_DERATING:
+            key = key_generic
+        elif 'C0G' in dielectric.upper() or 'NP0' in dielectric.upper():
+            return 1.0
+        else:
+            # Unknown dielectric — moderate default derating
+            return max(0.1, 1.0 - voltage_ratio * 0.7)
+
+    curve = _DC_BIAS_DERATING[key]
+    for i in range(len(curve) - 1):
+        v0, f0 = curve[i]
+        v1, f1 = curve[i + 1]
+        if v0 <= voltage_ratio <= v1:
+            t = (voltage_ratio - v0) / (v1 - v0) if v1 > v0 else 0
+            return f0 + t * (f1 - f0)
+    return curve[-1][1]
+
+
 # ======================================================================
 # .kicad_pro project file parsing
 # ======================================================================

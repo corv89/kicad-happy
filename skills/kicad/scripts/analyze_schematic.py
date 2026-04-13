@@ -676,27 +676,41 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
             ]
 
     def _enrich_capacitor_data(results_dict, context):
-        """Add package size and ESR estimates to all capacitor entries in signal_analysis.
+        """Add package size, ESR, dielectric, and rated voltage to all cap entries.
 
         Walks through all detection dicts recursively, finds entries with a 'farads'
-        key and a 'ref' key, and adds 'package' and 'esr_ohm' fields from the
-        component's footprint.
+        key and a 'ref' key, and adds derived fields from the component's footprint
+        and value string.
         """
-        from kicad_utils import extract_cap_package, estimate_cap_esr
+        from kicad_utils import (extract_cap_package, estimate_cap_esr,
+                                 classify_dielectric, parse_rated_voltage)
 
         def _enrich(obj):
             if isinstance(obj, dict):
-                if "farads" in obj and "ref" in obj and "package" not in obj:
+                if "farads" in obj and "ref" in obj:
                     ref = obj["ref"]
                     comp = context.comp_lookup.get(ref)
                     if comp:
-                        fp = comp.get("footprint", "")
-                        pkg = extract_cap_package(fp)
-                        if pkg:
-                            obj["package"] = pkg
-                            esr = estimate_cap_esr(obj["farads"], pkg)
-                            if esr is not None:
-                                obj["esr_ohm"] = esr
+                        # Package and ESR (existing)
+                        if "package" not in obj:
+                            fp = comp.get("footprint", "")
+                            pkg = extract_cap_package(fp)
+                            if pkg:
+                                obj["package"] = pkg
+                                esr = estimate_cap_esr(obj["farads"], pkg)
+                                if esr is not None:
+                                    obj["esr_ohm"] = esr
+                        # Dielectric classification (new)
+                        if "dielectric" not in obj:
+                            value_str = comp.get("value", "")
+                            desc_str = comp.get("description", "")
+                            obj["dielectric"] = classify_dielectric(value_str, desc_str)
+                        # Rated voltage (new)
+                        if "rated_voltage_V" not in obj:
+                            value_str = comp.get("value", "")
+                            rv = parse_rated_voltage(value_str)
+                            if rv is not None:
+                                obj["rated_voltage_V"] = rv
                 for v in obj.values():
                     _enrich(v)
             elif isinstance(obj, list):
@@ -704,6 +718,91 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
                     _enrich(item)
 
         _enrich(results_dict)
+
+    def _apply_capacitor_derating(results_dict):
+        """Apply DC bias derating to capacitor entries where applied voltage is known.
+
+        Cross-references regulator output voltages with output_capacitors and
+        decoupling_analysis to compute effective_farads after DC bias derating.
+        Only adds derating fields when both package and applied voltage are known.
+        """
+        from kicad_utils import estimate_dc_bias_derating
+
+        # Build rail → voltage map from power regulators
+        rail_voltage = {}
+        for reg in results_dict.get("power_regulators", []):
+            vout = reg.get("vout_estimated") or reg.get("estimated_vout")
+            rail = reg.get("output_rail", "")
+            if vout and vout > 0 and rail:
+                # Use the highest voltage seen for a rail (conservative)
+                if rail not in rail_voltage or vout > rail_voltage[rail]:
+                    rail_voltage[rail] = vout
+
+        def _derate_cap(cap, applied_v):
+            """Add derating fields to a single cap entry."""
+            farads = cap.get("farads", 0)
+            package = cap.get("package")
+            dielectric = cap.get("dielectric")
+            if not farads or farads <= 0 or not package or not dielectric:
+                return
+
+            # Determine rated voltage: from cap entry, or estimate from rail
+            rated_v = cap.get("rated_voltage_V")
+            if rated_v is None:
+                # Conservative estimate based on typical voltage ratings
+                if applied_v <= 1.8:
+                    rated_v = 6.3
+                elif applied_v <= 3.3:
+                    rated_v = 6.3
+                elif applied_v <= 5.0:
+                    rated_v = 10.0
+                elif applied_v <= 12.0:
+                    rated_v = 25.0
+                else:
+                    rated_v = applied_v * 2  # assume 2:1 margin
+
+            voltage_ratio = applied_v / rated_v
+            remaining = estimate_dc_bias_derating(dielectric, package, voltage_ratio)
+
+            cap["applied_voltage_V"] = applied_v
+            cap["derating_factor"] = round(remaining, 3)
+            cap["effective_farads"] = farads * remaining
+
+        # Derate output and input capacitors on power regulators
+        for reg in results_dict.get("power_regulators", []):
+            vout = reg.get("vout_estimated") or reg.get("estimated_vout")
+            if not vout or vout <= 0:
+                continue
+            for cap in reg.get("output_capacitors", []):
+                _derate_cap(cap, vout)
+
+        # Derate decoupling analysis capacitors
+        for rail_entry in results_dict.get("decoupling_analysis", []):
+            rail_name = rail_entry.get("rail", "")
+            v = rail_voltage.get(rail_name)
+            if not v:
+                continue
+            any_derated = False
+            for cap in rail_entry.get("capacitors", []):
+                _derate_cap(cap, v)
+                if "effective_farads" in cap:
+                    any_derated = True
+            # Add total effective capacitance alongside nominal
+            if any_derated:
+                total_eff = sum(
+                    c.get("effective_farads", c["farads"])
+                    for c in rail_entry["capacitors"]
+                )
+                rail_entry["total_effective_capacitance_uF"] = round(total_eff * 1e6, 3)
+
+        # Derate LC filter capacitors where rail voltage is known
+        for filt in results_dict.get("lc_filters", []):
+            rail = filt.get("rail", "")
+            v = rail_voltage.get(rail)
+            if v and "capacitor" in filt:
+                cap = filt["capacitor"]
+                if isinstance(cap, dict) and "farads" in cap:
+                    _derate_cap(cap, v)
 
     results = {
         "rail_voltages": rail_voltages,
@@ -760,6 +859,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
 
     # Post-process: enrich capacitor entries with package size and estimated ESR
     _enrich_capacitor_data(results, ctx)
+    _apply_capacitor_derating(results)
 
     return results
 
