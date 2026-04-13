@@ -9,13 +9,16 @@ signal_detectors.py which handles core passive/active circuit analysis
 Each detector takes an AnalysisContext (ctx) and returns its detection results.
 """
 
+from __future__ import annotations
+
 import re
 from collections import Counter
 
 from kicad_types import AnalysisContext
 from kicad_utils import lookup_regulator_vref, parse_value, parse_voltage_from_net_name
 from signal_detectors import _get_net_components
-from detector_helpers import get_components_by_type, index_two_pin_components, match_ic_keywords
+from detector_helpers import get_components_by_type, index_two_pin_components, match_ic_keywords, get_unique_ics
+from finding_schema import make_finding
 
 
 def detect_buzzer_speakers(ctx: AnalysisContext, transistor_circuits: list[dict]) -> list[dict]:
@@ -4995,3 +4998,440 @@ def suggest_certifications(ctx: AnalysisContext, signal_analysis: dict) -> list[
         })
 
     return suggestions
+
+
+def _get_pin_net_domain(ctx: AnalysisContext, ref: str, pin_names: tuple) -> str | None:
+    """Find net connected to a pin matching names (domain_detectors version)."""
+    pins = ctx.ref_pins.get(ref, {})
+    for pnum, (net, _) in pins.items():
+        comp = ctx.comp_lookup.get(ref)
+        if not comp:
+            continue
+        for p in comp.get('pins', []):
+            if p.get('number') == pnum and p.get('name', '').upper() in pin_names:
+                return net
+    for pnum, (net, _) in pins.items():
+        if not net or net not in ctx.nets:
+            continue
+        for np in ctx.nets[net]['pins']:
+            if np['component'] == ref and np.get('pin_name', '').upper() in pin_names:
+                return net
+    return None
+
+
+# ---------------------------------------------------------------------------
+# WL-001: Wireless module validation
+# ---------------------------------------------------------------------------
+
+_WIFI_BLE_KEYWORDS = (
+    'esp32', 'esp8266', 'esp32s', 'esp32c', 'esp32h',
+    'nrf52', 'nrf53', 'nrf91', 'nrf7002',
+    'cc2640', 'cc2652', 'cc1352', 'cc3220',
+    'cyw43', 'cyw20',
+    'da1469', 'da1458',
+    'stm32wb', 'stm32wl', 'stm32wba',
+    'rp2040w', 'pico_w',
+    'atecc', 'atwinc', 'atwilc',
+    'bg22', 'bg24', 'mg24',
+)
+
+_LORA_KEYWORDS = (
+    'sx1276', 'sx1278', 'sx1262', 'sx1261', 'sx1280',
+    'rfm95', 'rfm96', 'rfm98', 'rfm69',
+    'ra01', 'ra02',
+    'llcc68',
+    'lr1110', 'lr1120', 'lr1121',
+    'stm32wl',
+)
+
+_CELLULAR_KEYWORDS = (
+    'sim7000', 'sim7600', 'sim7080', 'sim800', 'sim900',
+    'bg96', 'bg77', 'bc66', 'bc95',
+    'sara', 'lara', 'toby',
+    'mc60', 'mc20',
+    'a7670', 'a7608',
+)
+
+_GPS_KEYWORDS = (
+    'neo6m', 'neo7m', 'neo8m', 'neom8', 'neom9', 'zed',
+    'l76', 'l86', 'l96',
+    'sam_m8q', 'sam_m10',
+    'gps', 'gnss',
+    'pa1010', 'pa1616',
+)
+
+_ANTENNA_PIN_NAMES = ('ANT', 'ANTENNA', 'RF', 'RF_OUT', 'RF_IN', 'RFIO', 'ANT_SW')
+_SIM_PIN_NAMES = ('SIM_VCC', 'SIM_RST', 'SIM_IO', 'SIM_CLK', 'SIM_DET')
+
+
+def detect_wireless_modules(ctx: AnalysisContext) -> list[dict]:
+    """WL-001: Detect WiFi/BLE, LoRa, cellular, and GPS modules."""
+    results: list[dict] = []
+    for ic in get_unique_ics(ctx):
+        ref = ic['reference']
+        val = ic.get('value', '')
+        wl_type = None
+        if match_ic_keywords(ic, _WIFI_BLE_KEYWORDS):
+            wl_type = 'wifi_ble'
+        elif match_ic_keywords(ic, _LORA_KEYWORDS):
+            wl_type = 'lora'
+        elif match_ic_keywords(ic, _CELLULAR_KEYWORDS):
+            wl_type = 'cellular'
+        elif match_ic_keywords(ic, _GPS_KEYWORDS):
+            wl_type = 'gps'
+        if not wl_type:
+            continue
+
+        ant_net = _get_pin_net_domain(ctx, ref, _ANTENNA_PIN_NAMES)
+        entry = {
+            'detector': 'detect_wireless_modules', 'rule_id': 'WL-001',
+            'category': 'wireless', 'reference': ref, 'value': val,
+            'wireless_type': wl_type, 'antenna_net': ant_net,
+            'severity': 'info', 'confidence': 'deterministic',
+            'evidence_source': 'topology',
+            'summary': f'{wl_type.replace("_", "/")} module {ref} ({val})',
+            'description': f'Detected {wl_type} wireless module {ref} ({val}).',
+            'components': [ref], 'nets': [ant_net] if ant_net else [],
+            'pins': [], 'recommendation': '',
+            'report_context': {'section': 'Wireless', 'impact': '', 'standard_ref': ''},
+        }
+        if wl_type == 'cellular':
+            sim_nets = {}
+            for sn in _SIM_PIN_NAMES:
+                net = _get_pin_net_domain(ctx, ref, (sn,))
+                if net:
+                    sim_nets[sn] = net
+            entry['sim_pins'] = sim_nets
+            if not sim_nets:
+                entry['severity'] = 'warning'
+                entry['recommendation'] = 'Verify SIM card connections for cellular module.'
+        results.append(entry)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# TF-001: Transformer-coupled SMPS feedback
+# ---------------------------------------------------------------------------
+
+_FLYBACK_CONTROLLER_KEYWORDS = (
+    'uc3842', 'uc3843', 'uc3844', 'uc3845', 'uc284', 'uc384',
+    'lt3748', 'lt3573', 'lt3798',
+    'top2', 'top3', 'tnr', 'tny2', 'tny3',
+    'viper', 'viper22', 'viper53',
+    'lnk3', 'lnk6',
+    'ob2263', 'ob2269',
+    'mp15', 'mp17',
+    'ap393', 'fsd2',
+)
+
+_OPTOCOUPLER_KEYWORDS = (
+    'pc817', 'el817', 'tlp', 'sfh6', 'hcpl', 'acpl', 'cny17',
+    'ps2501', 'ps2561', '4n25', '4n35', 'moc3',
+    'fod8', 'fod3', 'vo618', 'vo3120',
+)
+
+_TL431_KEYWORDS = ('tl431', 'tlv431', 'lm431', 'ka431', 'az431', 'lmv431')
+
+
+def detect_transformer_feedback(ctx: AnalysisContext) -> list[dict]:
+    """TF-001: Detect isolated SMPS feedback loops (optocoupler + TL431)."""
+    results: list[dict] = []
+    controllers = [ic for ic in get_unique_ics(ctx) if match_ic_keywords(ic, _FLYBACK_CONTROLLER_KEYWORDS)]
+    optocouplers = [c for c in ctx.components
+                    if match_ic_keywords(c, _OPTOCOUPLER_KEYWORDS)
+                    or 'optocoupler' in (c.get('lib_id', '') + c.get('value', '')).lower()]
+    tl431s = [c for c in ctx.components
+              if match_ic_keywords(c, _TL431_KEYWORDS) or 'tl431' in c.get('value', '').lower()]
+
+    if not controllers:
+        return results
+
+    for ctrl in controllers:
+        ref = ctrl['reference']
+        entry = {
+            'detector': 'detect_transformer_feedback', 'rule_id': 'TF-001',
+            'category': 'isolated_power', 'reference': ref, 'value': ctrl.get('value', ''),
+            'controller_type': 'flyback', 'optocoupler': None, 'shunt_reference': None,
+            'severity': 'info', 'confidence': 'heuristic', 'evidence_source': 'topology',
+            'summary': f'Isolated SMPS controller {ref} ({ctrl.get("value", "")})',
+            'description': f'Detected flyback/isolated SMPS controller {ref}.',
+            'components': [ref], 'nets': [], 'pins': [], 'recommendation': '',
+            'report_context': {'section': 'Isolated Power', 'impact': '', 'standard_ref': ''},
+        }
+        fb_net = _get_pin_net_domain(ctx, ref, ('FB', 'COMP', 'VFB', 'OPTO'))
+        if fb_net:
+            for opto in optocouplers:
+                opto_ref = opto['reference']
+                for pnum, (net, _) in ctx.ref_pins.get(opto_ref, {}).items():
+                    if net == fb_net:
+                        entry['optocoupler'] = {'ref': opto_ref, 'value': opto.get('value', '')}
+                        entry['components'].append(opto_ref)
+                        break
+        if entry['optocoupler']:
+            opto_ref = entry['optocoupler']['ref']
+            for pnum, (net, _) in ctx.ref_pins.get(opto_ref, {}).items():
+                if not net:
+                    continue
+                for tl in tl431s:
+                    tl_ref = tl['reference']
+                    for tp, (tnet, _) in ctx.ref_pins.get(tl_ref, {}).items():
+                        if tnet == net:
+                            entry['shunt_reference'] = {'ref': tl_ref, 'value': tl.get('value', '')}
+                            entry['components'].append(tl_ref)
+                            break
+            entry['confidence'] = 'deterministic'
+            entry['description'] = (
+                f'Isolated SMPS {ref} with optocoupler feedback via {entry["optocoupler"]["ref"]}'
+                f'{" and " + entry["shunt_reference"]["ref"] + " shunt reference" if entry["shunt_reference"] else ""}.'
+            )
+        results.append(entry)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# IA-001: I2C address conflict detection
+# ---------------------------------------------------------------------------
+
+_I2C_DEVICE_ADDRESSES = {
+    'ina219': {'base': 0x40, 'pins': ('A0', 'A1')},
+    'ina226': {'base': 0x40, 'pins': ('A0', 'A1')},
+    'ina228': {'base': 0x40, 'pins': ('A0', 'A1')},
+    'pca9685': {'base': 0x40, 'pins': ('A0', 'A1', 'A2', 'A3', 'A4', 'A5')},
+    'ads1115': {'base': 0x48, 'pins': ('ADDR',)},
+    'ads1015': {'base': 0x48, 'pins': ('ADDR',)},
+    'bme280': {'base': 0x76, 'pins': ('SDO',)},
+    'bmp280': {'base': 0x76, 'pins': ('SDO',)},
+    'sht3': {'base': 0x44, 'pins': ('ADDR',)},
+    'mcp4725': {'base': 0x60, 'pins': ('A0', 'A1', 'A2')},
+    'at24c': {'base': 0x50, 'pins': ('A0', 'A1', 'A2')},
+    'pcf8574': {'base': 0x20, 'pins': ('A0', 'A1', 'A2')},
+    'pcf8575': {'base': 0x20, 'pins': ('A0', 'A1', 'A2')},
+    'mcp23017': {'base': 0x20, 'pins': ('A0', 'A1', 'A2')},
+    'ds1307': {'base': 0x68, 'pins': ()},
+    'ds3231': {'base': 0x68, 'pins': ()},
+}
+
+
+def _resolve_addr_pin(ctx: AnalysisContext, ref: str, pin_name: str) -> str:
+    net = _get_pin_net_domain(ctx, ref, (pin_name,))
+    if not net:
+        return 'unknown'
+    if ctx.is_ground(net):
+        return 'gnd'
+    if ctx.is_power_net(net):
+        return 'vcc'
+    net_lower = net.lower()
+    if 'sda' in net_lower:
+        return 'sda'
+    if 'scl' in net_lower:
+        return 'scl'
+    return 'unknown'
+
+
+def detect_i2c_address_conflicts(ctx: AnalysisContext) -> list[dict]:
+    """IA-001: Detect I2C devices with potentially conflicting addresses."""
+    results: list[dict] = []
+    buses: dict = {}
+
+    for ic in get_unique_ics(ctx):
+        ref = ic['reference']
+        combined = (ic.get('value', '') + ' ' + ic.get('lib_id', '')).lower()
+        device_type = None
+        for keyword in _I2C_DEVICE_ADDRESSES:
+            if keyword in combined:
+                device_type = keyword
+                break
+        if not device_type:
+            continue
+        sda_net = _get_pin_net_domain(ctx, ref, ('SDA', 'I2C_SDA'))
+        scl_net = _get_pin_net_domain(ctx, ref, ('SCL', 'I2C_SCL'))
+        if not sda_net or not scl_net:
+            continue
+        dev_info = _I2C_DEVICE_ADDRESSES[device_type]
+        addr_config = {pin: _resolve_addr_pin(ctx, ref, pin) for pin in dev_info['pins']}
+        buses.setdefault((sda_net, scl_net), []).append({
+            'ref': ref, 'value': ic.get('value', ''), 'device_type': device_type,
+            'addr_config': addr_config, 'base_addr': dev_info['base'],
+        })
+
+    for (sda_net, scl_net), devices in buses.items():
+        addr_groups: dict = {}
+        for dev in devices:
+            config_str = f"{dev['device_type']}:{','.join(f'{k}={v}' for k, v in sorted(dev['addr_config'].items()))}"
+            addr_groups.setdefault(config_str, []).append(dev)
+        for config_str, group in addr_groups.items():
+            if len(group) < 2:
+                continue
+            refs = [d['ref'] for d in group]
+            dev_type = group[0]['device_type']
+            base = group[0]['base_addr']
+            results.append(make_finding(
+                detector='detect_i2c_address_conflicts', rule_id='IA-001', category='protocol_integrity',
+                summary=f'I2C address conflict: {len(refs)}x {dev_type} at same address on {sda_net}/{scl_net}',
+                description=f'{len(refs)} instances of {dev_type} ({", ".join(refs)}) have identical address configs ({config_str.split(":", 1)[1]}).',
+                severity='error', confidence='deterministic', evidence_source='topology',
+                components=refs, nets=[sda_net, scl_net],
+                recommendation='Reconfigure address pins (A0/A1/A2) to assign unique addresses.',
+                fix_params={'type': 'swap_connection', 'components': refs[1:], 'change': 'Rewire address pins', 'basis': f'{dev_type} base 0x{base:02X}'},
+                impact='Bus corruption — multiple devices respond to same address',
+            ))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# SC-001: Supercapacitor / energy harvesting
+# ---------------------------------------------------------------------------
+
+_HARVESTER_KEYWORDS = (
+    'bq25570', 'bq25504', 'bq25505',
+    'ltc3108', 'ltc3109', 'ltc3588',
+    'spv1040', 'spv1050',
+    'adp5090', 'adp5091', 'adp5092',
+    'max20361',
+    'ab1815',
+    'mb39c', 'mb39d',
+    'e_peas', 'aem1094', 'aem3094',
+)
+
+_SUPERCAP_KEYWORDS = ('supercap', 'edlc', 'ultracap', 'gold_cap', 'super_cap')
+
+
+def detect_energy_harvesting(ctx: AnalysisContext) -> list[dict]:
+    """SC-001: Detect energy harvesting ICs and supercapacitor circuits."""
+    results: list[dict] = []
+    for ic in get_unique_ics(ctx):
+        if not match_ic_keywords(ic, _HARVESTER_KEYWORDS):
+            continue
+        ref = ic['reference']
+        results.append({
+            'detector': 'detect_energy_harvesting', 'rule_id': 'SC-001',
+            'category': 'energy_harvesting', 'reference': ref, 'value': ic.get('value', ''),
+            'harvester_type': 'energy_harvesting_ic',
+            'severity': 'info', 'confidence': 'deterministic', 'evidence_source': 'topology',
+            'summary': f'Energy harvesting IC {ref} ({ic.get("value", "")})',
+            'description': f'Detected energy harvesting PMIC {ref} ({ic.get("value", "")}).',
+            'components': [ref], 'nets': [], 'pins': [], 'recommendation': '',
+            'report_context': {'section': 'Energy Harvesting', 'impact': '', 'standard_ref': ''},
+        })
+    for comp in ctx.components:
+        if comp['type'] != 'capacitor':
+            continue
+        val = comp.get('value', '').lower()
+        lib = comp.get('lib_id', '').lower()
+        combined = val + ' ' + lib
+        farads = ctx.parsed_values.get(comp['reference'])
+        is_supercap = any(k in combined for k in _SUPERCAP_KEYWORDS)
+        if not is_supercap and farads is not None and farads >= 0.1:
+            is_supercap = True
+        if is_supercap:
+            results.append({
+                'detector': 'detect_energy_harvesting', 'rule_id': 'SC-001',
+                'category': 'energy_harvesting', 'reference': comp['reference'],
+                'value': comp.get('value', ''), 'harvester_type': 'supercapacitor',
+                'capacitance_F': farads,
+                'severity': 'info', 'confidence': 'deterministic', 'evidence_source': 'topology',
+                'summary': f'Supercapacitor {comp["reference"]} ({comp.get("value", "")})',
+                'description': f'Detected supercapacitor {comp["reference"]}.',
+                'components': [comp['reference']], 'nets': [], 'pins': [], 'recommendation': '',
+                'report_context': {'section': 'Energy Harvesting', 'impact': '', 'standard_ref': ''},
+            })
+    return results
+
+
+# ---------------------------------------------------------------------------
+# PL-001: PWM LED dimming topology
+# ---------------------------------------------------------------------------
+
+def detect_pwm_led_dimming(ctx: AnalysisContext, transistor_circuits: list[dict]) -> list[dict]:
+    """PL-001: Detect PWM-driven LED strings with MOSFET + current sense."""
+    results: list[dict] = []
+    for tc in transistor_circuits:
+        if tc.get('circuit_type') not in ('low_side_switch', 'high_side_switch'):
+            continue
+        ref = tc.get('transistor_ref', tc.get('reference', ''))
+        load_net = tc.get('load_net', '')
+        leds_on_load = []
+        if load_net and load_net in ctx.nets:
+            for p in ctx.nets[load_net]['pins']:
+                comp = ctx.comp_lookup.get(p['component'])
+                if comp and comp['type'] == 'led':
+                    leds_on_load.append(p['component'])
+        if not leds_on_load:
+            continue
+        sense_r = tc.get('sense_resistor')
+        results.append({
+            'detector': 'detect_pwm_led_dimming', 'rule_id': 'PL-001',
+            'category': 'led_control', 'reference': ref,
+            'switch_type': tc.get('circuit_type', ''), 'leds': leds_on_load,
+            'sense_resistor': sense_r,
+            'severity': 'info', 'confidence': 'heuristic', 'evidence_source': 'topology',
+            'summary': f'PWM LED dimming via {ref} driving {len(leds_on_load)} LED(s)',
+            'description': f'MOSFET {ref} switches LED(s) {", ".join(leds_on_load)} {"with" if sense_r else "without"} current sensing.',
+            'components': [ref] + leds_on_load, 'nets': [load_net] if load_net else [],
+            'pins': [],
+            'recommendation': '' if sense_r else 'Consider adding a current sense resistor for LED current regulation.',
+            'report_context': {'section': 'LED Control', 'impact': '', 'standard_ref': ''},
+        })
+    return results
+
+
+# ---------------------------------------------------------------------------
+# AH-001: Audio headphone jack switch detection
+# ---------------------------------------------------------------------------
+
+_AUDIO_CODEC_KEYWORDS = (
+    'wm8', 'wm8960', 'wm8978', 'wm8731', 'wm8994',
+    'sgtl5000', 'tlv320', 'cs42', 'cs43', 'cs47',
+    'es8388', 'es8311', 'es7210',
+    'max9', 'max98',
+    'ssm26', 'adau17',
+    'ak4', 'ak5',
+    'pcm51', 'pcm17', 'pcm29', 'pcm31',
+    'tas2', 'tas5', 'tas6',
+    'nau88',
+)
+
+_HP_JACK_KEYWORDS = ('headphone', 'hp_jack', 'audio_jack', 'phone_jack', 'trrs', 'trs')
+_HP_DET_PIN_NAMES = ('HP_DET', 'HPDET', 'JACKDET', 'JACK_DET', 'DETECT', 'DET', 'SENSE', 'SW')
+
+
+def detect_headphone_jack(ctx: AnalysisContext) -> list[dict]:
+    """AH-001: Detect headphone jack insertion detection and codec wiring."""
+    results: list[dict] = []
+    codecs = [ic for ic in get_unique_ics(ctx) if match_ic_keywords(ic, _AUDIO_CODEC_KEYWORDS)]
+    hp_jacks = [c for c in ctx.components if c['type'] == 'connector'
+                and any(k in (c.get('value', '') + ' ' + c.get('lib_id', '')).lower() for k in _HP_JACK_KEYWORDS)]
+    if not hp_jacks:
+        return results
+
+    for jack in hp_jacks:
+        ref = jack['reference']
+        det_net = _get_pin_net_domain(ctx, ref, _HP_DET_PIN_NAMES)
+        entry = {
+            'detector': 'detect_headphone_jack', 'rule_id': 'AH-001',
+            'category': 'audio', 'reference': ref, 'value': jack.get('value', ''),
+            'detection_pin_net': det_net, 'associated_codec': None,
+            'severity': 'info', 'confidence': 'heuristic', 'evidence_source': 'topology',
+            'summary': f'Headphone jack {ref} ({jack.get("value", "")})',
+            'description': f'Detected headphone jack {ref}.',
+            'components': [ref], 'nets': [], 'pins': [], 'recommendation': '',
+            'report_context': {'section': 'Audio', 'impact': '', 'standard_ref': ''},
+        }
+        jack_pins = ctx.ref_pins.get(ref, {})
+        for codec in codecs:
+            codec_ref = codec['reference']
+            codec_nets = set(net for net, _ in ctx.ref_pins.get(codec_ref, {}).values() if net)
+            jack_nets = set(net for net, _ in jack_pins.values() if net)
+            shared = {n for n in (codec_nets & jack_nets) if n and not ctx.is_power_net(n) and not ctx.is_ground(n)}
+            if shared:
+                entry['associated_codec'] = {'ref': codec_ref, 'value': codec.get('value', '')}
+                entry['components'].append(codec_ref)
+                entry['nets'] = list(shared)[:5]
+                break
+        if not det_net and entry['associated_codec']:
+            entry['recommendation'] = (
+                f'Headphone jack {ref} has no insertion detection pin connected. '
+                f'Consider connecting switch pin to codec {entry["associated_codec"]["ref"]} HP_DET input.'
+            )
+        results.append(entry)
+    return results
