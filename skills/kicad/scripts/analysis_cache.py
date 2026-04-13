@@ -253,13 +253,20 @@ def create_run(analysis_dir: str,
     run_dir = os.path.join(analysis_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
 
-    # Copy forward outputs from previous current run
+    # Copy forward outputs from previous current run — but only if source
+    # files haven't changed (KH-281: prevent stale data propagation)
     prev_run_id = manifest.get('current')
     prev_outputs = {}
     if prev_run_id and prev_run_id in manifest.get('runs', {}):
         prev_run_dir = os.path.join(analysis_dir, prev_run_id)
-        prev_outputs = manifest['runs'][prev_run_id].get('outputs', {})
+        prev_run_info = manifest['runs'][prev_run_id]
+        prev_outputs = prev_run_info.get('outputs', {})
+        prev_hashes = prev_run_info.get('source_hashes', {})
+        cur_hashes = source_hashes or {}
         for analysis_type, filename in prev_outputs.items():
+            # Skip copy-forward if source files changed
+            if prev_hashes and cur_hashes and prev_hashes != cur_hashes:
+                continue
             prev_file = os.path.join(prev_run_dir, filename)
             new_file = os.path.join(run_dir, filename)
             if os.path.isfile(prev_file) and not os.path.isfile(new_file):
