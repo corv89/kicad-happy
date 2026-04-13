@@ -820,6 +820,248 @@ def _solve_fix(det: dict, det_type: str, target_field: str,
     return suggestions
 
 
+# ---------------------------------------------------------------------------
+# Auto-fix scanner — identify out-of-spec detections with known targets
+# ---------------------------------------------------------------------------
+
+def _scan_fixable(signal_analysis: dict) -> list:
+    """Scan signal analysis for detections that are out-of-spec with known targets.
+
+    Returns list of dicts, each describing a fixable issue:
+      {detection_type, index, det, target_field, target_value,
+       issue, confidence, category}
+
+    Categories:
+      'value_fix' — component value change via inverse solver
+      'derating'  — package or voltage rating recommendation
+    """
+    from kicad_utils import parse_voltage_from_net_name
+
+    issues = []
+
+    # --- 1. Feedback divider Vout mismatch ---
+    # Check if regulator estimated_vout differs from voltage in rail name
+    for i, reg in enumerate(signal_analysis.get("power_regulators", [])):
+        fb = reg.get("feedback_divider")
+        if not fb:
+            continue
+        vout = reg.get("estimated_vout")
+        vref = reg.get("assumed_vref")
+        if not vout or not vref or vref <= 0:
+            continue
+        rail = reg.get("output_rail", "")
+        rail_v = parse_voltage_from_net_name(rail)
+        if rail_v is None or rail_v <= 0:
+            continue
+        # Compare estimated_vout with voltage parsed from rail name
+        error_pct = abs(vout - rail_v) / rail_v * 100
+        if error_pct < 2.0:
+            continue  # Close enough — not fixable
+        # Target ratio: Vref / desired_Vout
+        target_ratio = vref / rail_v
+        if target_ratio <= 0 or target_ratio >= 1:
+            continue
+        # Find this divider in voltage_dividers or feedback_networks
+        fb_r_top_ref = fb.get("r_top", {}).get("ref", "")
+        fb_r_bot_ref = fb.get("r_bottom", {}).get("ref", "")
+        det_type = None
+        det_idx = None
+        det_obj = None
+        for dtype in ("feedback_networks", "voltage_dividers"):
+            for j, vd in enumerate(signal_analysis.get(dtype, [])):
+                if (vd.get("r_top", {}).get("ref") == fb_r_top_ref and
+                        vd.get("r_bottom", {}).get("ref") == fb_r_bot_ref):
+                    det_type, det_idx, det_obj = dtype, j, vd
+                    break
+            if det_type:
+                break
+        if not det_type:
+            continue
+        ref_reg = reg.get("ref", reg.get("reference", ""))
+        confidence = "high" if reg.get("vref_source") == "lookup" else "medium"
+        issues.append({
+            "detection_type": det_type,
+            "index": det_idx,
+            "det": det_obj,
+            "target_field": "ratio",
+            "target_value": target_ratio,
+            "issue": (
+                "{ref} feedback divider: Vout={vout:.3g}V but rail "
+                "'{rail}' implies {rail_v}V (error {err:.1f}%)"
+            ).format(ref=ref_reg, vout=vout, rail=rail,
+                     rail_v=rail_v, err=error_pct),
+            "confidence": confidence,
+            "category": "value_fix",
+        })
+
+    # --- 2. Crystal load capacitance mismatch ---
+    for i, xtal in enumerate(signal_analysis.get("crystal_circuits", [])):
+        status = xtal.get("load_cap_status")
+        if status in ("ok", None):
+            continue
+        source = xtal.get("target_load_source")
+        if source == "frequency_default":
+            continue  # Low confidence target — skip auto-fix
+        target = xtal.get("target_load_pF")
+        actual = xtal.get("effective_load_pF")
+        if not target or not actual:
+            continue
+        error_pct = abs(actual - target) / target * 100
+        if error_pct < 10:
+            continue
+        xref = xtal.get("reference", "Y?")
+        issues.append({
+            "detection_type": "crystal_circuits",
+            "index": i,
+            "det": xtal,
+            "target_field": "effective_load_pF",
+            "target_value": target,
+            "issue": (
+                "{ref} load capacitance: {actual:.1f}pF vs {target:.1f}pF "
+                "target ({err:.0f}% error, status={status})"
+            ).format(ref=xref, actual=actual, target=target,
+                     err=error_pct, status=status),
+            "confidence": "high",
+            "category": "value_fix",
+        })
+
+    # --- 3. Output capacitor DC bias derating ---
+    for i, reg in enumerate(signal_analysis.get("power_regulators", [])):
+        ref_reg = reg.get("ref", reg.get("reference", ""))
+        vout = reg.get("vout_estimated") or reg.get("estimated_vout")
+        rail = reg.get("output_rail", "")
+        for cap in reg.get("output_capacitors", []):
+            df = cap.get("derating_factor")
+            if df is None or df >= 0.5:
+                continue
+            cap_ref = cap.get("ref", "?")
+            package = cap.get("package", "?")
+            dielectric = cap.get("dielectric", "?")
+            nominal_uf = cap.get("farads", 0) * 1e6
+            effective_uf = cap.get("effective_farads", 0) * 1e6
+            issues.append({
+                "detection_type": "power_regulators",
+                "index": i,
+                "det": None,  # Not a value fix — recommendation only
+                "target_field": None,
+                "target_value": None,
+                "issue": (
+                    "{cap_ref} ({nominal:.1f}uF {dielectric} {pkg}) on "
+                    "{rail_or_reg}: {df:.0f}% effective capacitance "
+                    "({eff:.1f}uF of {nom:.1f}uF)"
+                ).format(cap_ref=cap_ref, nominal=nominal_uf,
+                         dielectric=dielectric, pkg=package,
+                         rail_or_reg=rail or ref_reg,
+                         df=df * 100, eff=effective_uf, nom=nominal_uf),
+                "confidence": "medium",
+                "category": "derating",
+                "cap_ref": cap_ref,
+                "cap_package": package,
+                "cap_dielectric": dielectric,
+                "derating_factor": df,
+            })
+
+    return issues
+
+
+def _suggest_all_fixes(issues: list, pcb_analysis: dict = None) -> dict:
+    """Compute fix suggestions for all scanned issues.
+
+    For 'value_fix' issues: runs inverse solver + E-series snapping.
+    For 'derating' issues: generates package/voltage recommendations.
+
+    Returns dict with 'fix_suggestions' and 'derating_recommendations' lists.
+    """
+    fix_suggestions = []
+    derating_recs = []
+
+    for issue in issues:
+        if issue["category"] == "value_fix":
+            det = issue["det"]
+            det_type = issue["detection_type"]
+            target_field = issue["target_field"]
+            target_value = issue["target_value"]
+
+            suggestions = _solve_fix(det, det_type, target_field, target_value)
+            if not suggestions:
+                continue
+
+            # Compute before/after for the best suggestion (first one)
+            best = suggestions[0]
+            best_e24 = best.get("e_series", {}).get("E24", {}).get("value")
+            if best_e24 and best_e24 > 0:
+                # Simulate fix with E24 value
+                changes = {best["ref"]: (best_e24, _format_value(best_e24, best["field"]))}
+                matched = {best["ref"]: _find_refs_in_det(det).get(best["ref"], [])}
+                if matched[best["ref"]]:
+                    patched = _apply_changes(det, changes, matched, det_type=det_type)
+                    delta = _compare(det, patched, det_type)
+                else:
+                    delta = []
+            else:
+                delta = []
+
+            entry = {
+                "detection_type": det_type,
+                "detection_index": issue["index"],
+                "issue": issue["issue"],
+                "confidence": issue["confidence"],
+                "target_field": target_field,
+                "target_value": target_value,
+                "suggestions": suggestions,
+                "delta_with_e24": delta,
+            }
+            if pcb_analysis:
+                fp_warnings = _check_footprint_fit(suggestions, pcb_analysis)
+                if fp_warnings:
+                    entry["footprint_warnings"] = fp_warnings
+            fix_suggestions.append(entry)
+
+        elif issue["category"] == "derating":
+            cap_ref = issue.get("cap_ref", "?")
+            package = issue.get("cap_package", "?")
+            dielectric = issue.get("cap_dielectric", "?")
+            df = issue.get("derating_factor", 0)
+
+            recs = []
+            # Suggest larger package
+            pkg_upgrade = {
+                "0402": "0603", "0603": "0805", "0805": "1206",
+            }
+            next_pkg = pkg_upgrade.get(package)
+            if next_pkg:
+                recs.append(
+                    "Upgrade {ref} from {pkg} to {next_pkg} — larger "
+                    "package has less DC bias derating".format(
+                        ref=cap_ref, pkg=package, next_pkg=next_pkg))
+            # Suggest higher voltage rating
+            recs.append(
+                "Use higher voltage rating for {ref} — reduces voltage "
+                "ratio and derating".format(ref=cap_ref))
+            # Suggest C0G if small value
+            if dielectric != "C0G":
+                recs.append(
+                    "Consider C0G/NP0 dielectric for {ref} — no DC bias "
+                    "derating (available up to ~100nF)".format(ref=cap_ref))
+
+            derating_recs.append({
+                "issue": issue["issue"],
+                "confidence": issue["confidence"],
+                "cap_ref": cap_ref,
+                "recommendations": recs,
+            })
+
+    return {
+        "fix_suggestions": fix_suggestions,
+        "derating_recommendations": derating_recs,
+        "summary": {
+            "fixable_issues": len(fix_suggestions),
+            "derating_issues": len(derating_recs),
+            "total_scanned": len(issues),
+        },
+    }
+
+
 def _format_fix(fix_result: dict) -> str:
     """Format fix suggestion results as text."""
     lines = []
@@ -848,6 +1090,75 @@ def _format_fix(fix_result: dict) -> str:
     for fix in fix_result.get("fix_suggestions", []):
         for w in fix.get("footprint_warnings", []):
             lines.append(f"  {w}")
+    return "\n".join(lines)
+
+
+def _format_suggestions(result: dict) -> str:
+    """Format batch fix suggestion results as human-readable text."""
+    lines = []
+    fixes = result.get("fix_suggestions", [])
+    derecs = result.get("derating_recommendations", [])
+    summary = result.get("summary", {})
+
+    lines.append("=== Fix Suggestions ===")
+    lines.append("{total} issues found: {fix} fixable, {derate} derating".format(
+        total=summary.get("total_scanned", 0),
+        fix=summary.get("fixable_issues", 0),
+        derate=summary.get("derating_issues", 0)))
+    lines.append("")
+
+    for i, fix in enumerate(fixes, 1):
+        lines.append("--- Fix {i}: {issue} ---".format(i=i, issue=fix["issue"]))
+        lines.append("  Confidence: {conf}".format(conf=fix["confidence"]))
+        lines.append("  Target: {field} = {val}".format(
+            field=fix["target_field"],
+            val=_format_value(fix["target_value"], fix["target_field"])))
+        lines.append("")
+        for s in fix.get("suggestions", []):
+            ref = s["ref"]
+            current = s["current"]
+            ideal = s["ideal"]
+            vkey = s["field"]
+            anchor = s.get("anchor_ref")
+            anchor_note = " (keeping {a})".format(a=anchor) if anchor else ""
+            lines.append("  {ref}{note}:".format(ref=ref, note=anchor_note))
+            lines.append("    Current: {cur}".format(
+                cur=_format_value(current, vkey)))
+            lines.append("    Ideal:   {ideal}".format(
+                ideal=_format_value(ideal, vkey)))
+            for series in ("E96", "E24", "E12"):
+                e = s.get("e_series", {}).get(series, {})
+                ev = e.get("value", 0)
+                err = e.get("error_pct", 0)
+                lines.append("    {ser}:     {val:>10}  ({err:+.1f}%)".format(
+                    ser=series, val=_format_value(ev, vkey), err=err))
+            lines.append("")
+        delta = fix.get("delta_with_e24", [])
+        if delta:
+            lines.append("  Impact (with E24 value):")
+            for d in delta:
+                lines.append("    {field}: {before} -> {after} ({pct:+.1f}%)".format(
+                    field=d["field"],
+                    before=_format_value(d["before"], d["field"]),
+                    after=_format_value(d["after"], d["field"]),
+                    pct=d.get("delta_pct", 0) or 0))
+            lines.append("")
+        for w in fix.get("footprint_warnings", []):
+            lines.append("  Warning: {w}".format(w=w))
+
+    if derecs:
+        lines.append("")
+        lines.append("=== Derating Recommendations ===")
+        for i, rec in enumerate(derecs, 1):
+            lines.append("")
+            lines.append("--- Derating {i}: {issue} ---".format(
+                i=i, issue=rec["issue"]))
+            for r in rec.get("recommendations", []):
+                lines.append("  * {r}".format(r=r))
+
+    if not fixes and not derecs:
+        lines.append("No fixable issues found.")
+
     return "\n".join(lines)
 
 
@@ -948,10 +1259,12 @@ def main():
                         help="Detection to fix (e.g., voltage_dividers[0])")
     parser.add_argument("--target", type=float,
                         help="Target value for --fix (e.g., 3.3 for Vout, 1000 for Hz)")
+    parser.add_argument("--suggest-fixes", action="store_true",
+                        help="Scan analysis for fixable issues and suggest component changes")
     args = parser.parse_args()
 
-    if not args.changes and not args.fix:
-        parser.error("at least one REF=VALUE change or --fix is required")
+    if not args.changes and not args.fix and not args.suggest_fixes:
+        parser.error("at least one REF=VALUE change, --fix, or --suggest-fixes is required")
 
     # Load analysis JSON
     try:
@@ -983,6 +1296,17 @@ def main():
                     pcb_analysis = json.load(f)
             except (json.JSONDecodeError, OSError):
                 pass
+
+    # --- Suggest-fixes branch ---
+    if args.suggest_fixes:
+        issues = _scan_fixable(signal)
+        result = _suggest_all_fixes(issues, pcb_analysis)
+        if args.text:
+            print(_format_suggestions(result))
+        else:
+            json.dump(result, sys.stdout, indent=2)
+            print()
+        sys.exit(0)
 
     # --- Fix branch ---
     if args.fix:
