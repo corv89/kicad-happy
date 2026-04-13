@@ -120,8 +120,15 @@ def _pdf_hash(pdf_path):
 # ---------------------------------------------------------------------------
 
 def _sanitize_mpn(mpn):
-    """Convert an MPN to a safe filename component."""
-    return re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip())
+    """Convert an MPN to a safe filename component.
+
+    Appends a short hash to avoid collisions when different MPNs
+    sanitize to the same string (e.g., STM32F-103 vs STM32F/103).
+    """
+    import hashlib
+    clean = re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip())
+    h = hashlib.md5(mpn.strip().encode()).hexdigest()[:6]
+    return f"{clean}_{h}"
 
 
 # ---------------------------------------------------------------------------
