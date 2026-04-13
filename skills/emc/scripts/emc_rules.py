@@ -249,11 +249,15 @@ def _connector_refs(footprints: list) -> list:
 
 def _make_finding(category, severity, rule_id, title, description,
                   recommendation='', components=None, nets=None,
-                  confidence='deterministic', **extra):
-    """Build a standardized EMC finding dict.
+                  confidence='deterministic',
+                  evidence_source=None, fix_params=None,
+                  report_section=None, impact=None, standard_ref=None,
+                  **extra):
+    """Build a standardized EMC finding dict with rich format fields.
 
-    All EMC findings must have these 9 fields. Extra keyword arguments
-    are merged in (e.g., layer, data).
+    All EMC findings flow through this single factory. The rich format
+    fields (detector, summary, pins, evidence_source, report_context)
+    are auto-populated for backward compatibility.
     """
     finding = {
         'category': category,
@@ -265,7 +269,19 @@ def _make_finding(category, severity, rule_id, title, description,
         'components': components if components is not None else [],
         'nets': nets if nets is not None else [],
         'recommendation': recommendation,
+        # Rich format additions
+        'detector': f'emc_{category}',
+        'summary': title,
+        'pins': [],
+        'evidence_source': evidence_source or ('heuristic_rule' if confidence == 'heuristic' else 'topology'),
+        'report_context': {
+            'section': report_section or category.replace('_', ' ').title(),
+            'impact': impact or '',
+            'standard_ref': standard_ref or '',
+        },
     }
+    if fix_params is not None:
+        finding['fix_params'] = fix_params
     if extra:
         finding.update(extra)
     return finding
@@ -512,6 +528,11 @@ def check_missing_decoupling(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
                     f'Place caps on the same side as {ref} with short, wide traces to vias.'
                 ),
                 confidence='heuristic',
+                fix_params={
+                    'type': 'add_component',
+                    'components': [{'type': 'capacitor', 'value': '100n'}],
+                    'basis': 'Standard 100nF decoupling per IC',
+                },
             ))
 
     return findings
@@ -686,6 +707,11 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
                 components=[conn_ref],
                 recommendation=_suggest_filtering(conn_ref, combined),
                 confidence='heuristic',
+                fix_params={
+                    'type': 'add_component',
+                    'components': [{'type': 'ferrite_bead'}],
+                    'basis': 'EMI filter on external I/O',
+                },
             ))
 
     return findings
@@ -2672,6 +2698,11 @@ def check_esd_protection_path(pcb: Dict,
                     f'from connector to TVS should be as short as possible.'
                 ),
                 confidence='heuristic',
+                fix_params={
+                    'type': 'add_protection',
+                    'components': [{'type': 'tvs_diode'}],
+                    'basis': 'ESD protection on external pins',
+                },
             ))
 
         # ES-002: Check ground via count near TVS
