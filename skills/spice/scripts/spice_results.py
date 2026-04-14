@@ -417,7 +417,8 @@ def evaluate_feedback_network(det, sim_results):
     reg_info = {}
     context = det.get("_context", {})
     if fb_ic and context:
-        regulators = context.get("signal_analysis", {}).get("power_regulators", [])
+        regulators = [f for f in context.get("findings", [])
+                      if f.get("detector") == "detect_power_regulators"]
         for reg in regulators:
             if reg.get("ref") == fb_ic:
                 reg_info["vref_source"] = reg.get("vref_source")

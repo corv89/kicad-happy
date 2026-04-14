@@ -1729,12 +1729,12 @@ TEMPLATE_REGISTRY = {
 }
 
 
-# Top-level types (not under signal_analysis)
+# Top-level types (not under findings[])
 TOPLEVEL_REGISTRY = {
     "inrush_analysis": ("rails", generate_inrush),
 }
 
 
 def list_supported_types():
-    """Return list of all keys that can be simulated (signal_analysis + top-level)."""
+    """Return list of all keys that can be simulated (findings + top-level)."""
     return list(TEMPLATE_REGISTRY.keys()) + list(TOPLEVEL_REGISTRY.keys())

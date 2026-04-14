@@ -29,6 +29,19 @@ def _load_json(path):
         return None
 
 
+def _findings_by_detector(analysis):
+    """Build a detector-keyed lookup from the flat findings[] list."""
+    result = {}
+    if not analysis:
+        return result
+    for f in analysis.get('findings', []):
+        det = f.get('detector', '')
+        key = det[len('detect_'):] if det.startswith('detect_') else det
+        if key:
+            result.setdefault(key, []).append(f)
+    return result
+
+
 def _safe_float(val, fmt=".1f"):
     """Format a value as float, handling strings gracefully."""
     if isinstance(val, (int, float)):
@@ -197,7 +210,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
         for c in diff_detail.get("components", {}).get("modified", [])[:5]:
             for ch in c.get("changes", []):
                 rows.append(f"| ~ {c.get('reference', '?')} {ch.get('field', '')} | {ch.get('base', '?')} → {ch.get('head', '?')} |")
-        # Signal analysis changes
+        # Signal analysis changes (diff output may still use signal_analysis key)
         for det_type, det_diff in diff_detail.get("signal_analysis", {}).items():
             label = det_type.replace("_", " ").title()
             for m in det_diff.get("modified", [])[:3]:
@@ -231,7 +244,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
         L.extend(risk_lines)
 
     # === Collect all findings ===
-    sig = sch.get("signal_analysis", {}) if sch else {}
+    sig = _findings_by_detector(sch)
     vd = sch.get("voltage_derating", {}) if sch else {}
     pc = sch.get("protocol_compliance", {}) if sch else {}
 
@@ -657,7 +670,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
     a = L.append
 
     stats = sch.get("statistics", {}) if sch else {}
-    sig = sch.get("signal_analysis", {}) if sch else {}
+    sig = _findings_by_detector(sch)
 
     # === Header ===
     a("# Design Review — Full Report")

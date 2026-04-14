@@ -326,8 +326,8 @@ def build_component_comparison(analysis: dict,
     }
     """
     comparisons: list[dict] = []
-    signal = analysis.get("signal_analysis", {})
-    regulators = signal.get("power_regulators", [])
+    regulators = [f for f in analysis.get("findings", [])
+                  if f.get("detector") == "detect_power_regulators"]
 
     # Build ref -> regulator lookup
     reg_by_ref: dict[str, dict] = {}

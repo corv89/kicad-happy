@@ -51,8 +51,8 @@ def main():
         analysis = json.load(f)
 
     # Merge supplemental analysis data so matplotlib generators can find it.
-    # Keys don't collide: schematic has components/nets/signal_analysis,
-    # thermal has thermal_assessments, EMC has findings, SPICE has simulation_results.
+    # Keys don't collide: schematic has components/nets/findings,
+    # thermal has thermal_assessments, EMC has emc_findings, SPICE has simulation_results.
     for path in (args.emc, args.thermal, args.spice):
         if path:
             with open(path) as f:

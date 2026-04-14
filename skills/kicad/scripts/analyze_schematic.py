@@ -3069,12 +3069,17 @@ def parse_legacy_schematic(path: str) -> dict:
 
     # Flatten signal_analysis: all list values become findings, dict values move to top level
     findings = []
+    top_level_dicts = {}
     for key, value in signal_analysis.items():
         if isinstance(value, list):
+            _det_name = f"detect_{key}"
+            for _item in value:
+                if isinstance(_item, dict) and "detector" not in _item:
+                    _item["detector"] = _det_name
             findings.extend(value)
         elif isinstance(value, dict):
-            # rail_voltages, net_classifications, etc.
-            pass  # legacy path doesn't promote dicts to top level
+            # rail_voltages, net_classifications, etc. — promote to top level
+            top_level_dicts[key] = value
 
     sev_counts = {"error": 0, "warning": 0, "info": 0}
     for f in findings:
@@ -3086,7 +3091,7 @@ def parse_legacy_schematic(path: str) -> dict:
         else:
             sev_counts["info"] += 1
 
-    return {
+    result = {
         "analyzer_type": "schematic",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "file": str(path),
@@ -3106,6 +3111,9 @@ def parse_legacy_schematic(path: str) -> dict:
         "power_symbols": power_symbols,
         "annotation_issues": annotation_issues,
     }
+    # Promote dict values from signal_analysis to top level (rail_voltages, etc.)
+    result.update(top_level_dicts)
+    return result
 
 
 def parse_single_sheet(path: str, instance_uuid: str = "",
@@ -8354,6 +8362,10 @@ def analyze_schematic(path: str, project_root: str | None = None,
     findings = []
     for _sa_key, _sa_value in signal_analysis.items():
         if isinstance(_sa_value, list):
+            _det_name = f"detect_{_sa_key}"
+            for _item in _sa_value:
+                if isinstance(_item, dict) and "detector" not in _item:
+                    _item["detector"] = _det_name
             findings.extend(_sa_value)
 
     # Build severity summary

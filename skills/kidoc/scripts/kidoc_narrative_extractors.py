@@ -79,10 +79,22 @@ def _extract_overview_data(analysis: dict, **kwargs) -> str:
     return '\n'.join(parts) if parts else 'No system overview data available.'
 
 
+def _findings_by_detector(analysis: dict) -> dict:
+    """Build a detector-keyed lookup from the flat findings[] list."""
+    result: dict[str, list] = {}
+    for f in analysis.get('findings', []):
+        det = f.get('detector', '')
+        key = det[len('detect_'):] if det.startswith('detect_') else det
+        if key:
+            result.setdefault(key, []).append(f)
+    return result
+
+
 def _extract_power_data(analysis: dict, **kwargs) -> str:
     """Extract power design data as concise text summary."""
     parts = []
-    regs = analysis.get('signal_analysis', {}).get('power_regulators', [])
+    _sa = _findings_by_detector(analysis)
+    regs = _sa.get('power_regulators', [])
     if regs:
         parts.append(f"{len(regs)} voltage regulator(s):")
         for r in regs:
@@ -120,7 +132,7 @@ def _extract_power_data(analysis: dict, **kwargs) -> str:
 
             parts.append(line)
 
-    decoupling = analysis.get('signal_analysis', {}).get('decoupling_analysis', [])
+    decoupling = _sa.get('decoupling_analysis', [])
     if decoupling:
         if isinstance(decoupling, list) and decoupling:
             total_caps = sum(len(d.get('capacitors', [])) for d in decoupling
@@ -137,7 +149,7 @@ def _extract_power_data(analysis: dict, **kwargs) -> str:
             parts.append(f"Decoupling: {decoupling.get('total_caps', 0)} capacitor(s)")
 
     # Protection devices
-    protection = analysis.get('signal_analysis', {}).get('protection_devices', [])
+    protection = _sa.get('protection_devices', [])
     if protection:
         parts.append(f"Protection devices: {len(protection)}")
         for p in protection[:5]:
@@ -162,7 +174,8 @@ def _extract_signal_data(analysis: dict, **kwargs) -> str:
                 parts.append(f"{bus_type.upper()} {bus_id}: {', '.join(sig_names[:10])}")
 
     # Level shifters
-    shifters = analysis.get('signal_analysis', {}).get('level_shifters', [])
+    _sa = _findings_by_detector(analysis)
+    shifters = _sa.get('level_shifters', [])
     if shifters:
         parts.append(f"Level shifters: {len(shifters)}")
         for s in shifters:
@@ -170,7 +183,7 @@ def _extract_signal_data(analysis: dict, **kwargs) -> str:
                          f"({s.get('low_side_rail', '?')} <-> {s.get('high_side_rail', '?')})")
 
     # ESD coverage
-    esd = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    esd = _sa.get('esd_coverage_audit', [])
     if esd:
         unprotected = [e for e in esd if isinstance(e, dict) and e.get('coverage') == 'none']
         if unprotected:
@@ -195,7 +208,7 @@ def _extract_signal_data(analysis: dict, **kwargs) -> str:
 def _extract_analog_data(analysis: dict, **kwargs) -> str:
     """Extract analog design data as concise text summary."""
     parts = []
-    sa = analysis.get('signal_analysis', {})
+    sa = _findings_by_detector(analysis)
 
     # Voltage dividers
     dividers = sa.get('voltage_dividers', [])
@@ -425,7 +438,7 @@ def _extract_bom_data(analysis: dict, **kwargs) -> str:
 def _extract_test_data(analysis: dict, **kwargs) -> str:
     """Extract test and debug data as concise text summary."""
     parts = []
-    sa = analysis.get('signal_analysis', {})
+    sa = _findings_by_detector(analysis)
 
     debug = sa.get('debug_interfaces', [])
     if debug:
@@ -466,7 +479,7 @@ def _extract_executive_data(analysis: dict, **kwargs) -> str:
         parts.append(f"Key ICs: {', '.join(c.get('value', '?') for c in ics[:5])}")
 
     # Power summary
-    regs = analysis.get('signal_analysis', {}).get('power_regulators', [])
+    regs = _findings_by_detector(analysis).get('power_regulators', [])
     if regs:
         rails = []
         for r in regs:
@@ -524,7 +537,7 @@ def _extract_compliance_data(analysis: dict, **kwargs) -> str:
             f"Critical: {summary.get('critical', 0)}, High: {summary.get('high', 0)}"
         )
 
-    esd = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    esd = _findings_by_detector(analysis).get('esd_coverage_audit', [])
     if esd:
         unprotected = [e for e in esd if isinstance(e, dict) and e.get('coverage') == 'none']
         parts.append(f"ESD: {len(esd)} connectors audited, {len(unprotected)} unprotected")

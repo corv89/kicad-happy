@@ -96,7 +96,14 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
     Returns:
         Report dict with simulation results
     """
-    signal = analysis_json.get("signal_analysis", {})
+    # Build detector-keyed lookup from flat findings[]
+    signal = {}
+    for f in analysis_json.get("findings", []):
+        det = f.get("detector", "")
+        # Strip "detect_" prefix to match legacy keys
+        key = det[len("detect_"):] if det.startswith("detect_") else det
+        if key:
+            signal.setdefault(key, []).append(f)
     if not signal:
         return build_report([])
 

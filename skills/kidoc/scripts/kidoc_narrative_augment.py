@@ -22,7 +22,8 @@ def build_datasheet_notes(section_type: str, analysis: dict,
     parts = []
 
     if section_type == 'power_design':
-        regs = analysis.get('signal_analysis', {}).get('power_regulators', [])
+        regs = [f for f in analysis.get('findings', [])
+                if f.get('detector') == 'detect_power_regulators']
         for r in regs:
             value = r.get('value', '')
             ref = r.get('ref', '')
@@ -33,7 +34,8 @@ def build_datasheet_notes(section_type: str, analysis: dict,
                     parts.append(f"{ref} ({value}): {_summarize_extraction(ext)}")
 
     elif section_type == 'analog_design':
-        opamps = analysis.get('signal_analysis', {}).get('opamp_circuits', [])
+        opamps = [f for f in analysis.get('findings', [])
+                  if f.get('detector') == 'detect_opamp_circuits']
         for o in opamps:
             value = o.get('value', '')
             ref = o.get('ref', '')
@@ -115,14 +117,16 @@ def build_cross_references(section_type: str, analysis: dict,
                 parts.append(f"See EMC: {len(dc_findings)} decoupling finding(s)")
 
     elif section_type == 'emc_analysis':
-        regs = analysis.get('signal_analysis', {}).get('power_regulators', [])
+        regs = [f for f in analysis.get('findings', [])
+                if f.get('detector') == 'detect_power_regulators']
         if regs:
             parts.append(f"See Power: {len(regs)} regulator(s)")
         if pcb_data:
             parts.append(f"See PCB: {pcb_data.get('statistics', {}).get('copper_layers_used', '?')} layers")
 
     elif section_type == 'thermal_analysis':
-        regs = analysis.get('signal_analysis', {}).get('power_regulators', [])
+        regs = [f for f in analysis.get('findings', [])
+                if f.get('detector') == 'detect_power_regulators']
         pdiss_regs = [r for r in regs if r.get('power_dissipation')]
         if pdiss_regs:
             parts.append(f"See Power: {len(pdiss_regs)} regulator(s) with dissipation data")

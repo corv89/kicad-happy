@@ -1291,11 +1291,17 @@ def compute_crop_bbox(components: list[dict], crop_refs: list[str],
 
 def render_overlays(svg: SvgBuilder, overlay_data: dict,
                     components: list[dict]) -> None:
-    """Render analysis overlay annotations from signal_analysis data."""
-    signal_analysis = overlay_data.get('signal_analysis', {})
+    """Render analysis overlay annotations from findings data."""
+    # Build detector-keyed lookup from flat findings[]
+    _sa: dict[str, list] = {}
+    for f in overlay_data.get('findings', []):
+        det = f.get('detector', '')
+        key = det[len('detect_'):] if det.startswith('detect_') else det
+        if key:
+            _sa.setdefault(key, []).append(f)
     comp_map = {c['ref']: c for c in components}
 
-    for det_type, detections in signal_analysis.items():
+    for det_type, detections in _sa.items():
         if not isinstance(detections, list):
             continue
         for det in detections:

@@ -138,7 +138,8 @@ class PowerTreeGenerator:
         lookup, summarizes output capacitors.  Returns None if no
         regulators found.
         """
-        regs_raw = analysis.get('signal_analysis', {}).get('power_regulators', [])
+        regs_raw = [f for f in analysis.get('findings', [])
+                    if f.get('detector') == 'detect_power_regulators']
         if not regs_raw:
             return None
 
@@ -246,7 +247,8 @@ class PowerTreeGenerator:
             output_rails.append({'name': r, 'voltage': v, 'loads': loads})
 
         # Protection devices
-        prot_raw = analysis.get('signal_analysis', {}).get('protection_devices', [])
+        prot_raw = [f for f in analysis.get('findings', [])
+                    if f.get('detector') == 'detect_protection_devices']
         protection = []
         for pd in prot_raw:
             rail = pd.get('rail', pd.get('net', pd.get('input_rail', '')))

@@ -19,6 +19,17 @@ from kidoc_tables import (
 )
 
 
+def _findings_by_detector(analysis: dict) -> dict:
+    """Build a detector-keyed lookup from the flat findings[] list."""
+    result: dict[str, list] = {}
+    for f in analysis.get('findings', []):
+        det = f.get('detector', '')
+        key = det[len('detect_'):] if det.startswith('detect_') else det
+        if key:
+            result.setdefault(key, []).append(f)
+    return result
+
+
 def _auto(section_id: str, content: str) -> str:
     """Emit auto-generated content directly.  No markers needed."""
     return content
@@ -96,7 +107,8 @@ def section_executive_summary(analysis: dict, emc_data: dict | None,
     sheets = stats.get('sheets', 1)
 
     # Identify key ICs
-    regulators = analysis.get('signal_analysis', {}).get('power_regulators', [])
+    _sa = _findings_by_detector(analysis)
+    regulators = _sa.get('power_regulators', [])
     mcus = [c for c in analysis.get('components', [])
             if c.get('type') == 'ic' and any(k in c.get('lib_id', '').lower()
             for k in ('mcu', 'stm32', 'esp32', 'rp2040', 'atmega', 'nrf',
@@ -208,7 +220,8 @@ def section_power_design(analysis: dict, diagrams_dir: str) -> str:
     lines.append("")
 
     # Power regulators table
-    regulators = analysis.get('signal_analysis', {}).get('power_regulators', [])
+    _sa = _findings_by_detector(analysis)
+    regulators = _sa.get('power_regulators', [])
     if regulators:
         rows = []
         for reg in regulators:
@@ -228,7 +241,7 @@ def section_power_design(analysis: dict, diagrams_dir: str) -> str:
     lines.append("")
 
     # Decoupling analysis
-    decoupling = analysis.get('signal_analysis', {}).get('decoupling_analysis', [])
+    decoupling = _sa.get('decoupling_analysis', [])
     if decoupling:
         rows = []
         for d in decoupling:
@@ -289,7 +302,8 @@ def section_signal_interfaces(analysis: dict) -> str:
         lines.append("")
 
     # Level shifters
-    shifters = analysis.get('signal_analysis', {}).get('level_shifters', [])
+    _sa = _findings_by_detector(analysis)
+    shifters = _sa.get('level_shifters', [])
     if shifters:
         lines.append("### Level Shifting")
         lines.append("")
@@ -316,7 +330,7 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
     lines = ["## 5. Analog Design"]
     lines.append("")
 
-    sa = analysis.get('signal_analysis', {})
+    sa = _findings_by_detector(analysis)
 
     # Voltage dividers
     dividers = sa.get('voltage_dividers', [])
@@ -616,7 +630,7 @@ def section_test_debug(analysis: dict) -> str:
     lines.append("")
 
     # Debug interfaces
-    debug = analysis.get('signal_analysis', {}).get('debug_interfaces', [])
+    debug = _findings_by_detector(analysis).get('debug_interfaces', [])
     if debug:
         rows = [[d.get('ref', '?'), d.get('type', ''), d.get('protocol', '')]
                 for d in debug]
@@ -744,7 +758,7 @@ def section_ce_essential_requirements(analysis: dict, config: dict) -> str:
     ]
 
     # Add radio if applicable
-    sa = analysis.get('signal_analysis', {})
+    sa = _findings_by_detector(analysis)
     if sa.get('rf_chains') or sa.get('rf_matching'):
         rows.append(['RED 2014/53/EU', 'Radio equipment', 'EN 300 328, EN 301 489', ''])
 
@@ -829,7 +843,7 @@ def section_ce_risk_assessment(analysis: dict, emc_data: dict | None,
         rows[2][3] = f"{critical} critical findings" if critical else 'Pre-compliance assessment'
 
     # ESD from analysis
-    esd_audit = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    esd_audit = _findings_by_detector(analysis).get('esd_coverage_audit', [])
     unprotected = 0
     for e in esd_audit:
         if isinstance(e, dict):
@@ -970,7 +984,7 @@ def section_icd_interface_list(analysis: dict) -> str:
 
     rows = []
     # Connectors from ESD audit (they enumerate all external connectors)
-    esd = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    esd = _findings_by_detector(analysis).get('esd_coverage_audit', [])
     for e in esd:
         if isinstance(e, dict):
             rows.append([
@@ -1003,7 +1017,7 @@ def section_icd_connector_details(analysis: dict, config: dict) -> str:
         if doc_def.get('type') == 'icd':
             target_connectors = doc_def.get('connectors', [])
 
-    esd = analysis.get('signal_analysis', {}).get('esd_coverage_audit', [])
+    esd = _findings_by_detector(analysis).get('esd_coverage_audit', [])
     ic_pins = analysis.get('ic_pin_analysis', {})
 
     for e in esd:
