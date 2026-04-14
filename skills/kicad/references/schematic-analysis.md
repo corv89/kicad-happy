@@ -34,7 +34,7 @@ Follow this sequence for a thorough schematic review. Each step builds on the pr
 Run `analyze_schematic.py` on the schematic file (see SKILL.md for the command). The JSON output provides:
 - Component inventory grouped by type, with values, footprints, MPNs
 - Full net connectivity map with pin-to-net mapping
-- **Automated subcircuit detection** (`signal_analysis` section): power regulators, voltage dividers, RC/LC filters, op-amp circuits, transistor circuits, bridge circuits, protection devices, current sense, crystal circuits, feedback networks, decoupling analysis, plus domain-specific detections (RF chains/matching, BMS, Ethernet, HDMI/DVI, memory interfaces, key matrices, isolation barriers, addressable LEDs, battery chargers, motor drivers, ESD protection audit, debug interfaces, power path/load switches, ADC signal conditioning, reset/supervisor circuits, clock distribution, display/touch interfaces, sensor fusion, level shifters, audio circuits, LED driver ICs, RTC circuits, LED lighting audit, thermocouple/RTD, power sequencing validation)
+- **Automated subcircuit detection** (in `findings[]`, filtered by `detector` field): power regulators, voltage dividers, RC/LC filters, op-amp circuits, transistor circuits, bridge circuits, protection devices, current sense, crystal circuits, feedback networks, decoupling analysis, plus domain-specific detections (RF chains/matching, BMS, Ethernet, HDMI/DVI, memory interfaces, key matrices, isolation barriers, addressable LEDs, battery chargers, motor drivers, ESD protection audit, debug interfaces, power path/load switches, ADC signal conditioning, reset/supervisor circuits, clock distribution, display/touch interfaces, sensor fusion, level shifters, audio circuits, LED driver ICs, RTC circuits, LED lighting audit, thermocouple/RTD, power sequencing validation)
 - Design observations (decoupling coverage, I2C pull-ups, crystal load caps, etc.)
 
 Use this structured data as the starting point — it replaces manual component extraction and most subcircuit identification.
@@ -71,7 +71,7 @@ This thorough verification catches the cases where the analyzer silently drops c
 
 ### Step 3: Review and augment subcircuit identification
 
-The analyzer's `signal_analysis` automatically identifies most subcircuits. Review its output and augment with any subcircuits it may have missed. Spot-check a few detected subcircuits against the raw schematic — verify the components and nets are correct. Common subcircuit boundaries:
+The analyzer's `findings[]` array automatically identifies most subcircuits (filter by `detector` field). Review its output and augment with any subcircuits it may have missed. Spot-check a few detected subcircuits against the raw schematic — verify the components and nets are correct. Common subcircuit boundaries:
 - Each voltage regulator + its input/output caps + feedback resistors = one block
 - Each IC + its decoupling caps + supporting passives = one block
 - Each connector + its ESD protection + filtering = one block

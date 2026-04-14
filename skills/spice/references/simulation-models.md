@@ -410,7 +410,7 @@ Parasitics are only injected when significant relative to the circuit:
 The SPICE skill consumes data from multiple analyzer outputs:
 
 ### From Schematic Analyzer (`analyze_schematic.py`)
-- **signal_analysis** — all 21+ subcircuit detections
+- **findings[]** — all 21+ subcircuit detections (grouped by `detector` field)
 - **Component MPN** — `det["value"]` used for behavioral model lookup
 - **Power rail nets** — for opamp supply inference
 - **Regulator output capacitors** — values, package sizes, ESR estimates

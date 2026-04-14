@@ -286,6 +286,7 @@ Key nested structures:
 
 **PCB analyzer top-level keys:**
 ```
+analyzer_type, elapsed_s, summary, findings,
 file, kicad_version, file_version, statistics, layers, setup, nets,
 board_outline, component_groups, footprints, tracks, vias, zones,
 connectivity, net_lengths
@@ -300,6 +301,7 @@ Key nested structures:
 
 **Gerber analyzer top-level keys:**
 ```
+analyzer_type, elapsed_s, summary, findings,
 statistics, completeness, alignment, drill_classification, pad_summary,
 board_dimensions, gerbers, drills
 ```

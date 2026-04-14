@@ -88,12 +88,12 @@ Compared sections:
 |---------|-------------|-----------------|-------------|
 | Statistics | n/a (scalar paths) | `total_components`, `total_nets`, `unique_parts`, `total_wires`, `total_no_connects` | `statistics.*` |
 | Components | `reference` | `value`, `footprint`, `mpn` | `components[]` |
-| Signal analysis | Per-type via SIGNAL_REGISTRY | Per-type via SIGNAL_REGISTRY | `signal_analysis.<type>[]` |
+| Signal analysis | Per-type via SIGNAL_REGISTRY | Per-type via SIGNAL_REGISTRY | `findings[]` grouped by detector via `group_findings_legacy()` |
 | BOM | `(value, footprint)` tuple | `quantity` | `bom[]` |
 | Connectivity | JSON-serialized item | new/resolved (set diff) | `connectivity_issues.{single_pin_nets,floating_nets,multi_driver_nets}` |
 | ERC warnings | `(type, net, message)` tuple | new/resolved (set diff) | `design_analysis.erc_warnings[]` |
 
-Signal analysis iterates all keys present in either base or head `signal_analysis`. For each detection type, identity and value fields come from `SIGNAL_REGISTRY` (derived from `detection_schema.SCHEMAS`). Unknown detection types fall back to `["reference"]` identity with no value fields.
+Signal analysis is reconstructed from `findings[]` via `group_findings_legacy()`, then iterates all detector types present in either base or head. For each detection type, identity and value fields come from `SIGNAL_REGISTRY` (derived from `detection_schema.SCHEMAS`). Unknown detection types fall back to `["reference"]` identity with no value fields. The diff output still uses `signal_analysis` as a key for backward compatibility with diff consumers.
 
 ### PCB
 
@@ -225,7 +225,7 @@ Returns `None` if nothing is found (item is excluded from matching).
 
 ### Validation
 
-`validate_signal_registry(sample_output)` checks that every key in `SIGNAL_REGISTRY` exists under `signal_analysis` in a sample analyzer output. Returns warning strings for any missing keys. Useful for catching stale registry entries after schema changes.
+`validate_signal_registry(sample_output)` checks that every key in `SIGNAL_REGISTRY` has at least one finding with a matching detector in `findings[]`. Returns warning strings for any missing keys. Useful for catching stale registry entries after schema changes.
 
 ---
 

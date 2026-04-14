@@ -22,7 +22,7 @@ Interactive parameter sweep for KiCad designs. Patches component values in analy
 
 The what-if pipeline operates in three stages:
 
-1. **Patch** -- Locate all subcircuit detections in `signal_analysis` that reference the changed component(s) and replace their stored values.
+1. **Patch** -- Locate all subcircuit detections in `findings[]` (grouped by detector) that reference the changed component(s) and replace their stored values.
 2. **Recalculate** -- Re-derive dependent fields (cutoff frequency, divider ratio, opamp gain, etc.) using the formulas in `_recalc_derived()`.
 3. **Compare** -- Diff the original and patched detections, report before/after values with percentage deltas.
 
@@ -150,7 +150,7 @@ The `--fix` mode runs an inverse solver to find component values that achieve a 
 python3 what_if.py analysis.json --fix TYPE[INDEX] --target VALUE
 ```
 
-Where `TYPE[INDEX]` references a detection in `signal_analysis` (e.g., `voltage_dividers[0]`, `rc_filters[2]`).
+Where `TYPE[INDEX]` references a detection type and index (e.g., `voltage_dividers[0]`, `rc_filters[2]`). Internally, findings are grouped by detector name.
 
 ### Target Inference
 

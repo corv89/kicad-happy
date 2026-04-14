@@ -31,7 +31,7 @@ This skill inverts the typical simulation workflow: instead of requiring users t
 | `element14` | Parametric specs (international), datasheet downloads |
 | `emc` | EMC pre-compliance — uses this skill's simulator infrastructure for SPICE-enhanced PDN impedance and EMI filter analysis |
 
-**Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with `signal_analysis` detections. This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report. The `emc` skill reuses this skill's simulator backend for SPICE-enhanced PDN impedance and EMI filter insertion loss checks — when ngspice is available, the EMC skill's `--spice-enhanced` flag activates these checks automatically.
+**Handoff guidance:** The `kicad` skill's `analyze_schematic.py` produces the analysis JSON with subcircuit detections in the flat `findings[]` array (filtered by `detector` field). This skill reads that JSON, generates SPICE testbenches for simulatable subcircuits, runs the detected simulator (ngspice/LTspice/Xyce), and produces a structured verification report. Always run the schematic analyzer first. During a design review, run simulation after the analyzer and before writing the final report — simulation results should appear as a verification section in the report. The `emc` skill reuses this skill's simulator backend for SPICE-enhanced PDN impedance and EMI filter insertion loss checks — when ngspice is available, the EMC skill's `--spice-enhanced` flag activates these checks automatically.
 
 ## Requirements
 
@@ -121,7 +121,7 @@ Read the JSON report and incorporate findings into the design review. See the "I
 
 ## What Gets Simulated
 
-The script selects subcircuits from the analyzer's `signal_analysis` section. Not every detection is simulatable — the script skips configurations that can't produce meaningful results (comparators, open-loop opamps, active oscillators).
+The script selects subcircuits from the analyzer's `findings[]` array (grouped by detector type). Not every detection is simulatable — the script skips configurations that can't produce meaningful results (comparators, open-loop opamps, active oscillators).
 
 | Detector | Analysis | What's Measured | Model Fidelity | Trustworthiness |
 |----------|----------|-----------------|----------------|-----------------|
@@ -288,7 +288,7 @@ For detailed information about the behavioral models used, their accuracy envelo
 | Script | Purpose |
 |--------|---------|
 | `scripts/simulate_subcircuits.py` | Main orchestrator — CLI entry point, reads JSON, generates testbenches, runs simulator, produces report |
-| `scripts/spice_templates.py` | Testbench generators per detector type — one function per signal_analysis key |
+| `scripts/spice_templates.py` | Testbench generators per detector type — one function per detector name |
 | `scripts/spice_models.py` | Behavioral model definitions (ideal opamp, generic semiconductors), net sanitization, engineering notation formatting |
 | `scripts/spice_results.py` | Simulation output parsing and per-type evaluation with pass/warn/fail/skip logic |
 | `scripts/spice_simulator.py` | Simulator backends — ngspice, LTspice, Xyce auto-detection and batch execution |

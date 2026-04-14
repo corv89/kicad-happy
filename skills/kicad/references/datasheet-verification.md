@@ -82,7 +82,7 @@ If neither exists, verification is skipped.
 
 Compares the estimated voltage on each pin's connected net against the absolute maximum rating from the datasheet extraction. Net voltages are resolved from:
 
-1. The `rail_voltages` dict in `signal_analysis` (e.g., `+3V3` -> 3.3V)
+1. The top-level `rail_voltages` dict (e.g., `+3V3` -> 3.3V)
 2. Name parsing heuristics: `+3V3` -> 3.3, `+5V` -> 5.0, `12V0` -> 12.0
 
 GND pins are skipped. Pins without a `voltage_abs_max` in the extraction are skipped.
@@ -284,7 +284,7 @@ Mapping of which extraction JSON fields drive which verification checks.
 | `components[].pin_nets` | All checks (pin-to-net mapping) |
 | `components[].parsed_value` | Decoupling check (capacitor value comparison) |
 | `nets[].pins` | Missing external + decoupling (finds connected components) |
-| `signal_analysis.rail_voltages` | Voltage checks (net voltage estimation) |
+| `rail_voltages` | Voltage checks (net voltage estimation) |
 
 ---
 

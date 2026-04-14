@@ -26,17 +26,17 @@ Designing engineer, review board, future maintainers.
 - **Skipped when:** never
 
 ### Power System Design
-- **Data source:** schematic `signal_analysis.power_regulators`, `decoupling_analysis`
+- **Data source:** schematic `findings[] (detector: power_regulators)`, `findings[] (detector: decoupling_analysis)`
 - **Produces:** power tree diagram embed, regulator table (ref/part/topology/input/output/Vout), decoupling table (IC/rail/caps/total)
 - **Skipped when:** never (shows empty state if no regulators detected)
 
 ### Signal Interfaces
-- **Data source:** schematic `design_analysis.bus_analysis`, `signal_analysis.level_shifters`
+- **Data source:** schematic `design_analysis.bus_analysis`, `findings[] (detector: level_shifters)`
 - **Produces:** per-bus signal lists (I2C/SPI/UART/CAN), level shifter table
 - **Skipped when:** never
 
 ### Analog Design
-- **Data source:** schematic `signal_analysis` (voltage_dividers, rc_filters, lc_filters, crystal_circuits, opamp_circuits)
+- **Data source:** schematic `findings[]` (detectors: voltage_dividers, rc_filters, lc_filters, crystal_circuits, opamp_circuits)
 - **Produces:** divider ratio table, filter cutoff tables, crystal frequency list, opamp topology table
 - **Skipped when:** never (shows "no analog subcircuits" if empty)
 
@@ -66,7 +66,7 @@ Designing engineer, review board, future maintainers.
 - **Skipped when:** never
 
 ### Test and Debug
-- **Data source:** schematic `signal_analysis.debug_interfaces`
+- **Data source:** schematic `findings[] (detector: debug_interfaces)`
 - **Produces:** debug interface table (ref/type/protocol)
 - **Skipped when:** never
 

@@ -396,43 +396,43 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `nets` | Net Tracing, throughout | per-net pin lists with pin_type |
 | `subcircuits` | Power Tree | auto-detected power/signal subcircuits |
 | `ic_pin_analysis` | MCU pin audit | per-IC pin utilization summary |
-| `signal_analysis.power_regulators` | Power Regulators | topology, vref_source, vout_estimate, vout_net_mismatch, inverting |
-| `signal_analysis.feedback_networks` | Feedback Networks | R_top, R_bottom, vref, vout, vref_source |
-| `signal_analysis.voltage_dividers` | Voltage Dividers | ratio, output_voltage |
-| `signal_analysis.rc_filters` | RC/LC Filters | cutoff_hz, filter_type |
-| `signal_analysis.lc_filters` | RC/LC Filters | resonant_freq_hz |
-| `signal_analysis.opamp_circuits` | Op-Amp Circuits | configuration, gain |
-| `signal_analysis.protection_devices` | Protection Devices | type, placement |
-| `signal_analysis.transistor_circuits` | Transistor Circuits | load_type (motor/heater/fan/solenoid/etc.), is_pchannel, gate_drive |
-| `signal_analysis.bridge_circuits` | Bridge Circuits | topology, half_bridges, driver_ics |
-| `signal_analysis.crystal_circuits` | Crystal Circuits | cload, frequency |
-| `signal_analysis.current_sense` | Current Sense | shunt_value, gain |
-| `signal_analysis.decoupling_analysis` | Decoupling Analysis | per-rail cap inventory |
-| `signal_analysis.buzzer_speaker_circuits` | Buzzer/Speaker | driver topology |
-| `signal_analysis.rf_chains` | RF Chains | component chain |
-| `signal_analysis.bms_systems` | BMS Systems | cell monitoring |
-| `signal_analysis.ethernet_interfaces` | Ethernet | magnetics, PHY |
-| `signal_analysis.memory_interfaces` | Memory | bus width |
-| `signal_analysis.key_matrices` | Key Matrices | row/col count |
-| `signal_analysis.isolation_barriers` | Isolation | isolation type |
-| `signal_analysis.battery_chargers` | Battery Chargers | charger_type, charge_current |
-| `signal_analysis.motor_drivers` | Motor Drivers | driver_type (stepper/dc_brushed) |
-| `signal_analysis.esd_coverage_audit` | ESD Coverage | per-connector coverage, risk_level |
-| `signal_analysis.debug_interfaces` | Debug Interfaces | SWD/JTAG, target_ic |
-| `signal_analysis.power_path` | Power Path | load switches, ideal diodes, USB PD |
-| `signal_analysis.adc_circuits` | ADC Circuits | external ADCs, voltage references |
-| `signal_analysis.reset_supervisors` | Reset/Supervisor | supervisors, watchdogs, RC reset |
-| `signal_analysis.clock_distribution` | Clock Distribution | generators, PLLs, oscillator outputs |
-| `signal_analysis.display_interfaces` | Display/Touch | display type, touch controller |
-| `signal_analysis.sensor_interfaces` | Sensor Fusion | motion/environmental/magnetic, interrupt pins |
-| `signal_analysis.level_shifters` | Level Shifters | IC + discrete, supply domains |
-| `signal_analysis.audio_circuits` | Audio Circuits | amplifiers, codecs, I2S |
-| `signal_analysis.led_driver_ics` | LED Driver ICs | PWM/matrix/constant-current |
-| `signal_analysis.rtc_circuits` | RTC Circuits | battery backup, crystal pairing |
-| `signal_analysis.led_audit` | LED Audit | current limiting validation |
-| `signal_analysis.thermocouple_rtd` | Thermocouple/RTD | amplifiers, RTD interfaces |
-| `signal_analysis.power_sequencing_validation` | Power Sequencing | power tree, enable chains, issues |
-| `signal_analysis.design_observations` | Design Observations | automated findings |
+| `findings[] (detector: power_regulators)` | Power Regulators | topology, vref_source, vout_estimate, vout_net_mismatch, inverting |
+| `findings[] (detector: feedback_networks)` | Feedback Networks | R_top, R_bottom, vref, vout, vref_source |
+| `findings[] (detector: voltage_dividers)` | Voltage Dividers | ratio, output_voltage |
+| `findings[] (detector: rc_filters)` | RC/LC Filters | cutoff_hz, filter_type |
+| `findings[] (detector: lc_filters)` | RC/LC Filters | resonant_freq_hz |
+| `findings[] (detector: opamp_circuits)` | Op-Amp Circuits | configuration, gain |
+| `findings[] (detector: protection_devices)` | Protection Devices | type, placement |
+| `findings[] (detector: transistor_circuits)` | Transistor Circuits | load_type (motor/heater/fan/solenoid/etc.), is_pchannel, gate_drive |
+| `findings[] (detector: bridge_circuits)` | Bridge Circuits | topology, half_bridges, driver_ics |
+| `findings[] (detector: crystal_circuits)` | Crystal Circuits | cload, frequency |
+| `findings[] (detector: current_sense)` | Current Sense | shunt_value, gain |
+| `findings[] (detector: decoupling_analysis)` | Decoupling Analysis | per-rail cap inventory |
+| `findings[] (detector: buzzer_speaker_circuits)` | Buzzer/Speaker | driver topology |
+| `findings[] (detector: rf_chains)` | RF Chains | component chain |
+| `findings[] (detector: bms_systems)` | BMS Systems | cell monitoring |
+| `findings[] (detector: ethernet_interfaces)` | Ethernet | magnetics, PHY |
+| `findings[] (detector: memory_interfaces)` | Memory | bus width |
+| `findings[] (detector: key_matrices)` | Key Matrices | row/col count |
+| `findings[] (detector: isolation_barriers)` | Isolation | isolation type |
+| `findings[] (detector: battery_chargers)` | Battery Chargers | charger_type, charge_current |
+| `findings[] (detector: motor_drivers)` | Motor Drivers | driver_type (stepper/dc_brushed) |
+| `findings[] (detector: esd_coverage_audit)` | ESD Coverage | per-connector coverage, risk_level |
+| `findings[] (detector: debug_interfaces)` | Debug Interfaces | SWD/JTAG, target_ic |
+| `findings[] (detector: power_path)` | Power Path | load switches, ideal diodes, USB PD |
+| `findings[] (detector: adc_circuits)` | ADC Circuits | external ADCs, voltage references |
+| `findings[] (detector: reset_supervisors)` | Reset/Supervisor | supervisors, watchdogs, RC reset |
+| `findings[] (detector: clock_distribution)` | Clock Distribution | generators, PLLs, oscillator outputs |
+| `findings[] (detector: display_interfaces)` | Display/Touch | display type, touch controller |
+| `findings[] (detector: sensor_interfaces)` | Sensor Fusion | motion/environmental/magnetic, interrupt pins |
+| `findings[] (detector: level_shifters)` | Level Shifters | IC + discrete, supply domains |
+| `findings[] (detector: audio_circuits)` | Audio Circuits | amplifiers, codecs, I2S |
+| `findings[] (detector: led_driver_ics)` | LED Driver ICs | PWM/matrix/constant-current |
+| `findings[] (detector: rtc_circuits)` | RTC Circuits | battery backup, crystal pairing |
+| `findings[] (detector: led_audit)` | LED Audit | current limiting validation |
+| `findings[] (detector: thermocouple_rtd)` | Thermocouple/RTD | amplifiers, RTD interfaces |
+| `findings[] (detector: power_sequencing_validation)` | Power Sequencing | power tree, enable chains, issues |
+| `findings[] (detector: design_observations)` | Design Observations | automated findings |
 | `design_analysis.net_classification` | Net Classification | per-net class (power/data/analog/output_drive/etc.) |
 | `design_analysis.power_domains` | Power Domains | per-IC rail mapping with IO rails |
 | `design_analysis.cross_domain_signals` | Cross-Domain Signals | voltage equivalence filtering |

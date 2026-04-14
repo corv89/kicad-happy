@@ -154,7 +154,7 @@ Filter and annotate power rails in analysis output. All patterns use fnmatch glo
 | Field | Type | Description |
 |-------|------|-------------|
 | `ignore` | array of strings | Net name patterns to exclude from analysis. Ignored rails are removed from `rail_voltages`, `power_rails`, sleep current audit, and power tree figures. |
-| `flag` | array of strings | Net name patterns to highlight for extra scrutiny. Flagged rails appear in `signal_analysis.flagged_rails`. |
+| `flag` | array of strings | Net name patterns to highlight for extra scrutiny. Flagged rails appear in top-level `flagged_rails`. |
 | `voltage_overrides` | object | Manual voltage assignments: `{net_name: voltage_float}`. Overrides auto-detected voltages from regulator outputs and power symbol name inference. |
 
 `ignore` and `flag` must be arrays; `voltage_overrides` values must be numeric. Invalid entries are warned and skipped.

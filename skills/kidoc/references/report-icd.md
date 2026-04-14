@@ -21,7 +21,7 @@ Firmware engineers, systems engineers, external integrators.
 - **Skipped when:** never
 
 ### Interface List
-- **Data source:** schematic `signal_analysis.esd_coverage_audit`
+- **Data source:** schematic `findings[] (detector: esd_coverage_audit)`
 - **Produces:** summary table of all external connectors (ref, type, interface, signal count, ESD risk level)
 - **Skipped when:** never (shows placeholder if no connectors detected)
 
@@ -31,7 +31,7 @@ Firmware engineers, systems engineers, external integrators.
 - **Skipped when:** never (shows placeholder if no connector data)
 
 ### Signal Interfaces
-- **Data source:** schematic `design_analysis.bus_analysis`, `signal_analysis.level_shifters`
+- **Data source:** schematic `design_analysis.bus_analysis`, `findings[] (detector: level_shifters)`
 - **Produces:** per-bus signal lists, level shifter table
 - **Skipped when:** never
 

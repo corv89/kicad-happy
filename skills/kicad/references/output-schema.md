@@ -6,6 +6,10 @@ Quick reference for the JSON output of the three analysis scripts. Use `--schema
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `analyzer_type` | string | Always `"schematic"` |
+| `summary` | object | `{total_findings: int, by_severity: {error, warning, info}}` |
+| `findings` | array | All findings — subcircuit detections, validation checks, design observations (see below) |
+| `confidence_map` | object | Per-detector confidence levels |
 | `file` | string | Input file path |
 | `kicad_version` | string | Generator version |
 | `file_version` | string | KiCad file format version |
@@ -16,7 +20,8 @@ Quick reference for the JSON output of the three analysis scripts. Use `--schema
 | `nets` | object | Net connectivity map keyed by net name |
 | `subcircuits` | array | Hierarchical sub-sheets |
 | `ic_pin_analysis` | object | Per-IC pin mapping keyed by reference |
-| `signal_analysis` | object | Detected subcircuits (regulators, filters, etc.) |
+| `rail_voltages` | object | `{net_name: voltage_float}` — auto-detected from regulator outputs and power symbol names |
+| `net_classifications` | object | Per-net class (power/data/analog/output_drive/etc.) |
 | `design_analysis` | object | Buses, power domains, ERC warnings |
 | `connectivity_issues` | object | Single-pin nets, multi-driver nets, floating nets |
 
@@ -55,45 +60,56 @@ Keyed by net name:
 {name, pins: [{component, pin_number, pin_name, pin_type}], point_count: int}
 ```
 
-### signal_analysis keys
+### findings entries
 
-| Key | Contents |
-|-----|----------|
-| `voltage_dividers` | `[{top_ref, bottom_ref, ratio, vout_estimated, input_net, output_net}]` |
-| `rc_filters` | `[{resistor, capacitor, cutoff_frequency_hz, type: lowpass\|highpass}]` |
-| `lc_filters` | `[{inductor, capacitors, resonant_formatted}]` |
-| `power_regulators` | `[{ref, value, lib_id, topology, input_rail, output_rail, vout_estimated, vref_source}]` |
-| `crystal_circuits` | `[{reference, value, frequency, type: passive\|active_oscillator, load_caps}]` |
-| `opamp_circuits` | `[{reference, configuration, gain}]` |
-| `transistor_circuits` | `[{reference, type, load_classification}]` |
-| `bridge_circuits` | `[{topology, fet_refs}]` |
-| `protection_devices` | `[{type, reference, protected_net}]` |
-| `current_sense` | `[{shunt: {ref, value, ohms}, sense_ic: {ref, value, type}, high_net, low_net, max_current_50mV_A, max_current_100mV_A}]` |
-| `decoupling` | `[{capacitor_ref, ic_ref, distance}]` |
-| `rf_matching` | `[{antenna, topology: pi_match\|L_match\|T_match, components: [{ref, type, value}], target_ic}]` |
-| `key_matrices` | `[{rows, cols, diodes}]` |
-| `isolation_barriers` | `[{isolator_ref, side_a_nets, side_b_nets}]` |
-| `ethernet_interfaces` | `[{phy_ref, magnetics_ref, connector_ref}]` |
-| `memory_interfaces` | `[{type, bus_signals}]` |
-| `rf_chains` | `[{components_in_chain}]` |
-| `bms_systems` | `[{ic_ref, cell_count}]` |
-| `battery_chargers` | `[{ref, value, charger_type, charge_current}]` |
-| `motor_drivers` | `[{ref, value, driver_type: stepper\|dc_brushed_h_bridge}]` |
-| `esd_coverage_audit` | `[{connector_ref, interface_type, risk_level, coverage: full\|partial\|none, unprotected_nets}]` |
-| `debug_interfaces` | `[{connector_ref, interface_type: swd\|jtag, pins_found, target_ic, status}]` |
-| `power_path` | `[{ref, type: load_switch\|ideal_diode\|power_mux\|usb_pd_controller, input_rail, output_rail, enable_net}]` |
-| `adc_circuits` | `[{ref, type: external_adc\|voltage_reference, resolution_bits, interface, input_channels, vref_source}]` |
-| `reset_supervisors` | `[{ref, type: voltage_supervisor\|watchdog\|rc_reset, monitored_rail, threshold_voltage, target_ic}]` |
-| `clock_distribution` | `[{ref, type: clock_generator\|pll\|oscillator_output, outputs, consumers, series_termination}]` |
-| `display_interfaces` | `[{ref, type: display\|touch_controller, display_type, interface, backlight}]` |
-| `sensor_interfaces` | `[{ref, type: motion\|environmental\|magnetic, interface, interrupt_pins, bus_peers}]` |
-| `level_shifters` | `[{ref, type: level_shifter_ic\|discrete_level_shifter, side_a, side_b, shifted_nets}]` |
-| `audio_circuits` | `[{ref, type: audio_amplifier\|audio_codec, amplifier_class, interface, output_nets}]` |
-| `led_driver_ics` | `[{ref, type: pwm_led_driver\|matrix_led_driver\|constant_current_led_driver, channels, current_set}]` |
-| `rtc_circuits` | `[{ref, type: rtc, interface, has_internal_oscillator, external_crystal, battery_backup}]` |
-| `led_audit` | `[{ref, drive_method: resistor_limited\|direct_drive\|ic_direct, series_resistor, estimated_current_mA}]` |
-| `thermocouple_rtd` | `[{ref, type: thermocouple_amplifier\|rtd_interface, interface, reference_resistor}]` |
-| `power_sequencing_validation` | `{power_tree, enable_chains, issues}` |
+All subcircuit detections, validation checks, and design observations are in the flat `findings[]` array. Each finding has a common envelope:
+
+```
+{detector, rule_id, category, severity, confidence, summary, recommendation,
+ evidence_source, fix_params, report_context, ...detector-specific fields}
+```
+
+Use `detector` to filter by type. The `finding_schema.py` module provides `get_findings(data, detector)` and `group_findings(data)` helpers, plus `Det` constants for all detector names. For legacy compatibility, `group_findings_legacy(data)` reconstructs the old dict-of-lists layout.
+
+**Detector types and their key fields:**
+
+| Detector | Key Fields |
+|----------|------------|
+| `voltage_dividers` | `top_ref, bottom_ref, ratio, vout_estimated, input_net, output_net` |
+| `rc_filters` | `resistor, capacitor, cutoff_frequency_hz, type: lowpass\|highpass` |
+| `lc_filters` | `inductor, capacitors, resonant_formatted` |
+| `power_regulators` | `ref, value, lib_id, topology, input_rail, output_rail, vout_estimated, vref_source` |
+| `crystal_circuits` | `reference, value, frequency, type: passive\|active_oscillator, load_caps` |
+| `opamp_circuits` | `reference, configuration, gain` |
+| `transistor_circuits` | `reference, type, load_classification` |
+| `bridge_circuits` | `topology, fet_refs` |
+| `protection_devices` | `type, reference, protected_net` |
+| `current_sense` | `shunt: {ref, value, ohms}, sense_ic: {ref, value, type}, high_net, low_net, max_current_50mV_A, max_current_100mV_A` |
+| `decoupling` | `capacitor_ref, ic_ref, distance` |
+| `rf_matching` | `antenna, topology: pi_match\|L_match\|T_match, components: [{ref, type, value}], target_ic` |
+| `key_matrices` | `rows, cols, diodes` |
+| `isolation_barriers` | `isolator_ref, side_a_nets, side_b_nets` |
+| `ethernet_interfaces` | `phy_ref, magnetics_ref, connector_ref` |
+| `memory_interfaces` | `type, bus_signals` |
+| `rf_chains` | `components_in_chain` |
+| `bms_systems` | `ic_ref, cell_count` |
+| `battery_chargers` | `ref, value, charger_type, charge_current` |
+| `motor_drivers` | `ref, value, driver_type: stepper\|dc_brushed_h_bridge` |
+| `esd_coverage_audit` | `connector_ref, interface_type, risk_level, coverage: full\|partial\|none, unprotected_nets` |
+| `debug_interfaces` | `connector_ref, interface_type: swd\|jtag, pins_found, target_ic, status` |
+| `power_path` | `ref, type: load_switch\|ideal_diode\|power_mux\|usb_pd_controller, input_rail, output_rail, enable_net` |
+| `adc_circuits` | `ref, type: external_adc\|voltage_reference, resolution_bits, interface, input_channels, vref_source` |
+| `reset_supervisors` | `ref, type: voltage_supervisor\|watchdog\|rc_reset, monitored_rail, threshold_voltage, target_ic` |
+| `clock_distribution` | `ref, type: clock_generator\|pll\|oscillator_output, outputs, consumers, series_termination` |
+| `display_interfaces` | `ref, type: display\|touch_controller, display_type, interface, backlight` |
+| `sensor_interfaces` | `ref, type: motion\|environmental\|magnetic, interface, interrupt_pins, bus_peers` |
+| `level_shifters` | `ref, type: level_shifter_ic\|discrete_level_shifter, side_a, side_b, shifted_nets` |
+| `audio_circuits` | `ref, type: audio_amplifier\|audio_codec, amplifier_class, interface, output_nets` |
+| `led_driver_ics` | `ref, type: pwm_led_driver\|matrix_led_driver\|constant_current_led_driver, channels, current_set` |
+| `rtc_circuits` | `ref, type: rtc, interface, has_internal_oscillator, external_crystal, battery_backup` |
+| `led_audit` | `ref, drive_method: resistor_limited\|direct_drive\|ic_direct, series_resistor, estimated_current_mA` |
+| `thermocouple_rtd` | `ref, type: thermocouple_amplifier\|rtd_interface, interface, reference_resistor` |
+| `power_sequencing_validation` | `power_tree, enable_chains, issues` |
 
 ### design_analysis
 
@@ -114,6 +130,9 @@ erc_warnings: [string]
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `analyzer_type` | string | Always `"pcb"` |
+| `summary` | object | `{total_findings: int, by_severity: {error, warning, info}}` |
+| `findings` | array | All PCB findings — DFM, thermal, placement, assembly checks |
 | `file` | string | Input file path |
 | `kicad_version` | string | Generator version |
 | `file_version` | string | Format version |
@@ -174,6 +193,9 @@ via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `analyzer_type` | string | Always `"gerber"` |
+| `summary` | object | `{total_findings: int, by_severity: {error, warning, info}}` |
+| `findings` | array | All Gerber findings — missing layers, alignment, drill, paste, board outline |
 | `directory` | string | Scan directory path |
 | `generator` | string | KiCad/other/unknown |
 | `layer_count` | int | Detected copper layer count |
@@ -222,8 +244,9 @@ for b in data['bom']:
     print(f"{b['quantity']}x {b['value']} ({b['references']})")
 
 # Power regulators with output voltage
-for r in data['signal_analysis']['power_regulators']:
-    print(f"{r['ref']}: {r.get('vout_estimated', '?')}V ({r['topology']})")
+for r in data['findings']:
+    if r.get('detector') == 'power_regulators':
+        print(f"{r['ref']}: {r.get('vout_estimated', '?')}V ({r['topology']})")
 
 # Net pin list
 for p in data['nets']['NET_NAME']['pins']:
