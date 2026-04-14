@@ -254,7 +254,9 @@ def _estimate_all_power_dissipation(schematic: dict) -> list:
             seen_refs.add(ref)
 
     # 3. Current sense shunt resistors — P = I²R
-    for cs in signal.get("current_sense", []):
+    current_sense = [f for f in schematic.get("findings", [])
+                     if f.get("detector") == "detect_current_sense"]
+    for cs in current_sense:
         shunt = cs.get("shunt", {})
         if not isinstance(shunt, dict):
             continue
