@@ -1346,8 +1346,18 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
     findings = _build_gerber_findings(
         completeness, alignment, drill_classification,
         gerber_summary, drill_summary, result["statistics"])
-    if findings:
-        result["findings"] = findings
+    result["findings"] = findings
+
+    sev_counts = {}
+    for f in findings:
+        sev = f.get("severity", "info")
+        sev_counts[sev] = sev_counts.get(sev, 0) + 1
+    result["summary"] = {
+        "total_findings": len(findings),
+        "error": sev_counts.get("error", 0),
+        "warning": sev_counts.get("warning", 0),
+        "info": sev_counts.get("info", 0),
+    }
 
     # Full mode: include raw pin-to-net connectivity
     if full and any(g.get("x2_objects") for g in gerbers):
@@ -1550,9 +1560,13 @@ def main():
     parser = argparse.ArgumentParser(description="KiCad Gerber & Drill File Analyzer")
     parser.add_argument("directory", nargs="?", help="Path to gerber/drill file directory")
     parser.add_argument("--output", "-o", help="Output JSON file (default: stdout)")
+    parser.add_argument("--analysis-dir",
+                        help="Write gerbers.json to this directory (analysis folder convention)")
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
     parser.add_argument("--full", action="store_true",
                         help="Include full pin-to-net connectivity data")
+    parser.add_argument("--text", action="store_true",
+                        help="Print human-readable text summary")
     parser.add_argument("--schema", action="store_true",
                         help="Print JSON output schema and exit")
     args = parser.parse_args()
@@ -1566,14 +1580,29 @@ def main():
 
     result = analyze_gerbers(args.directory, full=args.full)
 
-    indent = None if args.compact else 2
-    output = json.dumps(result, indent=indent, default=str)
+    # Determine output path
+    output_path = args.output
+    if not output_path and args.analysis_dir:
+        output_path = str(Path(args.analysis_dir) / "gerbers.json")
 
-    if args.output:
-        Path(args.output).write_text(output)
-        print(f"Written to {args.output}", file=sys.stderr)
+    indent = None if args.compact else 2
+    output_json = json.dumps(result, indent=indent, default=str)
+
+    if output_path:
+        Path(output_path).write_text(output_json)
+        print(f"Written to {output_path}", file=sys.stderr)
+    elif args.text:
+        summary = result.get("summary", {})
+        findings = result.get("findings", [])
+        print(f"Gerber analysis: {result.get('layer_count', 0)} layers, "
+              f"{result.get('statistics', {}).get('total_holes', 0)} holes, "
+              f"{summary.get('total_findings', 0)} findings "
+              f"({summary.get('error', 0)} errors, {summary.get('warning', 0)} warnings)")
+        for f in findings:
+            sev = f.get("severity", "info").upper()
+            print(f"  [{sev}] {f.get('rule_id', '?')}: {f.get('summary', '')}")
     else:
-        print(output)
+        print(output_json)
 
 
 if __name__ == "__main__":

@@ -816,12 +816,13 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
 
     # Build output
     result = {
+        "analyzer_type": "lifecycle",
         "audit_date": datetime.now(timezone.utc).isoformat(),
         "components_checked": total,
         "components_with_mpn": total,
         "components_without_mpn": skipped,
         "sources_available": list({src for f in lifecycle_findings for src in f.get("sources", {})}),
-        "lifecycle_findings": lifecycle_findings,
+        "findings": lifecycle_findings,
         "lifecycle_summary": status_counts,
     }
 
@@ -839,7 +840,7 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
 
     if temp_range:
         design_min, design_max = temp_range
-        result["temperature_findings"] = temperature_findings
+        result["findings"] = result["findings"] + temperature_findings
         result["temperature_summary"] = {
             "design_target": {
                 "min_c": design_min,
@@ -859,6 +860,14 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
 
     if observations:
         result["observations"] = observations
+
+    all_findings = result.get("findings", [])
+    result["summary"] = {
+        "total_findings": len(all_findings),
+        "components_checked": total,
+        "lifecycle_issues": len(lifecycle_findings),
+        "temperature_issues": len(temperature_findings),
+    }
 
     return result
 

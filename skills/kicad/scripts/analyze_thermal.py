@@ -842,6 +842,8 @@ def main():
                         help="Path to datasheets/extracted/ directory")
     parser.add_argument("--config", default=None,
                         help="Path to .kicad-happy.json project config file")
+    parser.add_argument("--analysis-dir",
+                        help="Write thermal.json to this directory (analysis folder convention)")
     args = parser.parse_args()
 
     # Load inputs
@@ -943,6 +945,7 @@ def main():
         missing_info["default_tj_max"] = default_tjmax
 
     result = {
+        "analyzer_type": "thermal",
         "summary": {
             "total_findings": len(findings),
             "components_assessed": len(assessments),
@@ -963,12 +966,20 @@ def main():
     if missing_info:
         result["missing_info"] = missing_info
 
+    # Merge thermal_assessments into findings (TH-DET entries)
+    result["findings"] = result.get("findings", []) + result.pop("thermal_assessments", [])
+
+    # Determine output path
+    output_path = args.output
+    if not output_path and hasattr(args, "analysis_dir") and args.analysis_dir:
+        output_path = os.path.join(args.analysis_dir, "thermal.json")
+
     # Output
-    if args.output:
-        with open(args.output, "w") as f:
+    if output_path:
+        with open(output_path, "w") as f:
             json.dump(result, f, indent=2)
         print(f"Thermal analysis complete: {len(findings)} findings "
-              f"(score {score}/100) -> {args.output}", file=sys.stderr)
+              f"(score {score}/100) -> {output_path}", file=sys.stderr)
     elif args.text:
         print(format_text_report(result))
     else:
