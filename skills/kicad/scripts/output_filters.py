@@ -63,6 +63,7 @@ _STAGE_RULES: Dict[str, List[str]] = {
         'XV-', 'CC-', 'EG-', 'DA-', 'IO-', 'EF-', 'ES-',
         'RT-001', 'FD-001', 'TE-001',
         'GR-001', 'GR-002', 'GR-003', 'GR-004', 'GR-005',
+        'SS-001', 'SS-002', 'SS-003',
     ],
     'bring_up': [
         'WL-', 'TF-', 'SC-', 'AH-', 'PL-',

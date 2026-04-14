@@ -4918,6 +4918,86 @@ def audit_sourcing_fields(components: list[dict]) -> dict:
     return result
 
 
+def audit_sourcing_gate(components: list[dict]) -> list[dict]:
+    """Emit rich findings that gate fabrication on BOM completeness.
+
+    `audit_sourcing_fields()` returns a numeric summary; this surfaces
+    the gap as findings so the stage filter and severity rollups see
+    it. Rule tiers:
+      SS-001  mpn_percent < 50        severity=high   (pre-fab blocker)
+      SS-002  50 <= mpn_percent < 80  severity=warning
+      SS-003  80 <= mpn_percent < 100 severity=info
+    mpn_percent == 100 emits nothing.
+    """
+    findings: list[dict] = []
+    real = [c for c in components
+            if c.get("type") not in ("power_symbol", "power_flag", "flag",
+                                     "test_point", "mounting_hole",
+                                     "fiducial", "graphic")
+            and c.get("in_bom") and not c.get("dnp")]
+    seen = set()
+    unique = []
+    for c in real:
+        r = c.get("reference", "")
+        if r and r not in seen:
+            seen.add(r)
+            unique.append(c)
+    total = len(unique)
+    if total == 0:
+        return findings
+    missing = sorted(c.get("reference", "")
+                     for c in unique if not c.get("mpn"))
+    covered = total - len(missing)
+    pct = covered / total * 100.0
+
+    if pct >= 100.0:
+        return findings
+    if pct < 50.0:
+        rid, sev = "SS-001", "high"
+        headline = ("Sourcing blocker: BOM has <50% MPN coverage "
+                    f"({covered}/{total} parts). Board is not pre-fab ready.")
+    elif pct < 80.0:
+        rid, sev = "SS-002", "warning"
+        headline = (f"Sourcing gap: {covered}/{total} BOM parts have an MPN "
+                    f"({pct:.0f}%). Populate before fab.")
+    else:
+        rid, sev = "SS-003", "info"
+        headline = (f"Sourcing nearly complete: {covered}/{total} parts "
+                    f"have MPNs ({pct:.0f}%). Fill in remaining refs.")
+
+    findings.append({
+        "detector": "audit_sourcing_gate",
+        "rule_id": rid,
+        "severity": sev,
+        "confidence": "deterministic",
+        "evidence_source": "bom",
+        "category": "sourcing",
+        "summary": headline,
+        "description": (f"Sourcing audit: {covered} of {total} unique BOM "
+                        f"references carry a manufacturer part number "
+                        f"({pct:.1f}%). Pre-fab readiness requires 100% "
+                        f"coverage; production assembly requires all parts "
+                        f"sourceable via one of the supported distributors."),
+        "components": missing[:50],
+        "nets": [],
+        "pins": [],
+        "mpn_coverage_percent": round(pct, 1),
+        "missing_mpn_count": len(missing),
+        "total_bom_parts": total,
+        "recommendation": (
+            "Populate the MPN field on the listed refs (use the digikey / "
+            "mouser / lcsc / element14 skill to search by value/footprint "
+            "when the MPN isn't already known)."),
+        "report_context": {
+            "section": "Sourcing",
+            "impact": ("Pre-fab gate: board cannot be ordered until MPN "
+                       "coverage reaches 100%."),
+            "standard_ref": "",
+        },
+    })
+    return findings
+
+
 # Generic transistor symbol prefixes that encode assumed pin order
 _GENERIC_TRANSISTOR_PREFIXES = ("Q_NPN_", "Q_PNP_", "Q_NMOS_", "Q_PMOS_")
 
@@ -8434,6 +8514,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
     sourcing_audit = audit_sourcing_fields(all_components)
     datasheet_coverage_findings = audit_datasheet_coverage(
         all_components, str(Path(path).parent))
+    sourcing_gate_findings = audit_sourcing_gate(all_components)
     alternate_pins = summarize_alternate_pins(all_lib_symbols)
     ground_domains = classify_ground_domains(nets, all_components)
     bus_topology = analyze_bus_topology(merged_bus, all_labels, nets)
@@ -8549,6 +8630,9 @@ def analyze_schematic(path: str, project_root: str | None = None,
     # check" banner when no manufacturer evidence is available.
     if datasheet_coverage_findings:
         findings.extend(datasheet_coverage_findings)
+
+    if sourcing_gate_findings:
+        findings.extend(sourcing_gate_findings)
 
     # Build severity summary
     sev_counts = {"error": 0, "warning": 0, "info": 0}
