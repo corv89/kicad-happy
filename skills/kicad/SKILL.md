@@ -57,12 +57,29 @@ This skill includes Python scripts that extract comprehensive structured JSON fr
 
 Read analyzer JSON output directly rather than writing ad-hoc extraction scripts. The JSON schema has specific field names (documented below and in `references/output-schema.md`) that are easy to get wrong in custom code. To extract a specific section: `python3 -c "import json; d=json.load(open('file.json')); print(json.dumps(d['key'], indent=2))"`.
 
-**Before writing any ad-hoc Python to process analyzer output**, run `--schema` to see the exact field names and types:
+**When the JSON surprises you** — an AttributeError, unexpected shape, field
+returning `None` that "should" have a value — stop and run `--schema` before
+writing a second extraction attempt. It prints the exact field names and
+types for every top-level key:
+
 ```bash
 python3 <skill-path>/scripts/analyze_schematic.py --schema
 python3 <skill-path>/scripts/analyze_pcb.py --schema
 python3 <skill-path>/scripts/analyze_gerbers.py --schema
 ```
+
+**JSON field cheat sheet** — the most common mistakes when reading analyzer
+output by hand:
+
+| What you want | Correct path and field | Common mistake |
+|---------------|-----------------------|----------------|
+| Pins on a net | `nets[<name>].pins[].component / .pin_number / .pin_name / .pin_type` | `ref`, `pin`, `type`, `number` |
+| IC pin map | `ic_pin_analysis[]` is a **list** of IC entries; each has `.reference` and `.pins[]` with `.pin_number / .pin_name / .pin_type / .net / .connected_to[]` | Treating it as `{ref: {...}}` or `pins[].number` |
+| Subcircuits | `subcircuits[]` is a **list** of `{type, ...}` objects. Filter by `type` in Python; do not treat as `{type: [...]}`. Or use `findings[]` + `finding_schema.get_findings(data, Det.POWER_REGULATORS)` | Treating as a dict keyed by circuit type |
+| Zone net | `pcb.zones[].net` is an **integer net ID**, not a string. Use `f"{net!r}"` or convert first | `f"{net:20s}"` — crashes with `ValueError: Unknown format code 's' for object of type 'int'` |
+| Footprint position | `pcb.footprints[].x / .y` at top level (no `.position` wrapper) | `footprints[].position.x` |
+| Findings | `findings[]` flat list — each has `rule_id`, `detector`, `severity`, `summary`, `report_context`. Filter with `finding_schema.get_findings(data, Det.*)` or `group_findings(data)` | Looking for keyed dicts like `signal_analysis.power_regulators[]` (pre-v1.3 format, removed) |
+
 This prevents format-string bugs and wrong field names. Use f-strings or `json.dumps()` for output formatting — never `%s` with non-string types. See `references/output-schema.md` for the full schema with common extraction patterns.
 
 In all commands below, `<skill-path>` refers to this skill's base directory (shown at the top of this file when loaded).
@@ -151,10 +168,21 @@ All PCB analysis sections now produce findings with the rich format (detector, r
 
 ### Cross-Domain Analysis
 
-After running both schematic and PCB analyzers, run the cross-domain analyzer:
+After running both schematic and PCB analyzers, run the cross-domain analyzer.
+Point `--schematic` and `--pcb` at the current run's JSON files and pass
+`--analysis-dir analysis/` so the result lands inside the same run folder
+and the manifest tracks it:
 
 ```
-python3 <skill-path>/scripts/cross_analysis.py --schematic analysis/schematic.json --pcb analysis/pcb.json --output analysis/cross_analysis.json
+# Recommended: integrate into the current run
+python3 <skill-path>/scripts/cross_analysis.py \
+    --schematic analysis/<run_id>/schematic.json \
+    --pcb analysis/<run_id>/pcb.json \
+    --analysis-dir analysis/
+
+# One-off (bypasses the cache)
+python3 <skill-path>/scripts/cross_analysis.py \
+    --schematic schematic.json --pcb pcb.json --output cross.json
 ```
 
 Checks: CC-001 connector current capacity, EG-001 ESD protection gaps, DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync. PCB JSON optional.
@@ -165,7 +193,11 @@ When `--full` is used with the PCB analyzer, the output includes a `connectivity
 
 ### Gerber & Drill Analyzer
 ```bash
-python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/>
+# Recommended: integrate into the current run
+python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/> --analysis-dir analysis/
+
+# One-off
+python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/> --output gerber.json
 ```
 Outputs: layer identification (X2 attributes), component/net/pin mapping (KiCad 6+ TO attributes), aperture function classification, trace width distribution, board dimensions, drill classification (via/component/mounting), layer completeness, alignment verification, pad type summary (SMD/THT ratio). Add `--full` for complete pin-to-net connectivity dump. ~10KB JSON.
 
@@ -173,9 +205,17 @@ The gerber analyzer produces a `findings` list with rich format findings: GR-001
 
 If the script fails or returns unexpected results, see `references/manual-gerber-parsing.md` for the complete fallback methodology for parsing raw Gerber/Excellon files directly.
 
-All scripts output JSON to stdout by default. Use `--output file.json` to write to a file, `--compact` for single-line JSON.
+All scripts output JSON to stdout by default. Prefer `--analysis-dir analysis/`
+to integrate output into the run-folder convention described in "Analysis
+Cache Convention" below — every analyzer in a single session then co-locates
+inside the same `analysis/<run_id>/` folder and is tracked by the manifest.
+Use `--output file.json` only for one-off runs where you don't want the
+result cached. Add `--compact` for single-line JSON.
 
-**Analyzer JSON is worth keeping** — these are expensive to regenerate (large schematics take time). Use `--output` to save them for multi-pass analysis. They're not worth committing to git, but don't delete them between analysis steps.
+**Analyzer JSON is worth keeping** — these are expensive to regenerate (large
+schematics take time). `--analysis-dir` preserves every run and is the form
+downstream tools (kidoc, diff_analysis, what_if) expect. They're not worth
+committing to git, but don't delete them between analysis steps.
 
 ### Harmonized Output Format
 
@@ -197,7 +237,10 @@ All analyzers produce a uniform output structure:
 
 The `findings` list is the single authoritative source for all findings. Use `finding_schema.get_findings()` or `finding_schema.group_findings()` to filter by detector, rule prefix, or category. Detector names are available as constants in `finding_schema.Det`.
 
-All analyzers support `--text` for human-readable output and `--output` for JSON file output. Most support `--analysis-dir` for cache directory output.
+All analyzers support `--text` for human-readable output, `--analysis-dir` for
+integrated run-folder output (preferred), and `--output` for writing to a
+specific file verbatim (one-off). When both are passed, the explicit
+`--output` path wins — pick one form per invocation.
 
 ### Stage and Audience Filtering
 
@@ -436,14 +479,17 @@ Also used programmatically by `analysis_cache.should_create_new_run()` to decide
 Estimates junction temperatures of power-dissipating components by combining schematic power data with PCB thermal infrastructure (copper pour, thermal vias, package type). Use when the user says "check thermals", "thermal analysis", "will this overheat", "junction temperature", "power dissipation", or "thermal design".
 
 ```bash
-# Run thermal analysis (requires both schematic and PCB JSON)
-python3 <skill-path>/scripts/analyze_thermal.py -s analysis.json -p pcb.json
+# Recommended: integrate into the current run
+python3 <skill-path>/scripts/analyze_thermal.py \
+    -s analysis/<run_id>/schematic.json \
+    -p analysis/<run_id>/pcb.json \
+    --analysis-dir analysis/
 
 # Human-readable text report
-python3 <skill-path>/scripts/analyze_thermal.py -s analysis.json -p pcb.json --text
+python3 <skill-path>/scripts/analyze_thermal.py -s schematic.json -p pcb.json --text
 
-# Custom ambient temperature (default: 25°C)
-python3 <skill-path>/scripts/analyze_thermal.py -s analysis.json -p pcb.json --ambient 40 -o thermal.json
+# Custom ambient temperature (default: 25°C), one-off output file
+python3 <skill-path>/scripts/analyze_thermal.py -s schematic.json -p pcb.json --ambient 40 -o thermal.json
 ```
 
 Models each power component (LDO, switching regulator, shunt resistor) as a point heat source. Computes Tj = T_ambient + P_diss × Rθ_JA_effective, where Rθ_JA comes from a package lookup table (SOT-223: 60°C/W, QFN-5x5: 25°C/W, etc.) and is corrected for PCB thermal vias and copper pour. Rules:

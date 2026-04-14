@@ -42,14 +42,24 @@ Automated EMC risk analysis for KiCad PCB designs. Identifies the most common ca
 ### Step 1: Run the analyzers
 
 ```bash
-python3 <kicad-skill-path>/scripts/analyze_schematic.py design.kicad_sch --output schematic.json
-python3 <kicad-skill-path>/scripts/analyze_pcb.py design.kicad_pcb --full --output pcb.json
+python3 <kicad-skill-path>/scripts/analyze_schematic.py design.kicad_sch --analysis-dir analysis/
+python3 <kicad-skill-path>/scripts/analyze_pcb.py design.kicad_pcb --full --analysis-dir analysis/
 ```
 
 ### Step 2: Run EMC analysis
 
+Point `--schematic` and `--pcb` at the current run's JSONs and pass
+`--analysis-dir analysis/` so `emc.json` co-locates with them and gets tracked
+in the manifest:
+
 ```bash
-# Full analysis (both schematic and PCB)
+# Recommended: integrate into the current run
+python3 <skill-path>/scripts/analyze_emc.py \
+    --schematic analysis/<run_id>/schematic.json \
+    --pcb analysis/<run_id>/pcb.json \
+    --analysis-dir analysis/
+
+# One-off JSON (bypasses the cache)
 python3 <skill-path>/scripts/analyze_emc.py --schematic schematic.json --pcb pcb.json --output emc.json
 
 # SPICE-enhanced (improved PDN and filter accuracy)
