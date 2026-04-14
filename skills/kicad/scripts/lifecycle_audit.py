@@ -49,6 +49,14 @@ _TEMP_PRESETS = {
     "military": (-55, 125),
 }
 
+_LIFECYCLE_STATUS_RULES = {
+    'obsolete': ('LC-001', 'error'),
+    'discontinued': ('LC-001', 'error'),
+    'last_time_buy': ('LC-002', 'warning'),
+    'nrnd': ('LC-003', 'warning'),
+    'unknown': ('LC-004', 'info'),
+}
+
 
 def _classify_temp_grade(temp_min: float, temp_max: float) -> str:
     """Classify a temperature range into an industry grade."""
@@ -659,6 +667,33 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
                 if alts:
                     finding["alternatives"] = alts
 
+        rule_info = _LIFECYCLE_STATUS_RULES.get(status)
+        if rule_info:
+            rule_id, severity = rule_info
+            finding['detector'] = 'audit_bom'
+            finding['rule_id'] = rule_id
+            finding['category'] = 'lifecycle'
+            finding['severity'] = severity
+            finding['confidence'] = 'deterministic'
+            finding['evidence_source'] = 'datasheet'
+            finding['summary'] = f"{mpn}: {status} ({len(refs)} ref(s))"
+            finding['description'] = finding.get('alert', f'Component {mpn} is {status}.')
+            finding['components'] = sorted(refs)
+            finding['nets'] = []
+            finding['pins'] = []
+            finding['recommendation'] = f"Replace {mpn} — part is {status}."
+            finding['report_context'] = {'section': 'Lifecycle', 'impact': 'Supply chain risk', 'standard_ref': ''}
+        else:
+            finding['detector'] = 'audit_bom'
+            finding['rule_id'] = 'LC-ACT'
+            finding['category'] = 'lifecycle'
+            finding['severity'] = 'info'
+            finding['summary'] = f"{mpn}: active ({len(refs)} ref(s))"
+            finding['components'] = sorted(refs)
+            finding['nets'] = []
+            finding['pins'] = []
+            finding['report_context'] = {'section': 'Lifecycle', 'impact': '', 'standard_ref': ''}
+
         lifecycle_findings.append(finding)
 
         # Temperature
@@ -692,6 +727,17 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
                         "min_shortfall_c": design_min - comp_min if below_min else 0,
                         "max_shortfall_c": design_max - comp_max if above_max else 0,
                     },
+                    "detector": "audit_bom",
+                    "rule_id": "LT-001",
+                    "category": "temperature",
+                    "confidence": "deterministic",
+                    "evidence_source": temp.get("source", "unknown"),
+                    "summary": f"{mpn}: rated {comp_grade} ({comp_min}C to {comp_max}C), design needs {design_min}C to {design_max}C",
+                    "components": sorted(refs),
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Select component rated for full {design_min}C to {design_max}C range.",
+                    "report_context": {"section": "Temperature", "impact": "Operating range violation", "standard_ref": ""},
                 })
             else:
                 temp_ok += 1
