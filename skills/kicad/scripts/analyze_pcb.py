@@ -4874,6 +4874,32 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict,
                     f"design may follow manufacturer's recommended via pattern"
                 )
 
+            entry["detector"] = "analyze_thermal_pad_vias"
+            entry["rule_id"] = "TV-001"
+            entry["category"] = "thermal"
+            entry["severity"] = "warning" if adequacy in ("none", "insufficient") else "info"
+            entry["confidence"] = "deterministic"
+            entry["evidence_source"] = "topology"
+            entry["summary"] = f"Thermal vias: {ref} {adequacy} ({strict_via_count}/{recommended_min} min)"
+            entry["description"] = (
+                f"Thermal pad on {ref} pad {pad_num}: {adequacy} "
+                f"({strict_via_count} vias, {recommended_min} recommended)."
+            )
+            entry["components"] = [ref]
+            entry["nets"] = [pad.get("net_name", "")]
+            entry["pins"] = []
+            rec = []
+            if adequacy in ("none", "insufficient"):
+                rec.append(f"Add thermal vias under {ref} (need {recommended_min}, have {strict_via_count}).")
+            if entry.get("tenting_note"):
+                rec.append(entry["tenting_note"])
+            entry["recommendation"] = " ".join(rec)
+            entry["report_context"] = {
+                "section": "Thermal",
+                "impact": "Thermal dissipation",
+                "standard_ref": "",
+            }
+
             results.append(entry)
 
     # Sort: worst adequacy first
@@ -4962,11 +4988,35 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
             opp_uncovered.append(ref)
 
         if foreign_pads:
+            fz_nets = list(set(
+                n for fp_pad in foreign_pads
+                for n in fp_pad["foreign_zones"]
+            ))
             foreign_zone_details.append({
                 "component": ref,
                 "value": fp.get("value", ""),
                 "layer": fp_layer,
                 "pads": foreign_pads,
+                "detector": "analyze_copper_presence",
+                "rule_id": "CP-001",
+                "category": "copper_integrity",
+                "severity": "warning",
+                "confidence": "deterministic",
+                "evidence_source": "geometry",
+                "summary": f"Foreign zone under {ref}",
+                "description": (
+                    f"Component {ref} has same-layer copper from foreign "
+                    f"zone(s): {', '.join(fz_nets)}."
+                ),
+                "components": [ref],
+                "nets": fz_nets,
+                "pins": [fp_pad["pad"] for fp_pad in foreign_pads],
+                "recommendation": "Verify zone clearance rules or add keepout.",
+                "report_context": {
+                    "section": "Copper Integrity",
+                    "impact": "Electrical isolation",
+                    "standard_ref": "",
+                },
             })
 
     # Build compact summary
@@ -4992,6 +5042,28 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
     # The interesting signal: components WITHOUT opposite-layer copper
     if opp_uncovered:
         result["no_opposite_layer_copper"] = sorted(opp_uncovered)
+        result["no_opposite_layer_copper_findings"] = [{
+            "component": _ref,
+            "detector": "analyze_copper_presence",
+            "rule_id": "CP-002",
+            "category": "copper_integrity",
+            "severity": "info",
+            "confidence": "deterministic",
+            "evidence_source": "geometry",
+            "summary": f"No opposite-layer copper under {_ref}",
+            "description": (
+                f"Component {_ref} has no copper zone on the opposite layer."
+            ),
+            "components": [_ref],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {
+                "section": "Copper Integrity",
+                "impact": "Return path / shielding",
+                "standard_ref": "",
+            },
+        } for _ref in sorted(opp_uncovered)]
 
     if foreign_zone_details:
         result["same_layer_foreign_zones"] = foreign_zone_details
@@ -5033,6 +5105,26 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
                 "ref": ref,
                 "layer": fp_layer,
                 "gnd_clearance_mm": round(min_dist, 2),
+                "detector": "analyze_copper_presence",
+                "rule_id": "CP-003",
+                "category": "copper_integrity",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "geometry",
+                "summary": f"Touch pad {ref} GND clearance {round(min_dist, 2)}mm",
+                "description": (
+                    f"Touch pad {ref} on {fp_layer}: {round(min_dist, 2)}mm "
+                    f"clearance to nearest GND zone."
+                ),
+                "components": [ref],
+                "nets": [],
+                "pins": [],
+                "recommendation": "",
+                "report_context": {
+                    "section": "Copper Integrity",
+                    "impact": "Touch sensitivity",
+                    "standard_ref": "",
+                },
             })
     if touch_clearances:
         result["touch_pad_gnd_clearance"] = touch_clearances
