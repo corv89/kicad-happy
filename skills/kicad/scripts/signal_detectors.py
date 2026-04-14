@@ -4069,6 +4069,16 @@ def detect_label_aliases(ctx: AnalysisContext) -> list[dict]:
                         if lbl.get("name")})
         if len(names) < 2:
             continue
+        # Skip power-rail aliases: labels on GND / VCC / +3.3V / etc. are
+        # almost always documentation tags for subnodes of the power net
+        # (e.g. Kelvin-shunt returns labelled at the star point), not
+        # namespace collisions. The LB-001 rule targets *maintainability*
+        # risk — renaming a power rail label is a deliberate act, not a
+        # silent decoupling. If the user genuinely needs to audit
+        # power-net label entropy, a separate rule (LB-002) could be
+        # added later; for now we treat this as noise.
+        if is_power_net_name(net_name, None) or is_ground_name(net_name):
+            continue
         findings.append({
             "detector": "detect_label_aliases",
             "rule_id": "LB-001",
