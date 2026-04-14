@@ -45,6 +45,7 @@ _STAGE_RULES: Dict[str, List[str]] = {
         # LC / LT lifecycle
         'LC-', 'LT-',
         'NT-001',
+        'RS-001', 'RS-002',
     ],
     'layout': [
         'NR-', 'RP-', 'TW-', 'PS-002',

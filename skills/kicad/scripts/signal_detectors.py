@@ -3837,3 +3837,197 @@ def detect_solder_jumpers(ctx: AnalysisContext) -> list[dict]:
     return findings
 
 
+# ---------------------------------------------------------------------------
+# Rail source audit (RS-001 / RS-002)
+# ---------------------------------------------------------------------------
+
+def audit_rail_sources(ctx: AnalysisContext,
+                       power_regulators: list | None = None,
+                       solder_jumpers: list | None = None) -> list:
+    """Audit every power-classified net for a declared source.
+
+    A rail with no `power_out` pin, no `PWR_FLAG` / `#FLG`, and no
+    regulator output mapping is source-less on paper. The solder-jumper
+    aware trace: a bridged-by-default jumper joins two nets electrically;
+    if the other side has a source, the audited rail is sourced via the
+    jumper (INFO). A rail reached only through an *open* jumper is a HIGH
+    — the board won't power up until the user closes the jumper.
+
+    Rule tiers:
+      RS-001  rail has no source path at all                    severity=warning
+      RS-002  only source path is through an open jumper        severity=high
+              (board needs a solder action to function)
+      info    sourced directly OR via a bridged jumper         (recorded for audit)
+    """
+    findings: list = []
+    nets = ctx.nets or {}
+
+    # Regulator output nets (from the regulator detector) are sources
+    # even when the regulator symbol uses power_in on its OUT pin.
+    reg_output_nets: set = set()
+    for reg in (power_regulators or []):
+        out = reg.get("output_rail") or reg.get("vout_net")
+        if out:
+            reg_output_nets.add(out)
+
+    # Build a quick map of net → list of (neighbour, state, jumper_ref) tuples
+    # for solder jumpers that straddle the net.
+    jumper_bridges: dict = {}
+    for sj in (solder_jumpers or []):
+        state = sj.get("default_state")
+        nets_straddled = sj.get("nets") or []
+        if len(nets_straddled) < 2 or state not in ("bridged", "open"):
+            continue
+        a, b = nets_straddled[0], nets_straddled[1]
+        jumper_bridges.setdefault(a, []).append((b, state, sj.get("reference", "")))
+        jumper_bridges.setdefault(b, []).append((a, state, sj.get("reference", "")))
+
+    def _has_direct_source(net_info: dict, net_name: str) -> bool:
+        # Direct power_out pin anywhere on the net, OR an explicit PWR_FLAG
+        # (#FLG) tied to it, OR the rail is a regulator output.
+        # NOTE: #PWR symbols are KiCad power port instances; they appear as
+        # power_in in the analyzer and are NOT treated as sources here.
+        for p in net_info.get("pins", []):
+            if p.get("pin_type") == "power_out":
+                return True
+            comp = p.get("component") or ""
+            if comp.startswith("#FLG"):
+                # PWR_FLAG explicit declaration — ERC source marker.
+                return True
+        return net_name in reg_output_nets
+
+    def _power_rail(net_name: str, net_info: dict) -> bool:
+        # "Power rail" = named like a rail OR has any power_in pin on it.
+        if net_name.startswith("__unnamed_"):
+            return False
+        if is_power_net_name(net_name, None):
+            return True
+        return any(p.get("pin_type") == "power_in"
+                   for p in net_info.get("pins", []))
+
+    for net_name, net_info in nets.items():
+        if not _power_rail(net_name, net_info):
+            continue
+        if is_ground_name(net_name):
+            continue  # ground handled elsewhere
+        if _has_direct_source(net_info, net_name):
+            continue  # sourced directly, nothing to report
+
+        # No direct source. Trace one hop through jumpers.
+        jumper_paths = jumper_bridges.get(net_name, [])
+        bridged_sources: list = []   # (neighbour, jumper_ref)
+        open_sources: list = []
+        for neighbour, state, jref in jumper_paths:
+            neighbour_info = nets.get(neighbour, {})
+            if not neighbour_info:
+                continue
+            if _has_direct_source(neighbour_info, neighbour):
+                if state == "bridged":
+                    bridged_sources.append((neighbour, jref))
+                else:  # open
+                    open_sources.append((neighbour, jref))
+
+        if bridged_sources:
+            # Rail has an upstream source via a closed-by-default jumper.
+            # That's functional out of the box; record it as info.
+            neighbours = ", ".join(f"{n} via {j}" for n, j in bridged_sources)
+            findings.append({
+                "detector": "audit_rail_sources",
+                "rule_id": "RS-001",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "category": "power",
+                "summary": (f"{net_name} sourced via bridged solder jumper "
+                            f"({neighbours})"),
+                "description": (f"Net {net_name} has no direct power_out "
+                                f"pin or PWR_FLAG, but reaches a sourced "
+                                f"net through a bridged-by-default solder "
+                                f"jumper. Functional out of the box."),
+                "components": [j for _, j in bridged_sources],
+                "nets": [net_name] + [n for n, _ in bridged_sources],
+                "pins": [],
+                "source_path": "bridged_jumper",
+                "bridged_neighbours": [n for n, _ in bridged_sources],
+                "recommendation": (
+                    "No action. If you later score the jumper, this rail "
+                    "will lose its source."),
+                "report_context": {
+                    "section": "Power — Rail Sources",
+                    "impact": ("Rail functions without user action; "
+                               "dependent on bridged jumper."),
+                    "standard_ref": "",
+                },
+            })
+            continue
+
+        if open_sources:
+            neighbours = ", ".join(f"{n} via {j}" for n, j in open_sources)
+            findings.append({
+                "detector": "audit_rail_sources",
+                "rule_id": "RS-002",
+                "severity": "high",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "category": "power",
+                "summary": (f"{net_name} has no source unless user solders "
+                            f"a jumper ({neighbours})"),
+                "description": (f"Net {net_name} has no power_out pin and "
+                                f"no PWR_FLAG; the only potential source "
+                                f"lies across an OPEN-by-default solder "
+                                f"jumper. Board will not power up on this "
+                                f"rail until the user solders the jumper "
+                                f"pads."),
+                "components": [j for _, j in open_sources],
+                "nets": [net_name] + [n for n, _ in open_sources],
+                "pins": [],
+                "source_path": "open_jumper",
+                "open_neighbours": [n for n, _ in open_sources],
+                "recommendation": (
+                    "Confirm that leaving this jumper open is the intended "
+                    "factory-default. If the rail should be live out of "
+                    "the box, swap the jumper symbol/footprint to a "
+                    "bridged variant or add a direct connection."),
+                "report_context": {
+                    "section": "Power — Rail Sources",
+                    "impact": ("Board will not function on this rail until "
+                               "user closes the solder jumper."),
+                    "standard_ref": "",
+                },
+            })
+            continue
+
+        # No source at all — direct or through any jumper.
+        findings.append({
+            "detector": "audit_rail_sources",
+            "rule_id": "RS-001",
+            "severity": "warning",
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "category": "power",
+            "summary": f"{net_name} has no declared source",
+            "description": (f"Net {net_name} carries power_in pins but has "
+                            "no power_out pin, no PWR_FLAG, no regulator "
+                            "output mapping, and no bridged solder jumper "
+                            "path to a sourced net."),
+            "components": [],
+            "nets": [net_name],
+            "pins": [p.get("component", "") + "." + p.get("pin_number", "")
+                     for p in net_info.get("pins", [])
+                     if p.get("pin_type") == "power_in"][:10],
+            "source_path": "none",
+            "recommendation": (
+                "Add a PWR_FLAG to declare the rail as externally powered "
+                "(e.g. from a connector) or trace the rail back to a "
+                "regulator output. If the source lives on another sheet, "
+                "promote the net name to a global label."),
+            "report_context": {
+                "section": "Power — Rail Sources",
+                "impact": ("Rail has no source visible to the analyser; "
+                           "likely a wiring gap or missing PWR_FLAG."),
+                "standard_ref": "",
+            },
+        })
+
+    return findings
+

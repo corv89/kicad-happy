@@ -54,6 +54,7 @@ from kicad_utils import (
 )
 from kicad_types import AnalysisContext
 from signal_detectors import (
+    audit_rail_sources,
     detect_bridge_circuits,
     detect_crystal_circuits,
     detect_current_sense,
@@ -789,6 +790,8 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     pwm_led_dimming = detect_pwm_led_dimming(ctx, transistor_circuits)
     headphone_jacks = detect_headphone_jack(ctx)
     solder_jumpers = detect_solder_jumpers(ctx)
+    rail_source_audit = audit_rail_sources(
+        ctx, power_regulators=power_regulators, solder_jumpers=solder_jumpers)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -987,6 +990,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "pwm_led_dimming": pwm_led_dimming,
         "headphone_jacks": headphone_jacks,
         "solder_jumpers": solder_jumpers,
+        "rail_source_audit": rail_source_audit,
         "validation_findings": (
             pullup_findings +
             voltage_level_findings +
