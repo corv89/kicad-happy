@@ -380,8 +380,8 @@ class PinoutGenerator:
         """
         components = analysis.get('components', [])
         nets = analysis.get('nets', {})
-        esd_audit = [f for f in analysis.get('findings', [])
-                     if f.get('detector') == 'detect_esd_coverage_audit']
+        from finding_schema import Det, get_findings
+        esd_audit = get_findings(analysis, Det.ESD_AUDIT)
 
         # ESD data indexed by connector reference
         esd_by_ref: dict[str, dict] = {}

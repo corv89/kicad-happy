@@ -30,66 +30,11 @@ import sys
 # value_fields: numeric/string fields to compare for changes
 
 from detection_schema import SCHEMAS as _SCHEMAS
+from finding_schema import group_findings_legacy
 
 # SIGNAL_REGISTRY is derived from the unified detection schema.
 # Kept as a module-level name for backward compat (validate_signal_registry, _diff_items).
 SIGNAL_REGISTRY = {dt: (s.identity_fields, s.value_fields) for dt, s in _SCHEMAS.items()}
-
-# Mapping from detector names (in findings[].detector) to legacy
-# signal_analysis key names used by SIGNAL_REGISTRY / SCHEMAS.
-_DETECTOR_TO_LEGACY_KEY = {
-    "detect_power_regulators": "power_regulators",
-    "detect_integrated_ldos": "power_regulators",
-    "detect_voltage_dividers": "voltage_dividers",
-    "detect_rc_filters": "rc_filters",
-    "detect_lc_filters": "lc_filters",
-    "detect_crystal_circuits": "crystal_circuits",
-    "detect_decoupling": "decoupling_analysis",
-    "detect_current_sense": "current_sense",
-    "detect_protection_devices": "protection_devices",
-    "detect_opamp_circuits": "opamp_circuits",
-    "detect_transistor_circuits": "transistor_circuits",
-    "detect_bridge_circuits": "bridge_circuits",
-    "detect_rf_matching": "rf_matching",
-    "detect_rf_chains": "rf_chains",
-    "detect_bms_systems": "bms_systems",
-    "detect_battery_chargers": "battery_chargers",
-    "detect_motor_drivers": "motor_drivers",
-    "detect_ethernet_interfaces": "ethernet_interfaces",
-    "detect_buzzer_speakers": "buzzer_speaker_circuits",
-    "detect_key_matrices": "key_matrices",
-    "detect_isolation_barriers": "isolation_barriers",
-    "detect_hdmi_dvi_interfaces": "hdmi_dvi_interfaces",
-    "detect_lvds_interfaces": "lvds_interfaces",
-    "detect_memory_interfaces": "memory_interfaces",
-    "detect_addressable_leds": "addressable_led_chains",
-    "detect_debug_interfaces": "debug_interfaces",
-    "detect_adc_circuits": "adc_circuits",
-    "detect_reset_supervisors": "reset_supervisors",
-    "detect_clock_distribution": "clock_distribution",
-    "detect_display_interfaces": "display_interfaces",
-    "detect_sensor_interfaces": "sensor_interfaces",
-    "detect_level_shifters": "level_shifters",
-    "detect_audio_circuits": "audio_circuits",
-    "detect_led_driver_ics": "led_driver_ics",
-    "detect_rtc_circuits": "rtc_circuits",
-    "detect_thermocouple_rtd": "thermocouple_rtd",
-}
-
-
-def _findings_by_legacy_key(data: dict) -> dict:
-    """Group flat findings[] into a dict keyed by legacy signal_analysis names.
-
-    Returns {legacy_key: [finding, ...]} — same structure as the old
-    ``data["signal_analysis"]`` dict, for use by diff and trend code.
-    """
-    sa: dict = {}
-    for f in data.get("findings", []):
-        det = f.get("detector", "")
-        if det:
-            key = _DETECTOR_TO_LEGACY_KEY.get(det, det)
-            sa.setdefault(key, []).append(f)
-    return sa
 
 
 def validate_signal_registry(sample_output: dict) -> list[str]:
@@ -99,7 +44,7 @@ def validate_signal_registry(sample_output: dict) -> list[str]:
     whose key is not found in the findings of the sample output.
     Useful for catching stale registry entries after schema changes.
     """
-    sa = _findings_by_legacy_key(sample_output)
+    sa = group_findings_legacy(sample_output)
     warnings = []
     for key in SIGNAL_REGISTRY:
         if key not in sa:
@@ -358,8 +303,8 @@ def diff_schematic(base, head, threshold):
         result["components"] = comp_diff
 
     # Signal analysis (grouped from flat findings[])
-    base_sa = _findings_by_legacy_key(base)
-    head_sa = _findings_by_legacy_key(head)
+    base_sa = group_findings_legacy(base)
+    head_sa = group_findings_legacy(head)
     all_keys = set(list(base_sa.keys()) + list(head_sa.keys()))
     sa_diff = {}
 
@@ -1092,7 +1037,7 @@ def _extract_trends(analysis_dir, output_type, n_runs):
         except (json.JSONDecodeError, OSError):
             continue
 
-        sa = _findings_by_legacy_key(data)
+        sa = group_findings_legacy(data)
         for det_type, detections in sa.items():
             if not isinstance(detections, list):
                 continue

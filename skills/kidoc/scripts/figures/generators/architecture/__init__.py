@@ -133,22 +133,18 @@ class ArchitectureGenerator:
             return None
 
         # Build detector-keyed lookup from flat findings[]
-        _sa: dict[str, list] = {}
-        for f in analysis.get('findings', []):
-            det = f.get('detector', '')
-            key = det[len('detect_'):] if det.startswith('detect_') else det
-            if key:
-                _sa.setdefault(key, []).append(f)
+        from finding_schema import Det, group_findings
+        _sa = group_findings(analysis)
 
         # Collect regulator refs from signal analysis
         regulator_refs = {
-            r['ref'] for r in _sa.get('power_regulators', [])
+            r['ref'] for r in _sa.get(Det.POWER_REGULATORS, [])
             if isinstance(r, dict) and r.get('ref')
         }
 
         # Collect protection (ESD) device refs
         protection_refs: set[str] = set()
-        for e in _sa.get('esd_coverage_audit', []):
+        for e in _sa.get(Det.ESD_AUDIT, []):
             if isinstance(e, dict):
                 for dev in e.get('esd_devices', []):
                     if isinstance(dev, dict) and dev.get('ref'):

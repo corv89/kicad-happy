@@ -17,17 +17,7 @@ from kidoc_tables import (
     markdown_table, format_voltage, format_frequency,
     format_current, format_capacitance, format_resistance,
 )
-
-
-def _findings_by_detector(analysis: dict) -> dict:
-    """Build a detector-keyed lookup from the flat findings[] list."""
-    result: dict[str, list] = {}
-    for f in analysis.get('findings', []):
-        det = f.get('detector', '')
-        key = det[len('detect_'):] if det.startswith('detect_') else det
-        if key:
-            result.setdefault(key, []).append(f)
-    return result
+from finding_schema import Det, group_findings
 
 
 def _auto(section_id: str, content: str) -> str:
@@ -107,8 +97,8 @@ def section_executive_summary(analysis: dict, emc_data: dict | None,
     sheets = stats.get('sheets', 1)
 
     # Identify key ICs
-    _sa = _findings_by_detector(analysis)
-    regulators = _sa.get('power_regulators', [])
+    _sa = group_findings(analysis)
+    regulators = _sa.get(Det.POWER_REGULATORS, [])
     mcus = [c for c in analysis.get('components', [])
             if c.get('type') == 'ic' and any(k in c.get('lib_id', '').lower()
             for k in ('mcu', 'stm32', 'esp32', 'rp2040', 'atmega', 'nrf',
@@ -220,8 +210,8 @@ def section_power_design(analysis: dict, diagrams_dir: str) -> str:
     lines.append("")
 
     # Power regulators table
-    _sa = _findings_by_detector(analysis)
-    regulators = _sa.get('power_regulators', [])
+    _sa = group_findings(analysis)
+    regulators = _sa.get(Det.POWER_REGULATORS, [])
     if regulators:
         rows = []
         for reg in regulators:
@@ -241,7 +231,7 @@ def section_power_design(analysis: dict, diagrams_dir: str) -> str:
     lines.append("")
 
     # Decoupling analysis
-    decoupling = _sa.get('decoupling_analysis', [])
+    decoupling = _sa.get(Det.DECOUPLING, [])
     if decoupling:
         rows = []
         for d in decoupling:
@@ -302,8 +292,8 @@ def section_signal_interfaces(analysis: dict) -> str:
         lines.append("")
 
     # Level shifters
-    _sa = _findings_by_detector(analysis)
-    shifters = _sa.get('level_shifters', [])
+    _sa = group_findings(analysis)
+    shifters = _sa.get(Det.LEVEL_SHIFTERS, [])
     if shifters:
         lines.append("### Level Shifting")
         lines.append("")
@@ -330,10 +320,10 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
     lines = ["## 5. Analog Design"]
     lines.append("")
 
-    sa = _findings_by_detector(analysis)
+    sa = group_findings(analysis)
 
     # Voltage dividers
-    dividers = sa.get('voltage_dividers', [])
+    dividers = sa.get(Det.VOLTAGE_DIVIDERS, [])
     if dividers:
         lines.append("### Voltage Dividers")
         lines.append("")
@@ -370,7 +360,7 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
         lines.append("")
 
     # Filters
-    for ftype, label in [('rc_filters', 'RC Filters'), ('lc_filters', 'LC Filters')]:
+    for ftype, label in [(Det.RC_FILTERS, 'RC Filters'), (Det.LC_FILTERS, 'LC Filters')]:
         filters = sa.get(ftype, [])
         if filters:
             lines.append(f"### {label}")
@@ -389,7 +379,7 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
             lines.append("")
 
     # Crystal circuits
-    crystals = sa.get('crystal_circuits', [])
+    crystals = sa.get(Det.CRYSTAL_CIRCUITS, [])
     if crystals:
         lines.append("### Crystal / Oscillator")
         lines.append("")
@@ -400,7 +390,7 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
         lines.append("")
 
     # Op-amp circuits
-    opamps = sa.get('opamp_circuits', [])
+    opamps = sa.get(Det.OPAMP_CIRCUITS, [])
     if opamps:
         lines.append("### Op-Amp Circuits")
         lines.append("")
@@ -416,7 +406,7 @@ def section_analog_design(analysis: dict, diagrams_dir: str) -> str:
                            markdown_table(['Ref', 'Part', 'Topology', 'Gain'], rows)))
         lines.append("")
 
-    if not any([dividers, sa.get('rc_filters'), sa.get('lc_filters'),
+    if not any([dividers, sa.get(Det.RC_FILTERS), sa.get(Det.LC_FILTERS),
                 crystals, opamps]):
         lines.append("*No analog subcircuits detected.*")
         lines.append("")
@@ -630,7 +620,7 @@ def section_test_debug(analysis: dict) -> str:
     lines.append("")
 
     # Debug interfaces
-    debug = _findings_by_detector(analysis).get('debug_interfaces', [])
+    debug = group_findings(analysis).get(Det.DEBUG_INTERFACES, [])
     if debug:
         rows = [[d.get('ref', '?'), d.get('type', ''), d.get('protocol', '')]
                 for d in debug]
@@ -758,8 +748,8 @@ def section_ce_essential_requirements(analysis: dict, config: dict) -> str:
     ]
 
     # Add radio if applicable
-    sa = _findings_by_detector(analysis)
-    if sa.get('rf_chains') or sa.get('rf_matching'):
+    sa = group_findings(analysis)
+    if sa.get(Det.RF_CHAINS) or sa.get(Det.RF_MATCHING):
         rows.append(['RED 2014/53/EU', 'Radio equipment', 'EN 300 328, EN 301 489', ''])
 
     lines.append(_auto("ce_essential_reqs",
@@ -843,7 +833,7 @@ def section_ce_risk_assessment(analysis: dict, emc_data: dict | None,
         rows[2][3] = f"{critical} critical findings" if critical else 'Pre-compliance assessment'
 
     # ESD from analysis
-    esd_audit = _findings_by_detector(analysis).get('esd_coverage_audit', [])
+    esd_audit = group_findings(analysis).get(Det.ESD_AUDIT, [])
     unprotected = 0
     for e in esd_audit:
         if isinstance(e, dict):
@@ -984,7 +974,7 @@ def section_icd_interface_list(analysis: dict) -> str:
 
     rows = []
     # Connectors from ESD audit (they enumerate all external connectors)
-    esd = _findings_by_detector(analysis).get('esd_coverage_audit', [])
+    esd = group_findings(analysis).get(Det.ESD_AUDIT, [])
     for e in esd:
         if isinstance(e, dict):
             rows.append([
@@ -1017,7 +1007,7 @@ def section_icd_connector_details(analysis: dict, config: dict) -> str:
         if doc_def.get('type') == 'icd':
             target_connectors = doc_def.get('connectors', [])
 
-    esd = _findings_by_detector(analysis).get('esd_coverage_audit', [])
+    esd = group_findings(analysis).get(Det.ESD_AUDIT, [])
     ic_pins = analysis.get('ic_pin_analysis', {})
 
     for e in esd:

@@ -18,6 +18,8 @@ _kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 if os.path.isdir(_kicad_scripts):
     sys.path.insert(0, os.path.abspath(_kicad_scripts))
 
+from finding_schema import Det, group_findings
+
 
 def _load_json(path):
     if not path or not os.path.isfile(path):
@@ -29,17 +31,11 @@ def _load_json(path):
         return None
 
 
-def _findings_by_detector(analysis):
-    """Build a detector-keyed lookup from the flat findings[] list."""
-    result = {}
+def _group_findings(analysis):
+    """Group findings by detector name, returning empty dict for falsy input."""
     if not analysis:
-        return result
-    for f in analysis.get('findings', []):
-        det = f.get('detector', '')
-        key = det[len('detect_'):] if det.startswith('detect_') else det
-        if key:
-            result.setdefault(key, []).append(f)
-    return result
+        return {}
+    return group_findings(analysis)
 
 
 def _safe_float(val, fmt=".1f"):
@@ -244,7 +240,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
         L.extend(risk_lines)
 
     # === Collect all findings ===
-    sig = _findings_by_detector(sch)
+    sig = _group_findings(sch)
     vd = sch.get("voltage_derating", {}) if sch else {}
     pc = sch.get("protocol_compliance", {}) if sch else {}
 
@@ -296,7 +292,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
     warning_count = sum(1 for s, _, _ in findings if s == "warning")
 
     # === Collect verified items ===
-    for reg in sig.get("power_regulators", []):
+    for reg in sig.get(Det.POWER_REGULATORS, []):
         vout = reg.get("estimated_vout")
         if vout and isinstance(vout, (int, float)):
             verified.append(f"{reg['ref']} → {reg.get('output_rail','')} at {vout:.2f}V")
@@ -363,7 +359,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
         L.append("")
 
     # === Power ===
-    regs = sig.get("power_regulators", [])
+    regs = sig.get(Det.POWER_REGULATORS, [])
     sleep = sch.get("sleep_current_audit") if sch else None
     if regs:
         L.append("### Power")
@@ -474,10 +470,10 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
 
     # === Signal Analysis (compact) ===
     sig_items = []
-    for key, label in [("voltage_dividers", "divider"), ("rc_filters", "RC filter"),
-                       ("lc_filters", "LC filter"), ("opamp_circuits", "opamp"),
-                       ("transistor_circuits", "transistor"), ("protection_devices", "protection"),
-                       ("crystal_circuits", "crystal"), ("current_sense", "current sense")]:
+    for key, label in [(Det.VOLTAGE_DIVIDERS, "divider"), (Det.RC_FILTERS, "RC filter"),
+                       (Det.LC_FILTERS, "LC filter"), (Det.OPAMP_CIRCUITS, "opamp"),
+                       (Det.TRANSISTOR_CIRCUITS, "transistor"), (Det.PROTECTION_DEVICES, "protection"),
+                       (Det.CRYSTAL_CIRCUITS, "crystal"), (Det.CURRENT_SENSE, "current sense")]:
         items = sig.get(key, [])
         if items:
             sig_items.append(f"{len(items)} {label}{'s' if len(items) > 1 else ''}")
@@ -494,7 +490,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
             L.append("")
 
     # === Opamp warnings (if any) ===
-    opamps = sig.get("opamp_circuits", [])
+    opamps = sig.get(Det.OPAMP_CIRCUITS, [])
     opamp_warnings = [(oa["reference"], w) for oa in opamps for w in oa.get("warnings", [])]
     unused_channels = [(oa["reference"], oa["unused_channels"]) for oa in opamps if oa.get("unused_channels")]
     if opamp_warnings or unused_channels:
@@ -670,7 +666,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
     a = L.append
 
     stats = sch.get("statistics", {}) if sch else {}
-    sig = _findings_by_detector(sch)
+    sig = _group_findings(sch)
 
     # === Header ===
     a("# Design Review — Full Report")
@@ -748,7 +744,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
         a("")
 
         # Power Regulators
-        regs = sig.get("power_regulators", [])
+        regs = sig.get(Det.POWER_REGULATORS, [])
         if regs:
             a("### Power Regulators")
             a("")
@@ -763,7 +759,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
             a("")
 
         # Voltage Dividers
-        dividers = sig.get("voltage_dividers", [])
+        dividers = sig.get(Det.VOLTAGE_DIVIDERS, [])
         if dividers:
             a("### Voltage Dividers")
             a("")
@@ -777,13 +773,13 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
             a("")
 
         # Filters
-        for ftype, fname in [("rc_filters", "RC Filters"), ("lc_filters", "LC Filters")]:
+        for ftype, fname in [(Det.RC_FILTERS, "RC Filters"), (Det.LC_FILTERS, "LC Filters")]:
             filters = sig.get(ftype, [])
             if filters:
                 a(f"### {fname}")
                 a("")
                 for f in filters:
-                    if ftype == "rc_filters":
+                    if ftype == Det.RC_FILTERS:
                         comps = f"{f.get('resistor','')} + {f.get('capacitor','')}"
                     else:
                         comps = f"{f.get('inductor','')} + {', '.join(str(c) for c in f.get('capacitors', []))}"
@@ -796,7 +792,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
                 a("")
 
         # Opamps
-        opamps = sig.get("opamp_circuits", [])
+        opamps = sig.get(Det.OPAMP_CIRCUITS, [])
         if opamps:
             a("### Op-Amp Circuits")
             a("")
@@ -817,7 +813,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
             a("")
 
         # Protection
-        protection = sig.get("protection_devices", [])
+        protection = sig.get(Det.PROTECTION_DEVICES, [])
         if protection:
             a("### Protection Devices")
             a("")
@@ -828,7 +824,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
             a("")
 
         # Transistors
-        transistors = sig.get("transistor_circuits", [])
+        transistors = sig.get(Det.TRANSISTOR_CIRCUITS, [])
         if transistors:
             a("### Transistor Circuits")
             a("")
@@ -838,7 +834,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
             a("")
 
         # Crystals
-        crystals = sig.get("crystal_circuits", [])
+        crystals = sig.get(Det.CRYSTAL_CIRCUITS, [])
         if crystals:
             a("### Crystal Circuits")
             a("")
@@ -849,7 +845,7 @@ def format_full_report(schematic_path, pcb_path, spice_path, emc_path, derating_
             a("")
 
         # Decoupling
-        decoupling = sig.get("decoupling_analysis", [])
+        decoupling = sig.get(Det.DECOUPLING, [])
         if decoupling:
             a("### Decoupling Analysis")
             a("")
