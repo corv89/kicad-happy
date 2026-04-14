@@ -5202,7 +5202,10 @@ def analyze_fiducials(footprints: list[dict]) -> dict:
 
     for fp in footprints:
         ref = fp.get("reference", "")
-        lib = (fp.get("library", "") + " " + fp.get("value", "") + " " + ref).lower()
+        val = fp.get("value", "")
+        if not isinstance(val, str):
+            val = str(val)
+        lib = (fp.get("library", "") + " " + val + " " + ref).lower()
         layer = fp.get("layer", "F.Cu")
         side = layer if layer in fiducials_by_side else "F.Cu"
 
