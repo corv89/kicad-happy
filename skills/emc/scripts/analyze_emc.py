@@ -462,6 +462,7 @@ def main():
             cs["max_severity"] = sev
 
     result = {
+        'analyzer_type': 'emc',
         'summary': {
             'total_findings': len(findings),
             'categories_checked': len(category_summary),
@@ -472,6 +473,11 @@ def main():
             'medium': counts['MEDIUM'],
             'low': counts['LOW'],
             'info': counts['INFO'],
+            'by_severity': {
+                'error': counts['CRITICAL'] + counts['HIGH'],
+                'warning': counts['MEDIUM'],
+                'info': counts['LOW'] + counts['INFO'],
+            },
             'emc_risk_score': risk_score,
         },
         'target_standard': args.standard,

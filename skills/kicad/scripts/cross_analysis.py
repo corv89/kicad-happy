@@ -876,6 +876,7 @@ def main():
     parser.add_argument('--pcb', '-p', default=None, help='PCB analyzer JSON (optional)')
     parser.add_argument('--output', '-o', default=None, help='Output JSON file path')
     parser.add_argument('--schema', action='store_true', help='Print output schema and exit')
+    parser.add_argument('--text', action='store_true', help='Print human-readable text report')
     parser.add_argument('--analysis-dir', default=None, help='Write into analysis cache directory')
 
     args = parser.parse_args()
@@ -917,6 +918,12 @@ def main():
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,
     }
+
+    if args.text:
+        for f in result.get('findings', []):
+            sev = f.get('severity', 'info').upper()
+            print(f'[{sev:8s}] {f.get("rule_id", ""):8s} {f.get("summary", "")}')
+        sys.exit(0)
 
     if args.output:
         with open(args.output, 'w') as f:
