@@ -40,6 +40,11 @@ from kicad_utils import lookup_switching_freq as _estimate_switching_freq
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _get_findings(schematic: Dict, detector: str) -> list:
+    """Return findings matching *detector* from the flat findings[] list."""
+    return [f for f in schematic.get('findings', []) if f.get('detector') == detector]
+
+
 def _is_power_or_ground(name: str) -> bool:
     """Check if a net name is power or ground."""
     if not name:
@@ -647,7 +652,7 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
     # Also include protection devices from schematic
     protection_refs = set()
     if schematic:
-        for pd in schematic.get('signal_analysis', {}).get('protection_devices', []):
+        for pd in _get_findings(schematic, 'detect_protection_devices'):
             protection_refs.add(pd.get('reference', ''))
 
     # For each connector, check if there's a filter component nearby
@@ -675,7 +680,7 @@ def check_connector_filtering(pcb: Dict, schematic: Optional[Dict] = None) -> Li
                     conn_nets.add(n)
 
             if schematic:
-                for pd in schematic.get('signal_analysis', {}).get('protection_devices', []):
+                for pd in _get_findings(schematic, 'detect_protection_devices'):
                     prot_net = pd.get('protected_net', '')
                     if prot_net in conn_nets:
                         has_nearby_filter = True
@@ -794,7 +799,7 @@ def check_connector_ground_pins(pcb: Dict,
 def check_switching_harmonics(schematic: Dict, standard: str = 'fcc-class-b') -> List[Dict]:
     """Check if switching regulator harmonics overlap with emission limit bands."""
     findings = []
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
 
     for reg in regulators:
         topology = reg.get('topology', '').lower()
@@ -919,7 +924,7 @@ def check_clock_routing(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
     # Identify clock nets from schematic
     clock_nets = set()
     if schematic:
-        crystals = schematic.get('signal_analysis', {}).get('crystal_circuits', [])
+        crystals = _get_findings(schematic, 'detect_crystal_circuits')
         for xtal in crystals:
             # Crystal in/out nets are clock nets
             for pin in xtal.get('pins', []):
@@ -1073,7 +1078,7 @@ def check_crystal_guard_ring(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
     if not schematic:
         return findings
 
-    crystals = schematic.get('signal_analysis', {}).get('crystal_circuits', [])
+    crystals = _get_findings(schematic, 'detect_crystal_circuits')
     if not crystals:
         return findings
 
@@ -1153,7 +1158,7 @@ def check_via_stitching(pcb: Dict, schematic: Optional[Dict] = None) -> List[Dic
     # Estimate highest frequency on the board
     highest_freq = 50e6  # default assumption: 50 MHz
     if schematic:
-        crystals = schematic.get('signal_analysis', {}).get('crystal_circuits', [])
+        crystals = _get_findings(schematic, 'detect_crystal_circuits')
         for xtal in crystals:
             freq = xtal.get('frequency') or 0
             if isinstance(freq, (int, float)) and freq > highest_freq:
@@ -1409,7 +1414,7 @@ def estimate_switching_emissions(schematic: Dict,
     harmonic amplitudes and compares against the analytical envelope.
     """
     findings = []
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
 
     for reg in regulators:
         topology = reg.get('topology', '').lower()
@@ -1500,7 +1505,7 @@ def check_switching_node_area(pcb: Optional[Dict],
     if not schematic or not pcb:
         return findings
 
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
     zones = pcb.get('zones', [])
     segments = pcb.get('tracks', {}).get('segments', [])
 
@@ -1598,7 +1603,7 @@ def check_input_cap_loop_area(pcb: Optional[Dict],
     if not schematic or not pcb:
         return findings
 
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
 
     # Prefer pre-computed loop areas from PCB analyzer (enrichment 2.4)
     precomputed = pcb.get('switching_loop_areas', []) if pcb else []
@@ -2515,10 +2520,9 @@ def check_emi_filter_effectiveness(pcb: Optional[Dict],
     if not schematic:
         return findings
 
-    sa = schematic.get('signal_analysis', {})
-    regulators = sa.get('power_regulators', [])
-    lc_filters = sa.get('lc_filters', [])
-    rc_filters = sa.get('rc_filters', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
+    lc_filters = _get_findings(schematic, 'detect_lc_filters')
+    rc_filters = _get_findings(schematic, 'detect_rc_filters')
 
     if not regulators:
         return findings
@@ -2623,7 +2627,7 @@ def check_esd_protection_path(pcb: Dict,
     if not schematic or not pcb:
         return findings
 
-    protection = schematic.get('signal_analysis', {}).get('protection_devices', [])
+    protection = _get_findings(schematic, 'detect_protection_devices')
     if not protection:
         return findings
 
@@ -2780,7 +2784,7 @@ def check_thermal_emc(pcb: Optional[Dict],
         return findings
 
     # TH-001: Cap DC bias derating on power rails
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
     for reg in regulators:
         vout = reg.get('vout_estimated') or reg.get('estimated_vout')
         if not vout or vout <= 0:
@@ -2931,14 +2935,14 @@ def check_shielding_advisory(pcb: Dict,
     # Collect known emission frequencies
     emission_freqs = []
     if schematic:
-        for xtal in schematic.get('signal_analysis', {}).get('crystal_circuits', []):
+        for xtal in _get_findings(schematic, 'detect_crystal_circuits'):
             f = xtal.get('frequency') or 0
             if isinstance(f, (int, float)) and f > 0:
                 emission_freqs.append(f)
                 emission_freqs.append(f * 2)  # 2nd harmonic
                 emission_freqs.append(f * 3)  # 3rd harmonic
 
-        for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
+        for reg in _get_findings(schematic, 'detect_power_regulators'):
             if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
             sw = reg.get('switching_frequency_hz') or _estimate_switching_freq(reg.get('value', '')) or _default_switching_freq(reg.get('topology', ''))
@@ -3031,7 +3035,7 @@ def check_pdn_impedance(pcb: Optional[Dict],
     if not schematic:
         return findings
 
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
     if not regulators:
         return findings
 
@@ -3208,12 +3212,12 @@ def check_pdn_distributed(pcb: Optional[Dict],
     if not schematic:
         return findings
 
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
     if not regulators:
         return findings
 
     power_budget = schematic.get('power_budget', {})
-    decoupling = schematic.get('signal_analysis', {}).get('decoupling_analysis', [])
+    decoupling = _get_findings(schematic, 'detect_decoupling')
 
     # Build and enrich power tree
     tree = build_power_tree(regulators, power_budget, decoupling)
@@ -3610,7 +3614,7 @@ def generate_test_plan(schematic: Optional[Dict], pcb: Optional[Dict],
 
     # Switching regulator harmonics
     if schematic:
-        for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
+        for reg in _get_findings(schematic, 'detect_power_regulators'):
             if reg.get('topology', '').lower() in ('ldo', 'linear'):
                 continue
             ref = reg.get('ref', reg.get('reference', ''))
@@ -3627,7 +3631,7 @@ def generate_test_plan(schematic: Optional[Dict], pcb: Optional[Dict],
                         f'{ref} ({val}) harmonics {harmonics[0]}-{harmonics[-1]}')
 
         # Crystal harmonics (up to 5th)
-        for xtal in schematic.get('signal_analysis', {}).get('crystal_circuits', []):
+        for xtal in _get_findings(schematic, 'detect_crystal_circuits'):
             freq = xtal.get('frequency') or 0
             if not isinstance(freq, (int, float)) or freq <= 0:
                 continue
@@ -3900,8 +3904,7 @@ def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
     from emc_formulas import estimate_inductor_h_field
 
     footprints = pcb.get('footprints', [])
-    signal = schematic.get('signal_analysis', {})
-    regulators = signal.get('power_regulators', [])
+    regulators = _get_findings(schematic, 'detect_power_regulators')
 
     # Build ref → footprint position map
     fp_pos = {}

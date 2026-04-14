@@ -984,9 +984,9 @@ def build_power_tree(regulators: list, power_budget: dict,
     via input_rail/output_rail relationships.
 
     Args:
-        regulators: signal_analysis.power_regulators list.
+        regulators: findings filtered by detector=='detect_power_regulators'.
         power_budget: power_budget dict with 'rails' sub-dict.
-        decoupling_analysis: signal_analysis.decoupling_analysis list.
+        decoupling_analysis: findings filtered by detector=='detect_decoupling'.
 
     Returns:
         Dict of {rail_name: node_dict}.

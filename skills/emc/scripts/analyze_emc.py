@@ -139,7 +139,7 @@ def extract_board_info(schematic: dict = None, pcb: dict = None) -> dict:
 
         # Extract highest frequencies
         freqs = []
-        for xtal in schematic.get('signal_analysis', {}).get('crystal_circuits', []):
+        for xtal in [f for f in schematic.get('findings', []) if f.get('detector') == 'detect_crystal_circuits']:
             f = xtal.get('frequency') or 0
             if isinstance(f, (int, float)) and f > 0:
                 freqs.append(f)
@@ -149,7 +149,7 @@ def extract_board_info(schematic: dict = None, pcb: dict = None) -> dict:
 
         # Switching frequencies
         sw_freqs = []
-        for reg in schematic.get('signal_analysis', {}).get('power_regulators', []):
+        for reg in [f for f in schematic.get('findings', []) if f.get('detector') == 'detect_power_regulators']:
             if reg.get('topology') not in ('ldo', 'linear'):
                 # Infer from part number via emc_rules helper
                 from emc_rules import _estimate_switching_freq
