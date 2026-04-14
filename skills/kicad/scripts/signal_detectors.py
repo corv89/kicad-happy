@@ -4037,3 +4037,68 @@ def audit_rail_sources(ctx: AnalysisContext,
 
     return findings
 
+
+# ---------------------------------------------------------------------------
+# Global label aliases (LB-001)
+# ---------------------------------------------------------------------------
+
+def detect_label_aliases(ctx: AnalysisContext) -> list[dict]:
+    """Flag nets carrying two or more distinct global / hierarchical labels.
+
+    KiCad happily lets you place both ``SLS1`` and ``RS1P`` on the same
+    physical wire. The net-name resolution picks one, but the other is
+    still 'real' in the sense that a human reading the schematic sees
+    both — and a future refactor that renames one silently decouples
+    them. Severity stays INFO because it's a maintainability risk, not
+    a functional defect.
+
+    Reads ``nets[name].labels`` populated by ``build_net_map`` — each entry
+    is ``{name, type}`` where ``type`` is one of
+    ``global_label / hierarchical_label / label / directive_label``.
+    """
+    findings: list[dict] = []
+    nets = ctx.nets or {}
+    for net_name, net_info in nets.items():
+        applied = net_info.get("labels") or []
+        # Only global and hierarchical labels cross sheets — local labels
+        # are by design wire-scoped and not aliased outside their sheet.
+        cross_sheet = [lbl for lbl in applied
+                       if lbl.get("type") in
+                           ("global_label", "hierarchical_label")]
+        names = sorted({str(lbl.get("name", "")) for lbl in cross_sheet
+                        if lbl.get("name")})
+        if len(names) < 2:
+            continue
+        findings.append({
+            "detector": "detect_label_aliases",
+            "rule_id": "LB-001",
+            "severity": "info",
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "category": "labels",
+            "summary": (f"Net {net_name} has multiple global/hierarchical "
+                        f"labels: {', '.join(names)}"),
+            "description": (f"Net {net_name!r} is labelled with multiple "
+                            f"names: {', '.join(names)}. KiCad treats this "
+                            f"as one electrical net, but a future refactor "
+                            f"that renames one label without the other "
+                            f"silently decouples the two halves."),
+            "components": [],
+            "nets": [net_name],
+            "pins": [],
+            "aliases": names,
+            "label_count": len(cross_sheet),
+            "recommendation": (
+                "Pick the canonical name and remove the other labels, OR "
+                "document the alias intentionally (e.g. an expressly named "
+                "test point). If this is a cross-sheet connection via both "
+                "global and hierarchical labels, prefer one or the other "
+                "style consistently."),
+            "report_context": {
+                "section": "Labels",
+                "impact": "Maintainability — silent alias across future edits.",
+                "standard_ref": "",
+            },
+        })
+    return findings
+

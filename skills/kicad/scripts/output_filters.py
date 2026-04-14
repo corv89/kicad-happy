@@ -46,6 +46,7 @@ _STAGE_RULES: Dict[str, List[str]] = {
         'LC-', 'LT-',
         'NT-001',
         'RS-001', 'RS-002',
+        'LB-001',
     ],
     'layout': [
         'NR-', 'RP-', 'TW-', 'PS-002',

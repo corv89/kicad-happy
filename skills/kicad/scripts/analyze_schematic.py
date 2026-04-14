@@ -61,6 +61,7 @@ from signal_detectors import (
     detect_decoupling,
     detect_design_observations,
     detect_integrated_ldos,
+    detect_label_aliases,
     detect_lc_filters,
     detect_led_drivers,
     detect_opamp_circuits,
@@ -792,6 +793,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     solder_jumpers = detect_solder_jumpers(ctx)
     rail_source_audit = audit_rail_sources(
         ctx, power_regulators=power_regulators, solder_jumpers=solder_jumpers)
+    label_aliases = detect_label_aliases(ctx)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -991,6 +993,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "headphone_jacks": headphone_jacks,
         "solder_jumpers": solder_jumpers,
         "rail_source_audit": rail_source_audit,
+        "label_aliases": label_aliases,
         "validation_findings": (
             pullup_findings +
             voltage_level_findings +
@@ -1451,6 +1454,13 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
         }
         best_name = None
         best_priority = 999
+
+        # Accumulate every global / hierarchical / local label attached to
+        # this net (LB-001 reads this; also useful for report annotations).
+        # Dedup by (name, label_type).
+        net_labels_seen: set[tuple[str, str]] = set()
+        net_labels: list[dict] = []
+
         for info in all_info:
             if info["source"] == "power_symbol":
                 p = _NET_NAME_PRIORITY["power_symbol"]
@@ -1458,10 +1468,16 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
                     best_name = info["net_name"]
                     best_priority = p
             elif info["source"] == "label":
-                p = _NET_NAME_PRIORITY.get(info.get("label_type", "label"), 3)
+                lbl_name = info.get("name") or ""
+                lbl_type = info.get("label_type") or "label"
+                p = _NET_NAME_PRIORITY.get(lbl_type, 3)
                 if p < best_priority:
-                    best_name = info["name"]
+                    best_name = lbl_name
                     best_priority = p
+                key_tuple = (lbl_name, lbl_type)
+                if lbl_name and key_tuple not in net_labels_seen:
+                    net_labels_seen.add(key_tuple)
+                    net_labels.append({"name": lbl_name, "type": lbl_type})
         net_name = best_name
 
         # Check if any member of this group is a no-connect marker OR a
@@ -1503,12 +1519,19 @@ def build_net_map(components: list[dict], wires: list[dict], labels: list[dict],
                 nets[net_name]["point_count"] += len(members)
                 if has_nc_marker:
                     nets[net_name]["no_connect"] = True
+                existing_labels = nets[net_name].setdefault("labels", [])
+                existing_seen = {(lbl["name"], lbl["type"]) for lbl in existing_labels}
+                for nl in net_labels:
+                    if (nl["name"], nl["type"]) not in existing_seen:
+                        existing_labels.append(nl)
+                        existing_seen.add((nl["name"], nl["type"]))
             else:
                 nets[net_name] = {
                     "name": net_name,
                     "pins": pin_connections,
                     "point_count": len(members),
                     "no_connect": has_nc_marker,
+                    "labels": net_labels,
                 }
 
     return nets

@@ -121,6 +121,7 @@ class Det:
     PWM_LED_DIMMING = 'detect_pwm_led_dimming'
     HEADPHONE_JACK = 'detect_headphone_jack'
     SOLDER_JUMPERS = 'detect_solder_jumpers'
+    LABEL_ALIASES = 'detect_label_aliases'
     # Audit detectors
     ESD_AUDIT = 'audit_esd_protection'
     LED_AUDIT = 'audit_led_circuits'
