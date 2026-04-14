@@ -137,6 +137,18 @@ Add `--full` to include individual track/via coordinates, per-segment trace impe
 
 **Verify after every run:** Confirm footprint count and board outline dimensions against the raw `.kicad_pcb` file. Verify pad-to-net assignments for IC footprints against the schematic's pin-to-net mapping — this catches library footprint errors where pad numbering doesn't match the symbol pinout. If the script fails, see `references/manual-pcb-parsing.md` for the fallback methodology.
 
+### PCB Rich Format and Assembly Checks
+
+All PCB analysis sections now produce findings with the rich format (detector, rule_id, category, severity, confidence, summary, recommendation, report_context). Additionally, 7 new assembly/DFM checks run automatically:
+
+- **FD-001**: Fiducial marker presence (>= 3 per SMD side)
+- **TE-001**: Test point coverage across signal nets
+- **OR-001**: Passive component orientation consistency
+- **SK-001**: Silkscreen text overlapping exposed pads
+- **VP-001**: Via-in-pad without tenting (--full mode)
+- **BV-001**: Via clearance from board edges (--full mode)
+- **KO-001**: Keepout zone violations
+
 ### Cross-Domain Analysis
 
 After running both schematic and PCB analyzers, run the cross-domain analyzer:

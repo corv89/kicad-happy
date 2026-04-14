@@ -494,6 +494,51 @@ SCHEMAS = {
         identity_fields=["net_name"],
         value_fields=["type", "frequency_hz"],
     ),
+    # --- PCB rich format + assembly/DFM checks (PCB-R8) ---
+    "dfm_violations": DetectionSchema(
+        identity_fields=["parameter"],
+        value_fields=["actual_mm", "tier_required"],
+    ),
+    "placement_overlaps": DetectionSchema(
+        identity_fields=["component_a", "component_b"],
+        value_fields=["overlap_mm2"],
+    ),
+    "tombstoning_risk": DetectionSchema(
+        identity_fields=["component"],
+        value_fields=["risk_level", "package"],
+    ),
+    "thermal_pad_vias": DetectionSchema(
+        identity_fields=["component", "pad_number"],
+        value_fields=["adequacy", "via_count"],
+    ),
+    "fiducial_check": DetectionSchema(
+        identity_fields=["side"],
+        value_fields=["fiducial_count"],
+    ),
+    "test_point_coverage": DetectionSchema(
+        identity_fields=[],
+        value_fields=["coverage_pct", "nets_with_test_points"],
+    ),
+    "orientation_consistency": DetectionSchema(
+        identity_fields=["side"],
+        value_fields=["deviator_count", "majority_angle"],
+    ),
+    "silkscreen_pad_overlaps": DetectionSchema(
+        identity_fields=["component"],
+        value_fields=["silk_layer"],
+    ),
+    "via_in_pad_issues": DetectionSchema(
+        identity_fields=["component", "pad"],
+        value_fields=["tented"],
+    ),
+    "keepout_violations": DetectionSchema(
+        identity_fields=["component", "keepout_name"],
+        value_fields=["severity"],
+    ),
+    "board_edge_via_clearance": DetectionSchema(
+        identity_fields=["via_x", "via_y"],
+        value_fields=["edge_clearance_mm"],
+    ),
 }
 
 
