@@ -1265,11 +1265,27 @@ def analyze_connectivity(footprints: list[dict], tracks: dict, vias: dict,
     unrouted = []
     for net_num, pads in pad_nets.items():
         if len(pads) >= 2 and net_num not in routed_nets:
+            net_name = net_names.get(net_num, f"net_{net_num}")
+            # Extract component refs from pad strings ("REF.pad" -> "REF")
+            comp_refs = sorted(set(p.split(".")[0] for p in pads if "." in p))
             unrouted.append({
                 "net_number": net_num,
-                "net_name": net_names.get(net_num, f"net_{net_num}"),
+                "net_name": net_name,
                 "pad_count": len(pads),
                 "pads": pads,
+                "detector": "analyze_connectivity",
+                "rule_id": "RT-001",
+                "category": "connectivity",
+                "severity": "error",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Unrouted net {net_name} ({len(pads)} pads)",
+                "description": f"Net {net_name} has {len(pads)} pads but no routing (tracks, vias, or zones).",
+                "components": comp_refs,
+                "nets": [net_name],
+                "pins": [],
+                "recommendation": f"Route net {net_name} to connect {len(pads)} pads",
+                "report_context": {"section": "Connectivity", "impact": "functionality", "standard_ref": ""},
             })
 
     return {
@@ -3137,11 +3153,25 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
                 # Compute overlap area
                 ox = min(cy_a["max_x"], cy_b["max_x"]) - max(cy_a["min_x"], cy_b["min_x"])
                 oy = min(cy_a["max_y"], cy_b["max_y"]) - max(cy_a["min_y"], cy_b["min_y"])
+                overlap_mm2 = round(ox * oy, 3)
                 overlaps.append({
                     "component_a": fp_a["reference"],
                     "component_b": fp_b["reference"],
                     "layer": fp_a["layer"],
-                    "overlap_mm2": round(ox * oy, 3),
+                    "overlap_mm2": overlap_mm2,
+                    "detector": "analyze_placement",
+                    "rule_id": "PM-001",
+                    "category": "placement",
+                    "severity": "error" if overlap_mm2 > 1.0 else "warning",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Courtyard overlap between {fp_a['reference']} and {fp_b['reference']} ({overlap_mm2}mm\u00b2)",
+                    "description": f"Components {fp_a['reference']} and {fp_b['reference']} have overlapping courtyards on {fp_a['layer']} ({overlap_mm2}mm\u00b2 overlap area).",
+                    "components": [fp_a["reference"], fp_b["reference"]],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Resolve courtyard overlap between {fp_a['reference']} and {fp_b['reference']} — move components apart or adjust courtyard geometry",
+                    "report_context": {"section": "Placement", "impact": "assembly", "standard_ref": ""},
                 })
 
     overlaps.sort(key=lambda o: o["overlap_mm2"], reverse=True)
@@ -3174,10 +3204,24 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
                 )
 
             if min_edge < 1.0:  # Flag components within 1mm of edge
+                clearance = round(min_edge, 2)
                 edge_close.append({
                     "component": fp["reference"],
                     "layer": fp["layer"],
-                    "edge_clearance_mm": round(min_edge, 2),
+                    "edge_clearance_mm": clearance,
+                    "detector": "analyze_placement",
+                    "rule_id": "PM-002",
+                    "category": "placement",
+                    "severity": "error" if clearance < 0.5 else "warning",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"{fp['reference']} is {clearance}mm from board edge",
+                    "description": f"Component {fp['reference']} on {fp['layer']} is only {clearance}mm from the board edge, risking damage during depaneling or handling.",
+                    "components": [fp["reference"]],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Move {fp['reference']} further from board edge (currently {clearance}mm, recommend >= 1.0mm)",
+                    "report_context": {"section": "Placement", "impact": "manufacturability", "standard_ref": ""},
                 })
 
     edge_close.sort(key=lambda e: e["edge_clearance_mm"])
@@ -3627,6 +3671,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 "message": f"Track width {check_width}mm is below advanced "
                            f"process minimum "
                            f"({LIMITS_ADV['min_track_width']}mm)",
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-001",
+                "category": "dfm",
+                "severity": "error",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Track width {check_width}mm below advanced minimum ({LIMITS_ADV['min_track_width']}mm)",
+                "description": f"Track width {check_width}mm is below the advanced process minimum of {LIMITS_ADV['min_track_width']}mm, requiring a challenging fab tier.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": f"Track width {check_width}mm is below advanced process minimum ({LIMITS_ADV['min_track_width']}mm)",
+                "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
             })
         elif check_width < LIMITS_STD["min_track_width"]:
             violations.append({
@@ -3638,6 +3695,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 "message": f"Track width {check_width}mm requires advanced "
                            f"process (standard minimum: "
                            f"{LIMITS_STD['min_track_width']}mm)",
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-001",
+                "category": "dfm",
+                "severity": "warning",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Track width {check_width}mm requires advanced process (standard: {LIMITS_STD['min_track_width']}mm)",
+                "description": f"Track width {check_width}mm is below the standard process minimum of {LIMITS_STD['min_track_width']}mm, requiring an advanced fab tier.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": f"Track width {check_width}mm requires advanced process (standard minimum: {LIMITS_STD['min_track_width']}mm)",
+                "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
             })
 
     # --- Track spacing analysis (approximate from segment proximity) ---
@@ -3683,6 +3753,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "message": f"Approximate track spacing {round(min_spacing, 4)}mm is below "
                                f"advanced process minimum ({LIMITS_ADV['min_track_spacing']}mm)",
                     "note": "Spacing is approximate (endpoint-to-endpoint, not full segment geometry)",
+                    "detector": "analyze_dfm",
+                    "rule_id": "DFM-001",
+                    "category": "dfm",
+                    "severity": "error",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Track spacing {round(min_spacing, 4)}mm below advanced minimum ({LIMITS_ADV['min_track_spacing']}mm)",
+                    "description": f"Approximate track spacing {round(min_spacing, 4)}mm is below the advanced process minimum of {LIMITS_ADV['min_track_spacing']}mm.",
+                    "components": [],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Approximate track spacing {round(min_spacing, 4)}mm is below advanced process minimum ({LIMITS_ADV['min_track_spacing']}mm)",
+                    "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
                 })
             elif min_spacing < LIMITS_STD["min_track_spacing"]:
                 violations.append({
@@ -3694,6 +3777,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "message": f"Approximate track spacing {round(min_spacing, 4)}mm requires "
                                f"advanced process (standard: {LIMITS_STD['min_track_spacing']}mm)",
                     "note": "Spacing is approximate (endpoint-to-endpoint, not full segment geometry)",
+                    "detector": "analyze_dfm",
+                    "rule_id": "DFM-001",
+                    "category": "dfm",
+                    "severity": "warning",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Track spacing {round(min_spacing, 4)}mm requires advanced process (standard: {LIMITS_STD['min_track_spacing']}mm)",
+                    "description": f"Approximate track spacing {round(min_spacing, 4)}mm requires an advanced fab tier (standard minimum: {LIMITS_STD['min_track_spacing']}mm).",
+                    "components": [],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Approximate track spacing {round(min_spacing, 4)}mm requires advanced process (standard: {LIMITS_STD['min_track_spacing']}mm)",
+                    "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
                 })
 
     # --- Via drill analysis ---
@@ -3712,6 +3808,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "tier_required": "challenging",
                     "message": f"Via drill {min_drill}mm is below advanced process "
                                f"minimum ({LIMITS_ADV['min_drill']}mm)",
+                    "detector": "analyze_dfm",
+                    "rule_id": "DFM-001",
+                    "category": "dfm",
+                    "severity": "error",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Via drill {min_drill}mm below advanced minimum ({LIMITS_ADV['min_drill']}mm)",
+                    "description": f"Via drill {min_drill}mm is below the advanced process minimum of {LIMITS_ADV['min_drill']}mm, requiring a challenging fab tier.",
+                    "components": [],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Via drill {min_drill}mm is below advanced process minimum ({LIMITS_ADV['min_drill']}mm)",
+                    "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
                 })
             elif min_drill < LIMITS_STD["min_drill"]:
                 violations.append({
@@ -3722,6 +3831,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "tier_required": "advanced",
                     "message": f"Via drill {min_drill}mm requires advanced process "
                                f"(standard: {LIMITS_STD['min_drill']}mm)",
+                    "detector": "analyze_dfm",
+                    "rule_id": "DFM-001",
+                    "category": "dfm",
+                    "severity": "warning",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Via drill {min_drill}mm requires advanced process (standard: {LIMITS_STD['min_drill']}mm)",
+                    "description": f"Via drill {min_drill}mm is below the standard process minimum of {LIMITS_STD['min_drill']}mm, requiring an advanced fab tier.",
+                    "components": [],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Via drill {min_drill}mm requires advanced process (standard: {LIMITS_STD['min_drill']}mm)",
+                    "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
                 })
 
     # --- Annular ring analysis ---
@@ -3744,6 +3866,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "tier_required": "challenging",
                     "message": f"Annular ring {min_ring}mm is below advanced process "
                                f"minimum ({LIMITS_ADV['min_annular_ring']}mm)",
+                    "detector": "analyze_dfm",
+                    "rule_id": "DFM-001",
+                    "category": "dfm",
+                    "severity": "error",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Annular ring {min_ring}mm below advanced minimum ({LIMITS_ADV['min_annular_ring']}mm)",
+                    "description": f"Annular ring {min_ring}mm is below the advanced process minimum of {LIMITS_ADV['min_annular_ring']}mm, requiring a challenging fab tier.",
+                    "components": [],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Annular ring {min_ring}mm is below advanced process minimum ({LIMITS_ADV['min_annular_ring']}mm)",
+                    "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
                 })
             elif min_ring < LIMITS_STD["min_annular_ring"]:
                 violations.append({
@@ -3754,6 +3889,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                     "tier_required": "advanced",
                     "message": f"Annular ring {min_ring}mm requires advanced process "
                                f"(standard: {LIMITS_STD['min_annular_ring']}mm)",
+                    "detector": "analyze_dfm",
+                    "rule_id": "DFM-001",
+                    "category": "dfm",
+                    "severity": "warning",
+                    "confidence": "deterministic",
+                    "evidence_source": "topology",
+                    "summary": f"Annular ring {min_ring}mm requires advanced process (standard: {LIMITS_STD['min_annular_ring']}mm)",
+                    "description": f"Annular ring {min_ring}mm is below the standard process minimum of {LIMITS_STD['min_annular_ring']}mm, requiring an advanced fab tier.",
+                    "components": [],
+                    "nets": [],
+                    "pins": [],
+                    "recommendation": f"Annular ring {min_ring}mm requires advanced process (standard: {LIMITS_STD['min_annular_ring']}mm)",
+                    "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
                 })
 
     # --- IPC class annular ring compliance ---
@@ -3769,6 +3917,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 'message': (f'Via annular ring {min_ring}mm below '
                             f'IPC Class {ipc_class} minimum '
                             f'{ipc_min_via}mm'),
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-002",
+                "category": "dfm",
+                "severity": "warning",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Via annular ring {min_ring}mm below IPC Class {ipc_class} minimum {ipc_min_via}mm",
+                "description": f"Via annular ring {min_ring}mm does not meet IPC Class {ipc_class} minimum of {ipc_min_via}mm.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": f"Increase via annular ring to at least {ipc_min_via}mm to meet IPC Class {ipc_class} requirements",
+                "report_context": {"section": "DFM", "impact": "compliance", "standard_ref": f"IPC-6012 Class {ipc_class}"},
             })
 
     # Class 3: check for breakout (annular ring <= 0 means breakout)
@@ -3781,6 +3942,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 'ipc_class': 3,
                 'message': (f'{breakout_count} vias with annular ring '
                             f'breakout — not allowed for IPC Class 3'),
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-002",
+                "category": "dfm",
+                "severity": "warning",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"{breakout_count} vias with annular ring breakout (IPC Class 3 violation)",
+                "description": f"{breakout_count} vias have annular ring breakout, which is not allowed for IPC Class 3.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": "Increase via annular ring to eliminate breakout for IPC Class 3 compliance",
+                "report_context": {"section": "DFM", "impact": "compliance", "standard_ref": "IPC-6012 Class 3"},
             })
 
     # Class 3: via-in-pad fill requirement
@@ -3794,6 +3968,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 'message': (f'{len(vip_vias)} via-in-pad instances — '
                             f'IPC Class 3 requires filled and '
                             f'plated-over via-in-pad'),
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-002",
+                "category": "dfm",
+                "severity": "warning",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"{len(vip_vias)} via-in-pad instances require fill for IPC Class 3",
+                "description": f"{len(vip_vias)} via-in-pad instances detected; IPC Class 3 requires filled and plated-over via-in-pad.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": "Ensure via-in-pad instances are filled and plated-over for IPC Class 3 compliance",
+                "report_context": {"section": "DFM", "impact": "compliance", "standard_ref": "IPC-6012 Class 3"},
             })
 
     # --- Board dimensions assessment ---
@@ -3813,6 +4000,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 "tier_required": "standard",
                 "message": f"Board size {width}x{height}mm exceeds 100x100mm — "
                            f"higher fabrication pricing tier at JLCPCB",
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-001",
+                "category": "dfm",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Board size {width}x{height}mm exceeds 100x100mm pricing threshold",
+                "description": f"Board size {width}x{height}mm exceeds the 100x100mm threshold, resulting in higher fabrication pricing at JLCPCB.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": f"Board size {width}x{height}mm exceeds 100x100mm — higher fabrication pricing tier at JLCPCB",
+                "report_context": {"section": "DFM", "impact": "cost", "standard_ref": ""},
             })
 
         if width < LIMITS_STD["min_board_dim"] and height < LIMITS_STD["min_board_dim"]:
@@ -3823,6 +4023,19 @@ def analyze_dfm(footprints: list[dict], tracks: dict, vias: dict,
                 "tier_required": "standard",
                 "message": f"Board size {width}x{height}mm is very small — "
                            f"may have handling concerns during fabrication",
+                "detector": "analyze_dfm",
+                "rule_id": "DFM-001",
+                "category": "dfm",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Board size {width}x{height}mm is very small — handling concerns",
+                "description": f"Board size {width}x{height}mm is below the minimum dimension threshold, which may cause handling issues during fabrication.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": f"Board size {width}x{height}mm is very small — may have handling concerns during fabrication",
+                "report_context": {"section": "DFM", "impact": "manufacturability", "standard_ref": ""},
             })
 
     # --- Determine overall DFM tier ---
@@ -4238,6 +4451,19 @@ def analyze_tombstoning_risk(footprints: list[dict], tracks: dict,
                 "pad_1_net": net_name_a,
                 "pad_2_net": net_name_b,
                 "reasons": risks,
+                "detector": "analyze_tombstoning_risk",
+                "rule_id": "TB-001",
+                "category": "dfm",
+                "severity": "warning" if risk_level == "high" else "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"{fp['reference']} ({sp['package']}) tombstoning risk: {risk_level}",
+                "description": f"{fp['reference']} ({sp['package']}, {fp.get('value', '')}) has {risk_level} tombstoning risk due to thermal asymmetry between pads.",
+                "components": [fp["reference"]],
+                "nets": [],
+                "pins": [],
+                "recommendation": "; ".join(risks),
+                "report_context": {"section": "DFM", "impact": "assembly", "standard_ref": ""},
             })
 
     # Sort by risk level (high first)
