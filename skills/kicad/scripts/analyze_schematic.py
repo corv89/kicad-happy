@@ -8652,6 +8652,39 @@ def analyze_schematic(path: str, project_root: str | None = None,
     # Statistics
     stats = compute_statistics(all_components, nets, bom, all_wires, all_no_connects)
 
+    # Annotate __unnamed_N nets with a human-readable display_name when
+    # exactly one named IC pin is on them. Does NOT rename the net —
+    # only adds a display hint consumers can use in reports.
+    _IC_TYPES = {"ic", "regulator", "opamp", "microcontroller", "memory",
+                 "connector_ic", "analog_ic", "mixed_signal",
+                 "power_management", "interface"}
+    _comp_by_ref = {c.get("reference"): c for c in all_components}
+    for _net_name, _info in nets.items():
+        if not _net_name.startswith("__unnamed_"):
+            continue
+        if _info.get("display_name"):
+            continue
+        _named_ic_pin = None
+        for _p in _info.get("pins", []) or []:
+            _pname = (_p.get("pin_name") or "").strip()
+            if not _pname or _pname in ("~", "NC"):
+                continue
+            _ref = _p.get("component") or ""
+            _comp = _comp_by_ref.get(_ref)
+            if not _comp:
+                continue
+            _ctype = (_comp.get("type") or _comp.get("category") or "").lower()
+            if _ctype not in _IC_TYPES:
+                continue
+            if _named_ic_pin is None:
+                _named_ic_pin = (_ref, _pname)
+            else:
+                # Multiple named IC pins — ambiguous, skip annotation.
+                _named_ic_pin = None
+                break
+        if _named_ic_pin:
+            _info["display_name"] = f"{_named_ic_pin[0]}.{_named_ic_pin[1]}"
+
     # Confidence map for downstream consumers (format-report.py, top-risk)
     confidence_map = {
         # Deterministic — structural/netlist checks
