@@ -1343,6 +1343,12 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
     if zip_scan:
         result["zip_archives"] = zip_scan
 
+    findings = _build_gerber_findings(
+        completeness, alignment, drill_classification,
+        gerber_summary, drill_summary, result["statistics"])
+    if findings:
+        result["findings"] = findings
+
     # Full mode: include raw pin-to-net connectivity
     if full and any(g.get("x2_objects") for g in gerbers):
         all_pins = []
@@ -1360,6 +1366,157 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
             result["connectivity"] = sorted(all_pins, key=lambda p: (p["ref"], p["pin"]))
 
     return result
+
+
+def _build_gerber_findings(completeness, alignment, drill_classification,
+                           gerber_summary, drills, statistics) -> list:
+    """Build rich findings from gerber analysis data."""
+    findings = []
+
+    # GR-001: Missing layers
+    required_layers = {'F.Cu', 'B.Cu', 'Edge.Cuts'}
+    if completeness.get('source') == 'gbrjob':
+        missing = completeness.get('missing', [])
+    else:
+        missing = completeness.get('missing_required', []) + completeness.get('missing_recommended', [])
+        required_layers.update(completeness.get('missing_required', []))
+
+    for layer in missing:
+        is_required = layer in required_layers
+        findings.append({
+            'detector': 'analyze_gerbers',
+            'rule_id': 'GR-001',
+            'category': 'gerber_completeness',
+            'severity': 'warning' if is_required else 'info',
+            'confidence': 'deterministic',
+            'evidence_source': 'topology',
+            'summary': f'Missing layer: {layer}',
+            'description': f'Expected {"required" if is_required else "recommended"} layer {layer} not found in gerber set.',
+            'components': [],
+            'nets': [],
+            'pins': [],
+            'recommendation': f'Add {layer} to gerber export.',
+            'report_context': {'section': 'Gerber Completeness', 'impact': 'Fab may reject' if is_required else 'Assembly quality', 'standard_ref': ''},
+        })
+
+    # GR-003: Missing or empty drill file
+    has_drill = statistics.get('drill_files', 0) > 0
+    if not has_drill:
+        findings.append({
+            'detector': 'analyze_gerbers',
+            'rule_id': 'GR-003',
+            'category': 'gerber_completeness',
+            'severity': 'warning',
+            'confidence': 'deterministic',
+            'evidence_source': 'topology',
+            'summary': 'No drill file in gerber set',
+            'description': 'No Excellon drill file found. PCB fabrication requires drill data.',
+            'components': [],
+            'nets': [],
+            'pins': [],
+            'recommendation': 'Include drill file(s) in gerber export.',
+            'report_context': {'section': 'Gerber Completeness', 'impact': 'Fab will reject', 'standard_ref': ''},
+        })
+    elif statistics.get('total_holes', 0) == 0:
+        findings.append({
+            'detector': 'analyze_gerbers',
+            'rule_id': 'GR-003',
+            'category': 'gerber_completeness',
+            'severity': 'info',
+            'confidence': 'deterministic',
+            'evidence_source': 'topology',
+            'summary': 'Drill file has 0 holes',
+            'description': 'Drill file present but contains no hole definitions.',
+            'components': [],
+            'nets': [],
+            'pins': [],
+            'recommendation': 'Verify drill file was exported correctly.',
+            'report_context': {'section': 'Gerber Completeness', 'impact': '', 'standard_ref': ''},
+        })
+
+    # GR-002: Alignment issues
+    for issue in alignment.get('issues', []):
+        findings.append({
+            'detector': 'analyze_gerbers',
+            'rule_id': 'GR-002',
+            'category': 'gerber_alignment',
+            'severity': 'warning',
+            'confidence': 'deterministic',
+            'evidence_source': 'topology',
+            'summary': f'Alignment: {issue}',
+            'description': f'Layer alignment issue: {issue}',
+            'components': [],
+            'nets': [],
+            'pins': [],
+            'recommendation': 'Re-export gerbers to ensure consistent layer alignment.',
+            'report_context': {'section': 'Gerber Alignment', 'impact': 'Layer misregistration', 'standard_ref': ''},
+        })
+
+    # GR-004: Solder paste aperture mismatch
+    # Compare flash counts between paste and copper layers
+    paste_flashes = {}
+    copper_flashes = {}
+    for g in gerber_summary:
+        lt = g.get('layer_type', '')
+        flashes = g.get('flash_count', 0)
+        if 'Paste' in lt and flashes > 0:
+            side = 'F' if lt.startswith('F') else 'B'
+            paste_flashes[side] = paste_flashes.get(side, 0) + flashes
+        elif '.Cu' in lt and (lt.startswith('F.') or lt.startswith('B.')):
+            side = 'F' if lt.startswith('F') else 'B'
+            copper_flashes[side] = copper_flashes.get(side, 0) + flashes
+
+    for side in paste_flashes:
+        p_count = paste_flashes[side]
+        c_count = copper_flashes.get(side, 0)
+        if c_count > 0 and p_count < c_count * 0.5:
+            ratio = p_count / c_count * 100
+            findings.append({
+                'detector': 'analyze_gerbers',
+                'rule_id': 'GR-004',
+                'category': 'gerber_completeness',
+                'severity': 'warning',
+                'confidence': 'heuristic',
+                'evidence_source': 'topology',
+                'summary': f'{side} paste layer: {p_count} flashes vs {c_count} copper ({ratio:.0f}%)',
+                'description': f'{side}-side paste layer has significantly fewer flashes ({p_count}) than copper layer ({c_count}). This may indicate missing solder paste apertures.',
+                'components': [],
+                'nets': [],
+                'pins': [],
+                'recommendation': 'Check solder paste aperture generation — missing apertures cause assembly defects.',
+                'report_context': {'section': 'Gerber Completeness', 'impact': 'Assembly solder joint quality', 'standard_ref': ''},
+            })
+
+    # GR-005: Board outline not closed (heuristic)
+    # Check if Edge.Cuts layer exists and has reasonable draw count
+    edge_layer = None
+    for g in gerber_summary:
+        if g.get('layer_type', '') == 'Edge.Cuts':
+            edge_layer = g
+            break
+    if edge_layer:
+        draws = edge_layer.get('draw_count', 0)
+        if draws > 0 and draws < 4:
+            findings.append({
+                'detector': 'analyze_gerbers',
+                'rule_id': 'GR-005',
+                'category': 'gerber_completeness',
+                'severity': 'error',
+                'confidence': 'heuristic',
+                'evidence_source': 'topology',
+                'summary': f'Board outline may not be closed — only {draws} draw(s)',
+                'description': f'Edge.Cuts layer has only {draws} draw command(s). A closed rectangular outline needs at least 4. The outline may be incomplete.',
+                'components': [],
+                'nets': [],
+                'pins': [],
+                'recommendation': 'Verify board outline forms a closed shape before submitting to fab.',
+                'report_context': {'section': 'Gerber Completeness', 'impact': 'Fab will reject open outlines', 'standard_ref': ''},
+            })
+    elif completeness.get('complete', True) is False:
+        # Edge.Cuts missing entirely — already covered by GR-001
+        pass
+
+    return findings
 
 
 def _get_schema():
