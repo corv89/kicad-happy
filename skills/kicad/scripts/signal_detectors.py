@@ -3842,8 +3842,8 @@ def detect_solder_jumpers(ctx: AnalysisContext) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def audit_rail_sources(ctx: AnalysisContext,
-                       power_regulators: list | None = None,
-                       solder_jumpers: list | None = None) -> list:
+                       power_regulators: list[dict] | None = None,
+                       solder_jumpers: list[dict] | None = None) -> list[dict]:
     """Audit every power-classified net for a declared source.
 
     A rail with no `power_out` pin, no `PWR_FLAG` / `#FLG`, and no
@@ -3859,12 +3859,12 @@ def audit_rail_sources(ctx: AnalysisContext,
               (board needs a solder action to function)
       info    sourced directly OR via a bridged jumper         (recorded for audit)
     """
-    findings: list = []
+    findings: list[dict] = []
     nets = ctx.nets or {}
 
     # Regulator output nets (from the regulator detector) are sources
     # even when the regulator symbol uses power_in on its OUT pin.
-    reg_output_nets: set = set()
+    reg_output_nets: set[str] = set()
     for reg in (power_regulators or []):
         out = reg.get("output_rail") or reg.get("vout_net")
         if out:
@@ -3872,11 +3872,17 @@ def audit_rail_sources(ctx: AnalysisContext,
 
     # Build a quick map of net → list of (neighbour, state, jumper_ref) tuples
     # for solder jumpers that straddle the net.
-    jumper_bridges: dict = {}
+    jumper_bridges: dict[str, list[tuple[str, str, str]]] = {}
     for sj in (solder_jumpers or []):
         state = sj.get("default_state")
         nets_straddled = sj.get("nets") or []
-        if len(nets_straddled) < 2 or state not in ("bridged", "open"):
+        # Only 2-net jumpers (standard SolderJumper_2_Bridged / _Open) are
+        # amenable to one-hop traversal. 3-pin selector jumpers (e.g.
+        # SolderJumper_3_Bridged12 / _Bridged23) encode the actual shorted
+        # pair in the footprint suffix — picking any two of the three nets
+        # would misidentify which are bridged. Skip until per-pin state
+        # resolution is available.
+        if len(nets_straddled) != 2 or state not in ("bridged", "open"):
             continue
         a, b = nets_straddled[0], nets_straddled[1]
         jumper_bridges.setdefault(a, []).append((b, state, sj.get("reference", "")))
@@ -3915,8 +3921,8 @@ def audit_rail_sources(ctx: AnalysisContext,
 
         # No direct source. Trace one hop through jumpers.
         jumper_paths = jumper_bridges.get(net_name, [])
-        bridged_sources: list = []   # (neighbour, jumper_ref)
-        open_sources: list = []
+        bridged_sources: list[tuple[str, str]] = []   # (neighbour, jumper_ref)
+        open_sources: list[tuple[str, str]] = []
         for neighbour, state, jref in jumper_paths:
             neighbour_info = nets.get(neighbour, {})
             if not neighbour_info:
