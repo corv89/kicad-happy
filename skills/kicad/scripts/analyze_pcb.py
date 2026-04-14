@@ -2312,9 +2312,49 @@ def analyze_current_capacity(tracks: dict, vias: dict, zones: list[dict],
             entry["zones"] = net_zones[net_num]
 
         if is_power:
+            entry["detector"] = "analyze_current_capacity"
+            entry["rule_id"] = "CC-DET"
+            entry["category"] = "current_capacity"
+            entry["severity"] = "info"
+            entry["confidence"] = "deterministic"
+            entry["evidence_source"] = "topology"
+            entry["summary"] = f"Power net {name}: {data['min_width']}mm min trace"
+            entry["description"] = (
+                f"Power/ground net {name}: min trace {data['min_width']}mm, "
+                f"max {data['max_width']}mm, {data['segment_count']} segments."
+            )
+            entry["components"] = []
+            entry["nets"] = [name]
+            entry["pins"] = []
+            entry["recommendation"] = ""
+            entry["report_context"] = {
+                "section": "Current Capacity",
+                "impact": "Power delivery",
+                "standard_ref": "IPC-2221",
+            }
             power_entries.append(entry)
         elif data["min_width"] <= 0.15 and data["segment_count"] >= 5:
             # Signal nets with ≤0.15mm traces and significant routing
+            entry["detector"] = "analyze_current_capacity"
+            entry["rule_id"] = "CC-002"
+            entry["category"] = "current_capacity"
+            entry["severity"] = "warning"
+            entry["confidence"] = "deterministic"
+            entry["evidence_source"] = "topology"
+            entry["summary"] = f"Narrow signal: {name} min {data['min_width']}mm"
+            entry["description"] = (
+                f"Signal net {name} has narrow traces: min {data['min_width']}mm "
+                f"across {data['segment_count']} segments."
+            )
+            entry["components"] = []
+            entry["nets"] = [name]
+            entry["pins"] = []
+            entry["recommendation"] = "Widen trace or verify signal integrity requirements."
+            entry["report_context"] = {
+                "section": "Current Capacity",
+                "impact": "Signal integrity",
+                "standard_ref": "",
+            }
             signal_narrow.append(entry)
 
     power_entries.sort(key=lambda e: e["net"])
@@ -2482,6 +2522,26 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
         if drills:
             entry["drill_sizes_mm"] = sorted(drills)
 
+        entry["detector"] = "analyze_thermal_vias"
+        entry["rule_id"] = "TS-DET"
+        entry["category"] = "thermal"
+        entry["severity"] = "info"
+        entry["confidence"] = "deterministic"
+        entry["evidence_source"] = "topology"
+        entry["summary"] = f"Zone stitching: {info['net_name']} {len(net_vias)} vias"
+        entry["description"] = (
+            f"Zone stitching on net {info['net_name']}: {len(net_vias)} vias "
+            f"across layers {sorted(info['layers'])}."
+        )
+        entry["components"] = []
+        entry["nets"] = [info["net_name"]]
+        entry["pins"] = []
+        entry["recommendation"] = ""
+        entry["report_context"] = {
+            "section": "Thermal",
+            "impact": "Thermal/ground plane connectivity",
+            "standard_ref": "",
+        }
         stitching.append(entry)
 
     # Thermal pad detection — use shared helper for QFN/BGA/DFN packages
@@ -2530,16 +2590,38 @@ def analyze_thermal_vias(footprints: list[dict], vias: dict,
                         pad_net >= 0):
                     footprint_via_pads += 1
 
+            nearby_vias = standalone_vias + footprint_via_pads
             thermal_pads.append({
                 "component": ref,
                 "pad": pad_num,
                 "pad_size_mm": [round(w, 2), round(h, 2)],
                 "pad_area_mm2": round(pad_area, 2),
                 "net": net_name,
-                "nearby_thermal_vias": standalone_vias + footprint_via_pads,
+                "nearby_thermal_vias": nearby_vias,
                 "standalone_vias": standalone_vias,
                 "footprint_via_pads": footprint_via_pads,
                 "layer": fp.get("layer", "F.Cu"),
+                "detector": "analyze_thermal_vias",
+                "rule_id": "TP-DET",
+                "category": "thermal",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Thermal pad: {ref} pad {pad_num} {nearby_vias} nearby vias",
+                "description": (
+                    f"Thermal pad on {ref} pad {pad_num}: "
+                    f"{nearby_vias} nearby vias ({standalone_vias} standalone, "
+                    f"{footprint_via_pads} footprint)."
+                ),
+                "components": [ref],
+                "nets": [net_name],
+                "pins": [pad_num],
+                "recommendation": "",
+                "report_context": {
+                    "section": "Thermal",
+                    "impact": "Thermal dissipation",
+                    "standard_ref": "",
+                },
             })
 
     return {
