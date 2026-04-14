@@ -5195,6 +5195,181 @@ def _compute_switching_loop_areas(footprints: list, schematic_data: dict) -> lis
     return results
 
 
+def analyze_fiducials(footprints: list[dict]) -> dict:
+    """FD-001: Check for assembly fiducial markers."""
+    fiducials_by_side: dict[str, list[str]] = {"F.Cu": [], "B.Cu": []}
+    smd_by_side: dict[str, int] = {"F.Cu": 0, "B.Cu": 0}
+
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        lib = (fp.get("library", "") + " " + fp.get("value", "") + " " + ref).lower()
+        layer = fp.get("layer", "F.Cu")
+        side = layer if layer in fiducials_by_side else "F.Cu"
+
+        if any(k in lib for k in ("fiducial", "fid_", "fiducial_")):
+            fiducials_by_side[side].append(ref)
+
+        # Count SMD components per side
+        pads = fp.get("pads", [])
+        if any(p.get("type") == "smd" for p in pads):
+            smd_by_side[side] = smd_by_side.get(side, 0) + 1
+
+    findings: list[dict] = []
+    for side, fids in fiducials_by_side.items():
+        smd_count = smd_by_side.get(side, 0)
+        if smd_count == 0:
+            continue  # No SMD on this side, fiducials not required
+        count = len(fids)
+        if count >= 3:
+            continue  # Adequate
+
+        if count == 0:
+            severity = "error"
+            summary = f"No fiducials on {side} ({smd_count} SMD components)"
+        else:
+            severity = "warning"
+            summary = f"Only {count} fiducial(s) on {side} (need >= 3)"
+
+        findings.append({
+            "side": side,
+            "fiducial_count": count,
+            "fiducial_refs": fids,
+            "smd_component_count": smd_count,
+            "detector": "analyze_fiducials",
+            "rule_id": "FD-001",
+            "category": "assembly",
+            "severity": severity,
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "summary": summary,
+            "description": f"{side} has {count} fiducial(s) but {smd_count} SMD components. Assembly machines need >= 3 fiducials for accurate placement.",
+            "components": fids,
+            "nets": [],
+            "pins": [],
+            "recommendation": "Add fiducial markers for pick-and-place alignment (3 per side with SMD).",
+            "report_context": {"section": "Assembly", "impact": "Pick-and-place alignment", "standard_ref": "IPC-7351"},
+        })
+
+    return {"findings": findings}
+
+
+def analyze_test_point_coverage(footprints: list[dict], net_names: dict) -> dict:
+    """TE-001: Check test point coverage across nets."""
+    tp_nets: set[str] = set()
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        if not ref.upper().startswith("TP"):
+            continue
+        for pad in fp.get("pads", []):
+            net = pad.get("net_name", "")
+            if net:
+                tp_nets.add(net)
+
+    # Count signal nets (exclude power/ground)
+    all_signal_nets = set()
+    for net_id, name in net_names.items():
+        if not name:
+            continue
+        n = name.upper()
+        is_pg = n in ("GND", "VSS", "VDD", "VCC") or n.startswith(("+", "GND"))
+        if not is_pg:
+            all_signal_nets.add(name)
+
+    total = len(all_signal_nets)
+    covered = len(tp_nets & all_signal_nets)
+    pct = (covered / total * 100) if total > 0 else 100
+
+    if pct >= 95:
+        severity = "info"
+    elif pct >= 50:
+        severity = "info"
+    else:
+        severity = "warning"
+
+    finding = {
+        "total_signal_nets": total,
+        "nets_with_test_points": covered,
+        "coverage_pct": round(pct, 1),
+        "test_point_count": len([fp for fp in footprints if fp.get("reference", "").upper().startswith("TP")]),
+        "detector": "analyze_test_point_coverage",
+        "rule_id": "TE-001",
+        "category": "testability",
+        "severity": severity,
+        "confidence": "deterministic",
+        "evidence_source": "topology",
+        "summary": f"Test point coverage: {covered}/{total} nets ({pct:.0f}%)",
+        "description": f"{covered} of {total} signal nets have test points ({pct:.0f}% coverage).",
+        "components": [],
+        "nets": [],
+        "pins": [],
+        "recommendation": "Add test points to improve ICT/flying probe coverage." if pct < 95 else "",
+        "report_context": {"section": "Testability", "impact": "ICT accessibility", "standard_ref": ""},
+    }
+
+    return finding
+
+
+def analyze_orientation_consistency(footprints: list[dict]) -> list[dict]:
+    """OR-001: Check passive component orientation consistency per board side."""
+    from collections import Counter
+
+    findings: list[dict] = []
+    passives_by_side: dict[str, list[tuple[str, float]]] = {}
+
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        # Only check passives (R, C, L with 2 pads)
+        if not ref or ref[0] not in ("R", "C", "L"):
+            continue
+        pads = fp.get("pads", [])
+        if len(pads) != 2:
+            continue
+        layer = fp.get("layer", "F.Cu")
+        angle = fp.get("angle", 0) or 0
+        # Normalize angle to 0-179 range (0 and 180 are same orientation)
+        norm_angle = round(angle % 180)
+        passives_by_side.setdefault(layer, []).append((ref, norm_angle))
+
+    for side, components in passives_by_side.items():
+        if len(components) < 5:
+            continue  # Too few to judge consistency
+
+        angles = Counter(a for _, a in components)
+        majority_angle, majority_count = angles.most_common(1)[0]
+        deviators = [(ref, a) for ref, a in components if a != majority_angle]
+
+        if not deviators:
+            continue
+
+        deviation_pct = len(deviators) / len(components) * 100
+        if deviation_pct < 10:
+            continue  # Minor inconsistency, not worth flagging
+
+        findings.append({
+            "side": side,
+            "total_passives": len(components),
+            "majority_angle": majority_angle,
+            "majority_count": majority_count,
+            "deviator_count": len(deviators),
+            "deviator_refs": [ref for ref, _ in deviators[:20]],
+            "detector": "analyze_orientation_consistency",
+            "rule_id": "OR-001",
+            "category": "assembly",
+            "severity": "info",
+            "confidence": "heuristic",
+            "evidence_source": "topology",
+            "summary": f"Orientation: {len(deviators)} passives on {side} deviate from {majority_angle} deg majority",
+            "description": f"{len(deviators)} of {len(components)} passives on {side} are not at the majority {majority_angle} deg orientation.",
+            "components": [ref for ref, _ in deviators[:20]],
+            "nets": [],
+            "pins": [],
+            "recommendation": "Align passive component orientations for consistent pick-and-place.",
+            "report_context": {"section": "Assembly", "impact": "Pick-and-place efficiency", "standard_ref": ""},
+        })
+
+    return findings
+
+
 def analyze_pcb(path: str, *, proximity: bool = False,
                 include_trace_segments: bool = False,
                 schematic_data: dict = None) -> dict:
