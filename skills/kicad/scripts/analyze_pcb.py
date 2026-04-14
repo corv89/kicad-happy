@@ -5370,6 +5370,284 @@ def analyze_orientation_consistency(footprints: list[dict]) -> list[dict]:
     return findings
 
 
+def analyze_silkscreen_pad_overlaps(footprints: list[dict], board_texts: list[dict]) -> list[dict]:
+    """SK-001: Check for silkscreen text overlapping exposed pads."""
+    findings: list[dict] = []
+
+    # Collect all exposed pad bboxes (SMD pads on front/back)
+    pad_bboxes: list[tuple[str, str, float, float, float, float]] = []
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        for pad in fp.get("pads", []):
+            if pad.get("type") != "smd":
+                continue
+            px = pad.get("abs_x")
+            py = pad.get("abs_y")
+            if px is None or py is None:
+                continue
+            hw = pad.get("width", 0) / 2
+            hh = pad.get("height", 0) / 2
+            if hw <= 0 or hh <= 0:
+                continue
+            layers = pad.get("layers", [])
+            for layer in layers:
+                if ".Cu" in layer:
+                    silk_layer = "F.SilkS" if "F." in layer else "B.SilkS"
+                    pad_bboxes.append((ref, silk_layer, px - hw, py - hh, px + hw, py + hh))
+
+    if not pad_bboxes:
+        return findings
+
+    # Check board-level silkscreen texts against pad bboxes
+    flagged_refs: set[str] = set()
+    for text_entry in board_texts:
+        tx = text_entry.get("x")
+        ty = text_entry.get("y")
+        tlayer = text_entry.get("layer", "")
+        if tx is None or ty is None:
+            continue
+        if "SilkS" not in tlayer and "Silkscreen" not in tlayer:
+            continue
+        for ref, silk_layer, x1, y1, x2, y2 in pad_bboxes:
+            if ref in flagged_refs:
+                continue
+            if silk_layer.startswith(tlayer[0]):  # Same side (F/B)
+                if x1 <= tx <= x2 and y1 <= ty <= y2:
+                    flagged_refs.add(ref)
+                    findings.append({
+                        "component": ref,
+                        "silk_layer": tlayer,
+                        "detector": "analyze_silkscreen_pad_overlaps",
+                        "rule_id": "SK-001",
+                        "category": "dfm",
+                        "severity": "warning",
+                        "confidence": "heuristic",
+                        "evidence_source": "topology",
+                        "summary": f"Silkscreen overlaps pad on {ref} ({tlayer})",
+                        "description": f"Silkscreen text on {tlayer} overlaps an exposed SMD pad on {ref}.",
+                        "components": [ref],
+                        "nets": [],
+                        "pins": [],
+                        "recommendation": f"Move silkscreen text away from exposed pads on {ref}.",
+                        "report_context": {"section": "DFM", "impact": "Solder paste/solder joint interference", "standard_ref": ""},
+                    })
+
+    return findings
+
+
+def analyze_via_in_pad(footprints: list[dict], vias: dict, thermal_pad_refs: set) -> list[dict]:
+    """VP-001: Detect vias inside SMD pads that aren't tented."""
+    findings: list[dict] = []
+    via_list = vias.get("vias", [])
+    if not via_list:
+        return findings
+
+    # Build SMD pad bboxes (excluding thermal pads already covered by TV-001)
+    smd_pads: list[tuple[str, str, str, float, float, float, float]] = []
+    for fp in footprints:
+        ref = fp.get("reference", "")
+        if ref in thermal_pad_refs:
+            continue
+        for pad in fp.get("pads", []):
+            if pad.get("type") != "smd":
+                continue
+            px = pad.get("abs_x")
+            py = pad.get("abs_y")
+            if px is None or py is None:
+                continue
+            hw = pad.get("width", 0) / 2
+            hh = pad.get("height", 0) / 2
+            if hw <= 0 or hh <= 0:
+                continue
+            pad_num = pad.get("number", "?")
+            smd_pads.append((ref, pad_num, pad.get("net_name", ""),
+                             px - hw, py - hh, px + hw, py + hh))
+
+    for via in via_list:
+        vx = via.get("x")
+        vy = via.get("y")
+        if vx is None or vy is None:
+            continue
+        for ref, pad_num, net, x1, y1, x2, y2 in smd_pads:
+            if x1 <= vx <= x2 and y1 <= vy <= y2:
+                # Check tenting
+                via_layers = via.get("layers", [])
+                # A via is tented if it has solder mask coverage (heuristic: look for F.Mask/B.Mask)
+                # KiCad doesn't export tenting directly in kicad_pcb; approximate from remove_unused_layers
+                tented = via.get("remove_unused_layers", False)
+                severity = "info" if tented else "warning"
+                findings.append({
+                    "component": ref,
+                    "pad": pad_num,
+                    "via_x": round(vx, 2),
+                    "via_y": round(vy, 2),
+                    "tented": tented,
+                    "detector": "analyze_via_in_pad",
+                    "rule_id": "VP-001",
+                    "category": "dfm",
+                    "severity": severity,
+                    "confidence": "heuristic",
+                    "evidence_source": "topology",
+                    "summary": f"Via in pad: {ref}:{pad_num} ({'tented' if tented else 'untented'})",
+                    "description": f"Via at ({round(vx, 2)}, {round(vy, 2)}) inside SMD pad {ref}:{pad_num}. {'Tented.' if tented else 'Not tented — solder may wick through.'}",
+                    "components": [ref],
+                    "nets": [net] if net else [],
+                    "pins": [],
+                    "recommendation": "" if tented else f"Fill and cap via in {ref}:{pad_num} or tent with solder mask.",
+                    "report_context": {"section": "DFM", "impact": "Solder wicking risk" if not tented else "", "standard_ref": ""},
+                })
+                break  # One finding per via
+
+    return findings
+
+
+def analyze_board_edge_via_clearance(vias: dict, board_outline: dict) -> list[dict]:
+    """BV-001: Check vias close to board edges."""
+    findings: list[dict] = []
+    via_list = vias.get("vias", [])
+    edges = board_outline.get("edges", [])
+
+    if not via_list or not edges:
+        return findings
+
+    def _pt_seg_dist(px, py, x1, y1, x2, y2):
+        dx, dy = x2 - x1, y2 - y1
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+        t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / length_sq))
+        return math.sqrt((px - x1 - t * dx) ** 2 + (py - y1 - t * dy) ** 2)
+
+    # Extract edge line segments
+    edge_segs: list[tuple[float, float, float, float]] = []
+    for edge in edges:
+        etype = edge.get("type", "")
+        if etype == "line":
+            s = edge.get("start", [0, 0])
+            e = edge.get("end", [0, 0])
+            edge_segs.append((s[0], s[1], e[0], e[1]))
+        elif etype == "rect":
+            s = edge.get("start", [0, 0])
+            e = edge.get("end", [0, 0])
+            edge_segs.append((s[0], s[1], e[0], s[1]))
+            edge_segs.append((e[0], s[1], e[0], e[1]))
+            edge_segs.append((e[0], e[1], s[0], e[1]))
+            edge_segs.append((s[0], e[1], s[0], s[1]))
+
+    if not edge_segs:
+        return findings
+
+    threshold_mm = 0.5
+    for via in via_list:
+        vx = via.get("x")
+        vy = via.get("y")
+        if vx is None or vy is None:
+            continue
+        min_dist = float("inf")
+        for x1, y1, x2, y2 in edge_segs:
+            d = _pt_seg_dist(vx, vy, x1, y1, x2, y2)
+            if d < min_dist:
+                min_dist = d
+        if min_dist < threshold_mm:
+            findings.append({
+                "via_x": round(vx, 2),
+                "via_y": round(vy, 2),
+                "edge_clearance_mm": round(min_dist, 3),
+                "detector": "analyze_board_edge_via_clearance",
+                "rule_id": "BV-001",
+                "category": "dfm",
+                "severity": "warning",
+                "confidence": "deterministic",
+                "evidence_source": "topology",
+                "summary": f"Via at ({round(vx, 1)}, {round(vy, 1)}) is {round(min_dist, 2)}mm from board edge",
+                "description": f"Via at ({round(vx, 2)}, {round(vy, 2)}) is only {round(min_dist, 3)}mm from the board edge. Minimum recommended is {threshold_mm}mm.",
+                "components": [],
+                "nets": [],
+                "pins": [],
+                "recommendation": f"Move via at least {threshold_mm}mm from board edge to prevent damage during depanelization.",
+                "report_context": {"section": "DFM", "impact": "Via damage during routing/depanelization", "standard_ref": ""},
+            })
+
+    return findings[:50]  # Cap at 50 findings
+
+
+def analyze_keepout_violations(footprints: list[dict], vias: dict,
+                                keepout_zones: list[dict]) -> list[dict]:
+    """KO-001: Check for components or vias inside keepout zones (bbox check)."""
+    findings: list[dict] = []
+    if not keepout_zones:
+        return findings
+
+    via_list = vias.get("vias", [])
+
+    for kz in keepout_zones:
+        bbox = kz.get("bounding_box")
+        if not bbox or len(bbox) < 4:
+            continue
+        kx1, ky1, kx2, ky2 = bbox[0], bbox[1], bbox[2], bbox[3]
+        restrictions = kz.get("restrictions", {})
+        kz_name = kz.get("name", "unnamed")
+        kz_layers = kz.get("layers", [])
+
+        # Check footprints
+        if restrictions.get("footprints", False):
+            for fp in footprints:
+                ref = fp.get("reference", "")
+                fx = fp.get("x", 0)
+                fy = fp.get("y", 0)
+                fp_layer = fp.get("layer", "")
+                if not any(l in kz_layers or l == "*" or "*.Cu" in kz_layers for l in [fp_layer]):
+                    continue
+                if kx1 <= fx <= kx2 and ky1 <= fy <= ky2:
+                    findings.append({
+                        "component": ref,
+                        "keepout_name": kz_name,
+                        "keepout_layers": kz_layers,
+                        "detector": "analyze_keepout_violations",
+                        "rule_id": "KO-001",
+                        "category": "placement",
+                        "severity": "error",
+                        "confidence": "heuristic",
+                        "evidence_source": "topology",
+                        "summary": f"Keepout violation: {ref} inside keepout zone{' ' + kz_name if kz_name != 'unnamed' else ''}",
+                        "description": f"Component {ref} center is inside keepout zone {kz_name} (bbox check).",
+                        "components": [ref],
+                        "nets": [],
+                        "pins": [],
+                        "recommendation": f"Move {ref} outside the keepout zone.",
+                        "report_context": {"section": "Placement", "impact": "Design rule violation", "standard_ref": ""},
+                    })
+
+        # Check vias
+        if restrictions.get("vias", False):
+            for via in via_list:
+                vx = via.get("x")
+                vy = via.get("y")
+                if vx is None or vy is None:
+                    continue
+                if kx1 <= vx <= kx2 and ky1 <= vy <= ky2:
+                    findings.append({
+                        "via_x": round(vx, 2),
+                        "via_y": round(vy, 2),
+                        "keepout_name": kz_name,
+                        "detector": "analyze_keepout_violations",
+                        "rule_id": "KO-001",
+                        "category": "placement",
+                        "severity": "error",
+                        "confidence": "heuristic",
+                        "evidence_source": "topology",
+                        "summary": f"Keepout violation: via at ({round(vx, 1)}, {round(vy, 1)}) inside keepout{' ' + kz_name if kz_name != 'unnamed' else ''}",
+                        "description": f"Via at ({round(vx, 2)}, {round(vy, 2)}) is inside keepout zone {kz_name} (bbox check).",
+                        "components": [],
+                        "nets": [],
+                        "pins": [],
+                        "recommendation": "Move via outside the keepout zone.",
+                        "report_context": {"section": "Placement", "impact": "Design rule violation", "standard_ref": ""},
+                    })
+
+    return findings[:50]
+
+
 def analyze_pcb(path: str, *, proximity: bool = False,
                 include_trace_segments: bool = False,
                 schematic_data: dict = None) -> dict:
