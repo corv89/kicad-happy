@@ -216,7 +216,7 @@ def _estimate_all_power_dissipation(schematic: dict) -> list:
                 seen_refs.add(ref)
 
     # 2. Switching regulators — estimate from efficiency
-    for reg in signal.get("power_regulators", []):
+    for reg in regulators:
         ref = reg.get("ref", "")
         if ref in seen_refs:
             continue
@@ -296,9 +296,12 @@ def _get_pcb_thermal_correction(ref: str, pcb: dict) -> dict:
         "notes": [],
     }
 
-    # Check thermal_pad_vias for this component
-    for tpv in pcb.get("thermal_pad_vias", []):
+    # Check thermal_pad_vias findings for this component
+    # (entries live in findings[] with detector="analyze_thermal_pad_vias")
+    for tpv in pcb.get("findings", []):
         if not isinstance(tpv, dict):
+            continue
+        if tpv.get("detector") != "analyze_thermal_pad_vias":
             continue
         if tpv.get("component") != ref:
             continue
@@ -323,9 +326,9 @@ def _get_pcb_thermal_correction(ref: str, pcb: dict) -> dict:
             result["notes"].append("thermal pad but no vias")
         break
 
-    # Check thermal_analysis.thermal_pads for additional info
-    thermal = pcb.get("thermal_analysis", {})
-    for tp in thermal.get("thermal_pads", []):
+    # Check thermal_pads findings for nearby via info
+    # (entries from thermal_analysis also live in findings[])
+    for tp in pcb.get("findings", []):
         if not isinstance(tp, dict):
             continue
         if tp.get("component") != ref:
@@ -858,6 +861,13 @@ def main():
             schematic = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print(f"Error reading schematic: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if 'signal_analysis' in schematic and 'findings' not in schematic:
+        print(f'Error: {args.schematic} uses the pre-v1.3 '
+              f'signal_analysis wrapper format.\n'
+              f'Re-run analyze_schematic.py to produce the current '
+              f'findings[] format.', file=sys.stderr)
         sys.exit(1)
 
     try:

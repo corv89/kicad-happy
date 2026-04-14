@@ -6201,6 +6201,13 @@ def main():
                 schematic_data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             print(f"Warning: cannot load schematic analysis: {e}", file=sys.stderr)
+        if (schematic_data and 'signal_analysis' in schematic_data
+                and 'findings' not in schematic_data):
+            print(f'Warning: {args.schematic} uses the pre-v1.3 '
+                  f'signal_analysis wrapper format — schematic cross-ref '
+                  f'disabled. Re-run analyze_schematic.py for full '
+                  f'analysis.', file=sys.stderr)
+            schematic_data = None
 
     result = analyze_pcb(args.pcb, proximity=args.proximity,
                          include_trace_segments=args.full,

@@ -281,7 +281,7 @@ SCHEMAS = {
     ),
     "voltage_dividers": DetectionSchema(
         identity_fields=["r_top.ref", "r_bottom.ref"],
-        value_fields=["ratio", "vout_estimated"],
+        value_fields=["ratio", "vout_V"],
         derived=[DerivedField("ratio", _recalc_divider_ratio, _inverse_divider_ratio)],
         primary_metric="vout_V",
     ),
@@ -317,7 +317,7 @@ SCHEMAS = {
     ),
     "power_regulators": DetectionSchema(
         identity_fields=["ref"],
-        value_fields=["vout_estimated", "topology"],
+        value_fields=["estimated_vout", "topology"],
         derived=[DerivedField("estimated_vout", _recalc_regulator_feedback)],
         primary_metric=None,
     ),

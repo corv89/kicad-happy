@@ -246,6 +246,9 @@ def detect_type(data):
         return "emc"
     if "simulation_results" in data:
         return "spice"
+    # Detect pre-v1.3 schematic format (signal_analysis wrapper, no findings[])
+    if "signal_analysis" in data and "components" in data:
+        return "schematic_old"
     return None
 
 
@@ -1218,6 +1221,19 @@ def main():
     head_type = detect_type(head)
     if not base_type or not head_type:
         print("Error: could not detect analyzer type from JSON", file=sys.stderr)
+        sys.exit(1)
+    # Check for pre-v1.3 format
+    old_files = []
+    if base_type == "schematic_old":
+        old_files.append(f"base ({args.base})")
+    if head_type == "schematic_old":
+        old_files.append(f"head ({args.head})")
+    if old_files:
+        print(f"Error: {' and '.join(old_files)} use the pre-v1.3 "
+              f"signal_analysis wrapper format.\n"
+              f"Re-run analyze_schematic.py to produce the current "
+              f"findings[] format, then re-run this diff.",
+              file=sys.stderr)
         sys.exit(1)
     if base_type != head_type:
         print(f"Error: type mismatch — base is {base_type}, head is {head_type}", file=sys.stderr)

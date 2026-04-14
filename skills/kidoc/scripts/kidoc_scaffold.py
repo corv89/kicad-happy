@@ -158,11 +158,19 @@ def _load_explicit_jsons(paths: dict) -> dict:
             sys.exit(1)
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                cache[analysis_type] = json.load(f)
+                data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             print(f"Error: cannot load {analysis_type} JSON {path}: {e}",
                   file=sys.stderr)
             sys.exit(1)
+        if ('signal_analysis' in data and 'findings' not in data
+                and analysis_type == 'schematic'):
+            print(f"Error: {path} uses the pre-v1.3 signal_analysis "
+                  f"wrapper format.\nRe-run analyze_schematic.py to "
+                  f"produce the current findings[] format.",
+                  file=sys.stderr)
+            sys.exit(1)
+        cache[analysis_type] = data
     return cache
 
 

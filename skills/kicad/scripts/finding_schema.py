@@ -218,6 +218,18 @@ DETECTOR_TO_LEGACY_KEY = {
     "detect_led_driver_ics": "led_driver_ics",
     "detect_rtc_circuits": "rtc_circuits",
     "detect_thermocouple_rtd": "thermocouple_rtd",
+    "detect_wireless_modules": "wireless_modules",
+    "detect_transformer_feedback": "transformer_feedback",
+    "detect_i2c_address_conflicts": "i2c_address_conflicts",
+    "detect_energy_harvesting": "energy_harvesting",
+    "detect_pwm_led_dimming": "pwm_led_dimming",
+    "detect_headphone_jack": "headphone_jacks",
+    "detect_power_path": "power_path",
+    "detect_design_observations": "design_observations",
+    "detect_led_drivers": "led_drivers",
+    "audit_esd_protection": "esd_coverage_audit",
+    "audit_led_circuits": "led_audit",
+    "audit_connector_ground_distribution": "connector_ground_audit",
 }
 
 
@@ -228,7 +240,17 @@ def group_findings_legacy(data):
     old signal_analysis dict-of-lists layout.  Detector names are
     mapped via DETECTOR_TO_LEGACY_KEY so that downstream code (SCHEMAS,
     SPICE templates, --fix CLI) works unchanged.
+
+    Detects pre-v1.3 JSON (signal_analysis wrapper, no findings[]) and
+    emits a warning to stderr.  Returns empty dict in that case — callers
+    should check is_old_schema() first if they need to abort early.
     """
+    if "signal_analysis" in data and "findings" not in data:
+        import sys
+        print("Warning: this JSON uses the pre-v1.3 signal_analysis wrapper "
+              "format. Re-run the analyzer to produce the current findings[] "
+              "format.", file=sys.stderr)
+        return {}
     sa = {}
     for f in data.get("findings", []):
         det = f.get("detector", "")
@@ -236,3 +258,8 @@ def group_findings_legacy(data):
             key = DETECTOR_TO_LEGACY_KEY.get(det, det)
             sa.setdefault(key, []).append(f)
     return sa
+
+
+def is_old_schema(data):
+    """Return True if data uses the pre-v1.3 signal_analysis wrapper format."""
+    return "signal_analysis" in data and "findings" not in data

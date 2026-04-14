@@ -366,6 +366,12 @@ def main():
     if args.schematic:
         with open(args.schematic, 'r') as f:
             schematic = json.load(f)
+        if 'signal_analysis' in schematic and 'findings' not in schematic:
+            print(f'Error: {args.schematic} uses the pre-v1.3 '
+                  f'signal_analysis wrapper format.\n'
+                  f'Re-run analyze_schematic.py to produce the current '
+                  f'findings[] format.', file=sys.stderr)
+            sys.exit(1)
 
     if args.pcb:
         with open(args.pcb, 'r') as f:

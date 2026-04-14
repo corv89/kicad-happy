@@ -99,15 +99,17 @@ def check_bom(sch: Dict) -> List[Dict]:
 
 def check_dfm(pcb: Dict) -> List[Dict]:
     """Check DFM tier and violations."""
-    dfm = pcb.get("dfm", {})
+    # dfm_summary holds tier/metrics; violations are in findings[]
+    dfm = pcb.get("dfm_summary", {})
     tier = dfm.get("dfm_tier", "unknown")
-    violations = dfm.get("violations", [])
+    violations = [f for f in pcb.get("findings", [])
+                  if isinstance(f, dict) and f.get("category") == "dfm"]
 
     if tier == "standard" and not violations:
         return [_check("dfm", "fab_capability", "pass",
                         "Design within standard fab capability")]
     elif tier == "advanced":
-        v_summary = [{"parameter": v["parameter"],
+        v_summary = [{"parameter": v.get("parameter", v.get("rule_id", "?")),
                        "actual_mm": v.get("actual_mm"),
                        "limit_mm": v.get("standard_limit_mm")}
                       for v in violations[:5]]
@@ -115,7 +117,7 @@ def check_dfm(pcb: Dict) -> List[Dict]:
                         f"Design requires advanced process tier ({len(violations)} violation(s))",
                         {"dfm_tier": tier, "violations": v_summary})]
     elif tier in ("challenging", "extreme"):
-        v_summary = [{"parameter": v["parameter"],
+        v_summary = [{"parameter": v.get("parameter", v.get("rule_id", "?")),
                        "actual_mm": v.get("actual_mm"),
                        "limit_mm": v.get("advanced_limit_mm")}
                       for v in violations[:5]]

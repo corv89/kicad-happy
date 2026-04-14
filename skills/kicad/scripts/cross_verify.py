@@ -563,11 +563,15 @@ def check_thermal_vias(thermal: dict, pcb: dict) -> list[dict]:
     if not assessments:
         return []
 
-    # Build thermal pad via lookup from PCB.
-    # KH-234: Keys are "component" and "via_count" as produced by
-    # analyze_thermal_pad_vias(), not "component_ref" and "count".
+    # Build thermal pad via lookup from PCB findings[].
+    # Thermal pad via entries have detector="analyze_thermal_pad_vias".
+    # KH-234: Keys are "component" and "via_count".
     via_lookup = {}
-    for tv in pcb.get("thermal_pad_vias", []):
+    for tv in pcb.get("findings", []):
+        if not isinstance(tv, dict):
+            continue
+        if tv.get("detector") != "analyze_thermal_pad_vias":
+            continue
         ref = tv.get("component", "")
         if ref:
             via_lookup[ref] = tv.get("via_count", 0)

@@ -96,14 +96,29 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
     Returns:
         Report dict with simulation results
     """
+    # Detect pre-v1.3 format
+    if 'signal_analysis' in analysis_json and 'findings' not in analysis_json:
+        import sys as _sys
+        print('Warning: this JSON uses the pre-v1.3 signal_analysis wrapper '
+              'format. Re-run analyze_schematic.py to produce the current '
+              'findings[] format.', file=_sys.stderr)
+        return build_report([])
+
     # Build detector-keyed lookup from flat findings[]
+    # Map detector names to legacy keys used by TEMPLATE_REGISTRY
+    _DET_KEY_OVERRIDES = {
+        "detect_decoupling": "decoupling_analysis",
+        "detect_integrated_ldos": "power_regulators",
+    }
     signal = {}
     for f in analysis_json.get("findings", []):
         det = f.get("detector", "")
-        # Strip "detect_" prefix to match legacy keys
-        key = det[len("detect_"):] if det.startswith("detect_") else det
-        if key:
-            signal.setdefault(key, []).append(f)
+        if not det:
+            continue
+        key = _DET_KEY_OVERRIDES.get(det)
+        if not key:
+            key = det[len("detect_"):] if det.startswith("detect_") else det
+        signal.setdefault(key, []).append(f)
     if not signal:
         return build_report([])
 

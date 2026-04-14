@@ -75,10 +75,10 @@ Use `detector` to filter by type. The `finding_schema.py` module provides `get_f
 
 | Detector | Key Fields |
 |----------|------------|
-| `voltage_dividers` | `top_ref, bottom_ref, ratio, vout_estimated, input_net, output_net` |
+| `voltage_dividers` | `top_ref, bottom_ref, ratio, estimated_vout, input_net, output_net` |
 | `rc_filters` | `resistor, capacitor, cutoff_frequency_hz, type: lowpass\|highpass` |
 | `lc_filters` | `inductor, capacitors, resonant_formatted` |
-| `power_regulators` | `ref, value, lib_id, topology, input_rail, output_rail, vout_estimated, vref_source` |
+| `power_regulators` | `ref, value, lib_id, topology, input_rail, output_rail, estimated_vout, vref_source` |
 | `crystal_circuits` | `reference, value, frequency, type: passive\|active_oscillator, load_caps` |
 | `opamp_circuits` | `reference, configuration, gain` |
 | `transistor_circuits` | `reference, type, load_classification` |
@@ -246,7 +246,7 @@ for b in data['bom']:
 # Power regulators with output voltage
 for r in data['findings']:
     if r.get('detector') == 'power_regulators':
-        print(f"{r['ref']}: {r.get('vout_estimated', '?')}V ({r['topology']})")
+        print(f"{r['ref']}: {r.get('estimated_vout', '?')}V ({r['topology']})")
 
 # Net pin list
 for p in data['nets']['NET_NAME']['pins']:

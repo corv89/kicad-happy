@@ -385,13 +385,16 @@ def _extract_pcb_data(analysis: dict, **kwargs) -> str:
     if copper_layers:
         parts.append(f"Layer names: {', '.join(l.get('name', '?') for l in copper_layers)}")
 
-    # DFM
-    dfm = pcb_data.get('dfm_analysis', {})
-    violations = dfm.get('violations', [])
-    if violations:
-        parts.append(f"\nDFM violations: {len(violations)}")
-        for v in violations[:5]:
-            parts.append(f"  - {v.get('type', '?')}: {v.get('message', '?')}")
+    # DFM — violations are now in findings[], summary in dfm_summary
+    dfm_summary = pcb_data.get('dfm_summary', {})
+    dfm_violations = [f for f in pcb_data.get('findings', [])
+                      if isinstance(f, dict) and f.get('category') == 'dfm']
+    if dfm_violations:
+        parts.append(f"\nDFM violations: {len(dfm_violations)}")
+        for v in dfm_violations[:5]:
+            parts.append(f"  - {v.get('rule_id', '?')}: {v.get('summary', v.get('message', '?'))}")
+    elif dfm_summary.get('violation_count', 0) > 0:
+        parts.append(f"\nDFM violations: {dfm_summary['violation_count']}")
 
     return '\n'.join(parts)
 

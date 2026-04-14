@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "..", "spice", "scripts"))
 
 from kicad_utils import parse_value
-from finding_schema import group_findings_legacy
+from finding_schema import group_findings_legacy, is_old_schema
 
 
 @dataclass
@@ -1285,9 +1285,15 @@ def main():
         print(f"Error reading {args.input}: {e}", file=sys.stderr)
         sys.exit(1)
 
+    if is_old_schema(analysis):
+        print("Error: this JSON uses the pre-v1.3 signal_analysis wrapper "
+              "format.\nRe-run analyze_schematic.py to produce the current "
+              "findings[] format.", file=sys.stderr)
+        sys.exit(1)
+
     signal = group_findings_legacy(analysis)
     if not signal:
-        print("Error: no findings in input JSON", file=sys.stderr)
+        print("Error: no subcircuit findings in input JSON", file=sys.stderr)
         sys.exit(1)
 
     # Load PCB analysis if available
