@@ -19,6 +19,7 @@ Usage:
 """
 
 import json
+import os
 import re
 import sys
 import zipfile
@@ -1591,13 +1592,28 @@ def main():
 
     # Determine output path
     output_path = args.output
-    if not output_path and args.analysis_dir:
-        output_path = str(Path(args.analysis_dir) / "gerbers.json")
-
     indent = None if args.compact else 2
     output_json = json.dumps(result, indent=indent, default=str)
 
-    if output_path:
+    if not output_path and args.analysis_dir:
+        # Route into the current run folder via the manifest. Use the
+        # canonical filename (gerber.json) so the manifest tracks it.
+        import tempfile
+        from analysis_cache import overwrite_current, CANONICAL_OUTPUTS, get_current_run
+        analysis_dir = args.analysis_dir
+        if not os.path.isabs(analysis_dir):
+            analysis_dir = os.path.abspath(analysis_dir)
+        filename = CANONICAL_OUTPUTS.get('gerber', 'gerber.json')
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            Path(os.path.join(tmp_dir, filename)).write_text(output_json)
+            overwrite_current(analysis_dir, tmp_dir, source_hashes=None)
+        current = get_current_run(analysis_dir)
+        if current:
+            out_path = os.path.join(current[0], filename)
+        else:
+            out_path = os.path.join(analysis_dir, filename)
+        print(f"Written to {out_path}", file=sys.stderr)
+    elif output_path:
         Path(output_path).write_text(output_json)
         print(f"Written to {output_path}", file=sys.stderr)
     elif args.text:

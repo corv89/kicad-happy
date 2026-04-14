@@ -3943,17 +3943,17 @@ def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
     # Collect sensitive component positions from signal analysis
     sensitive_refs = set()
     # ADCs
-    for adc in signal.get('adc_circuits', []):
+    for adc in get_findings(schematic, Det.ADC_CIRCUITS):
         r = adc.get('ic', {}).get('ref') or adc.get('reference', '')
         if r:
             sensitive_refs.add(r)
     # Opamps
-    for op in signal.get('opamp_circuits', []):
+    for op in get_findings(schematic, Det.OPAMP_CIRCUITS):
         r = op.get('ic', {}).get('ref') or op.get('reference', '')
         if r:
             sensitive_refs.add(r)
     # Crystal oscillators
-    for xtal in signal.get('crystal_circuits', []):
+    for xtal in get_findings(schematic, Det.CRYSTAL_CIRCUITS):
         r = xtal.get('reference', '')
         if r:
             sensitive_refs.add(r)
@@ -3963,7 +3963,7 @@ def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
             if ic_ref:
                 sensitive_refs.add(ic_ref)
     # RF chains
-    for rf in signal.get('rf_chains', []):
+    for rf in get_findings(schematic, Det.RF_CHAINS):
         for comp in rf.get('components', []):
             r = comp.get('ref') or comp.get('reference', '')
             if r:

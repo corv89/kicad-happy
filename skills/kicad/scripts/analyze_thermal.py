@@ -992,11 +992,35 @@ def main():
 
     # Determine output path
     output_path = args.output
-    if not output_path and hasattr(args, "analysis_dir") and args.analysis_dir:
-        output_path = os.path.join(args.analysis_dir, "thermal.json")
+    analysis_dir_mode = (not output_path
+                         and hasattr(args, "analysis_dir")
+                         and args.analysis_dir)
 
     # Output
-    if output_path:
+    if analysis_dir_mode:
+        # Route into the current run folder via the manifest. Falls back to
+        # writing at the analysis-dir root if nothing is tracked yet (first
+        # ever run — shouldn't happen since schematic/pcb precede thermal,
+        # but be defensive).
+        import tempfile
+        from analysis_cache import overwrite_current, CANONICAL_OUTPUTS, get_current_run
+        analysis_dir = args.analysis_dir
+        if not os.path.isabs(analysis_dir):
+            analysis_dir = os.path.abspath(analysis_dir)
+        filename = CANONICAL_OUTPUTS.get("thermal", "thermal.json")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_out = os.path.join(tmp_dir, filename)
+            with open(tmp_out, "w") as f:
+                json.dump(result, f, indent=2)
+            overwrite_current(analysis_dir, tmp_dir, source_hashes=None)
+        current = get_current_run(analysis_dir)
+        if current:
+            out_path = os.path.join(current[0], filename)
+        else:
+            out_path = os.path.join(analysis_dir, filename)
+        print(f"Thermal analysis complete: {len(findings)} findings "
+              f"(score {score}/100) -> {out_path}", file=sys.stderr)
+    elif output_path:
         with open(output_path, "w") as f:
             json.dump(result, f, indent=2)
         print(f"Thermal analysis complete: {len(findings)} findings "

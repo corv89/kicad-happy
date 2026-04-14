@@ -945,9 +945,25 @@ def main():
             json.dump(result, f, indent=2)
         print(f'Cross-analysis: {len(findings)} findings -> {args.output}', file=sys.stderr)
     elif args.analysis_dir:
-        out_path = os.path.join(args.analysis_dir, 'cross_analysis.json')
-        with open(out_path, 'w') as f:
-            json.dump(result, f, indent=2)
+        # Route into the current run folder via the manifest so that
+        # cross_analysis.json co-locates with schematic.json + pcb.json
+        # instead of landing at the analysis-dir root.
+        import tempfile
+        from analysis_cache import overwrite_current, CANONICAL_OUTPUTS, get_current_run
+        analysis_dir = args.analysis_dir
+        if not os.path.isabs(analysis_dir):
+            analysis_dir = os.path.abspath(analysis_dir)
+        filename = CANONICAL_OUTPUTS.get('cross_analysis', 'cross_analysis.json')
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_out = os.path.join(tmp_dir, filename)
+            with open(tmp_out, 'w') as f:
+                json.dump(result, f, indent=2)
+            overwrite_current(analysis_dir, tmp_dir, source_hashes=None)
+        current = get_current_run(analysis_dir)
+        if current:
+            out_path = os.path.join(current[0], filename)
+        else:
+            out_path = os.path.join(analysis_dir, filename)
         print(f'Cross-analysis: {len(findings)} findings -> {out_path}', file=sys.stderr)
     else:
         print(json.dumps(result, indent=2))

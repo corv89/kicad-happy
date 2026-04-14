@@ -37,6 +37,17 @@ CANONICAL_OUTPUTS = {
     'emc': 'emc.json',
     'thermal': 'thermal.json',
     'lifecycle': 'lifecycle.json',
+    'cross_analysis': 'cross_analysis.json',
+}
+
+# File extensions that each output's contents depend on. Used by create_run
+# to decide per-file whether a carried-forward output is stale vs safe to
+# copy. Outputs not listed are treated as derived (never blocked from copy).
+_OUTPUT_SOURCE_EXT = {
+    'schematic.json': ('.kicad_sch', '.sch'),
+    'pcb.json': ('.kicad_pcb',),
+    'gerber.json': ('.gbr', '.gtl', '.gbl', '.gts', '.gbs', '.gto', '.gbo',
+                    '.gm1', '.drl', '.txt'),
 }
 
 GITIGNORE_CONTENT = """\
@@ -253,19 +264,32 @@ def create_run(analysis_dir: str,
     run_dir = os.path.join(analysis_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
 
-    # Copy forward outputs from previous current run — but only if source
-    # files haven't changed (KH-281: prevent stale data propagation)
+    # Copy forward outputs from previous current run. Per-file staleness
+    # check: a carried-forward output is stale only if *its* source files
+    # (by extension) appear in cur_hashes with a different hash than in
+    # prev_hashes. Source files that only appear on one side (e.g.
+    # re-running pcb leaves the schematic hash untouched) do not poison
+    # unrelated outputs. (KH-281 follow-up: original guard was too blunt.)
     prev_run_id = manifest.get('current')
     prev_outputs = {}
     if prev_run_id and prev_run_id in manifest.get('runs', {}):
         prev_run_dir = os.path.join(analysis_dir, prev_run_id)
         prev_run_info = manifest['runs'][prev_run_id]
         prev_outputs = prev_run_info.get('outputs', {})
-        prev_hashes = prev_run_info.get('source_hashes', {})
+        prev_hashes = prev_run_info.get('source_hashes', {}) or {}
         cur_hashes = source_hashes or {}
         for analysis_type, filename in prev_outputs.items():
-            # Skip copy-forward if source files changed
-            if prev_hashes and cur_hashes and prev_hashes != cur_hashes:
+            exts = _OUTPUT_SOURCE_EXT.get(filename, ())
+            stale = False
+            if exts:
+                for key, old_hash in prev_hashes.items():
+                    if not any(key.lower().endswith(e) for e in exts):
+                        continue
+                    new_hash = cur_hashes.get(key)
+                    if new_hash is not None and new_hash != old_hash:
+                        stale = True
+                        break
+            if stale:
                 continue
             prev_file = os.path.join(prev_run_dir, filename)
             new_file = os.path.join(run_dir, filename)
@@ -338,7 +362,12 @@ def overwrite_current(analysis_dir: str,
     # Update manifest entry
     run_entry = manifest['runs'][current_id]
     if source_hashes is not None:
-        run_entry['source_hashes'] = source_hashes
+        # Merge, don't replace — running pcb after schematic should keep
+        # the schematic's hash alongside the pcb's, so staleness detection
+        # still works against every source file contributing to the run.
+        existing = run_entry.get('source_hashes', {}) or {}
+        existing.update(source_hashes)
+        run_entry['source_hashes'] = existing
     run_entry['generated'] = datetime.now(timezone.utc).isoformat(
         timespec='seconds').replace('+00:00', 'Z')
 
@@ -519,8 +548,10 @@ def should_create_new_run(analysis_dir: str,
         new_path = os.path.join(new_outputs_dir, filename)
         current_path = os.path.join(current_dir, filename)
         if not os.path.isfile(current_path):
-            # New output type that didn't exist before -- that's a change
-            return True
+            # New output type (e.g., pcb.json landing after a schematic-only
+            # run). Extend the current run instead of spawning a duplicate
+            # folder — only actual diffs vs existing outputs warrant a new run.
+            continue
 
         try:
             with open(current_path) as f:

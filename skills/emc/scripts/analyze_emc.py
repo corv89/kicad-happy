@@ -520,9 +520,12 @@ def main():
                                     CANONICAL_OUTPUTS, MANIFEST_FILENAME,
                                     save_manifest, _empty_manifest, GITIGNORE_CONTENT)
 
-        project_dir = str(Path(args.schematic).parent) if args.schematic else '.'
+        # Resolve --analysis-dir relative to CWD, not to the schematic JSON's
+        # directory. The schematic argument is typically *already* inside the
+        # analysis tree (analysis/<run>/schematic.json); anchoring on its
+        # parent would recursively create analysis/<run>/analysis/<run>/…
         if not os.path.isabs(args.analysis_dir):
-            analysis_dir = os.path.join(project_dir, args.analysis_dir)
+            analysis_dir = os.path.abspath(args.analysis_dir)
         else:
             analysis_dir = args.analysis_dir
 
