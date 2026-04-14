@@ -11,7 +11,7 @@ Parses a .kicad_pcb file and outputs structured JSON with:
 - Statistics
 
 Usage:
-    python analyze_pcb.py <file.kicad_pcb> [--output file.json]
+    python analyze_pcb.py <file.kicad_pcb|file.kicad_pro|dir/> [--output file.json]
 """
 
 import heapq
@@ -6185,7 +6185,8 @@ def _get_schema():
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad PCB Layout Analyzer")
-    parser.add_argument("pcb", nargs="?", help="Path to .kicad_pcb file")
+    parser.add_argument("pcb", nargs="?",
+                        help="Path to .kicad_pcb, .kicad_pro, or project directory")
     parser.add_argument("--output", "-o", help="Output JSON file (default: stdout)")
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
     parser.add_argument("--full", action="store_true",
@@ -6216,6 +6217,17 @@ def main():
 
     if not args.pcb:
         parser.error("the following arguments are required: pcb")
+
+    # Resolve .kicad_pro or directory to the .kicad_pcb file
+    from kicad_utils import resolve_project_input
+    try:
+        resolved, note = resolve_project_input(args.pcb, '.kicad_pcb')
+        if note:
+            print(f"Note: {note} → {os.path.basename(resolved)}",
+                  file=sys.stderr)
+        args.pcb = resolved
+    except FileNotFoundError as e:
+        parser.error(str(e))
 
     # Load project config (for project settings — suppressions applied to
     # EMC/thermal findings, not PCB warnings which lack rule_ids)

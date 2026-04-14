@@ -1489,6 +1489,72 @@ def discover_root_schematic(target_path: str) -> str | None:
     return None
 
 
+def resolve_project_input(path: str, target_ext: str = '.kicad_sch') -> tuple:
+    """Resolve a CLI input path to the correct project file.
+
+    Accepts:
+      - A ``.kicad_sch`` / ``.kicad_pcb`` file (returned as-is)
+      - A ``.kicad_pro`` file (derives the matching target_ext file)
+      - A directory (finds ``.kicad_pro`` inside, then derives)
+
+    Args:
+        path: User-supplied path (file or directory).
+        target_ext: The extension to resolve to (``.kicad_sch`` or
+            ``.kicad_pcb``).
+
+    Returns:
+        ``(resolved_path, note)`` where *resolved_path* is the absolute
+        path to the target file and *note* is a human-readable string
+        describing any resolution that occurred (empty when the input
+        was already the target type).
+
+    Raises:
+        FileNotFoundError: When the input cannot be resolved.
+    """
+    path = os.path.abspath(path)
+
+    # --- Input is a directory: look for .kicad_pro inside ---
+    if os.path.isdir(path):
+        pro_files = [f for f in os.listdir(path) if f.endswith('.kicad_pro')]
+        if not pro_files:
+            raise FileNotFoundError(
+                f"No .kicad_pro file found in directory: {path}")
+        if len(pro_files) > 1:
+            raise FileNotFoundError(
+                f"Multiple .kicad_pro files in {path}: {pro_files}")
+        pro_stem = pro_files[0][:-len('.kicad_pro')]
+        candidate = os.path.join(path, pro_stem + target_ext)
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(
+                f"Project '{pro_stem}' found but {pro_stem}{target_ext} "
+                f"does not exist in {path}")
+        return candidate, f"Resolved from directory via {pro_files[0]}"
+
+    # --- Input is a .kicad_pro file ---
+    if path.endswith('.kicad_pro'):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Project file not found: {path}")
+        pro_stem = os.path.basename(path)[:-len('.kicad_pro')]
+        parent_dir = os.path.dirname(path)
+        candidate = os.path.join(parent_dir, pro_stem + target_ext)
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(
+                f"Project '{pro_stem}' found but {pro_stem}{target_ext} "
+                f"does not exist in {parent_dir}")
+        return candidate, f"Resolved from {os.path.basename(path)}"
+
+    # --- Input already has the target extension ---
+    if path.endswith(target_ext):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"File not found: {path}")
+        return path, ""
+
+    # --- Fallback: unrecognised extension ---
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"File not found: {path}")
+    return path, ""
+
+
 def extract_pro_net_classes(pro: dict) -> list[dict]:
     """Extract net classes from .kicad_pro ``net_settings``.
 

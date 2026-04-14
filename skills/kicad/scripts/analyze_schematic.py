@@ -10,7 +10,7 @@ Parses a .kicad_sch file and outputs structured JSON with:
 - Design statistics
 
 Usage:
-    python analyze_schematic.py <file.kicad_sch> [--output file.json]
+    python analyze_schematic.py <file.kicad_sch|file.kicad_pro|dir/> [--output file.json]
 
 Output is JSON to stdout (or file if --output specified).
 """
@@ -8498,13 +8498,20 @@ def analyze_schematic(path: str, project_root: str | None = None,
     """Main analysis function. Returns complete structured data.
 
     For hierarchical designs (multi-sheet), recursively parses all sub-sheets
-    and merges connectivity. Global and hierarchical labels connect nets across sheets.
+    and merges connectivity. Global and hierarchical labels connect nets across
+    sheets.
+
+    If *path* is a sub-sheet (not the root), the function auto-discovers the
+    root schematic via ``.kicad_pro`` and redirects to a full-project analysis.
+    The result includes ``_redirected_from`` with the original filename.  If the
+    file is not part of any active sheet tree, ``_stale_file_warning`` is set.
 
     Args:
         path: Path to .kicad_sch file to analyze.
         project_root: Optional path to root .kicad_sch for hierarchy context.
             Auto-discovered from .kicad_pro if not provided.
         no_hierarchy: If True, skip hierarchy auto-discovery entirely.
+            Useful when analysing a sub-sheet in isolation.
     """
     # Detect legacy format
     with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -8519,17 +8526,36 @@ def analyze_schematic(path: str, project_root: str | None = None,
     is_sub = detect_sub_sheet(root_tree, file_path=path)
     hierarchy_ctx = None
     hierarchy_warning = None
-    _root_si_override = None  # symbol_instances from root, for reference correction
 
     if is_sub and not no_hierarchy:
         from kicad_utils import discover_root_schematic
         root_path = project_root or discover_root_schematic(path)
         if root_path:
-            try:
-                hierarchy_ctx, root_si = build_hierarchy_context(path, root_path)
-                _root_si_override = root_si
-            except (OSError, KeyError, ValueError, IndexError) as e:
-                hierarchy_warning = f"Hierarchy context failed: {e}"
+            # Redirect: analyze the full project from the root schematic.
+            # This gives a complete picture (all sheets, all components)
+            # instead of analyzing a sub-sheet in isolation.
+            original_basename = os.path.basename(path)
+            root_basename = os.path.basename(root_path)
+            print(f"Note: {original_basename} is a sub-sheet — analyzing "
+                  f"full project from root {root_basename}",
+                  file=sys.stderr)
+            result = analyze_schematic(root_path, no_hierarchy=True)
+            result["_redirected_from"] = original_basename
+
+            # Stale file check: is the original file in the project tree?
+            target_abs = str(Path(path).resolve())
+            in_project = any(
+                str(Path(s).resolve()) == target_abs
+                for s in result.get("sheets", []))
+            if not in_project:
+                result["_stale_file_warning"] = (
+                    f"{original_basename} is not referenced by any sheet "
+                    f"in the project ({root_basename}). It may be a stale "
+                    f"or abandoned child schematic.")
+                print(f"Warning: {original_basename} is not part of the "
+                      f"active project sheet tree", file=sys.stderr)
+
+            return result
         else:
             hierarchy_warning = (
                 "File appears to be a sub-sheet (has hierarchical labels but "
@@ -8543,8 +8569,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
             "disabled (--no-hierarchy). Component references may be incomplete."
         )
 
-    parsed = parse_all_sheets(path, root_tree=root_tree,
-                              symbol_instances_override=_root_si_override)
+    parsed = parse_all_sheets(path, root_tree=root_tree)
 
     all_components = parsed["components"]
     all_wires = parsed["wires"]
@@ -8978,13 +9003,16 @@ def _get_schema():
             "reference_corrections_applied": "int",
         },
         "hierarchy_warning": "string — present when sub-sheet detected without root (optional)",
+        "_redirected_from": "string — original filename when sub-sheet was redirected to root (optional)",
+        "_stale_file_warning": "string — present when input file is not in the project sheet tree (optional)",
     }
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad Schematic Analyzer")
-    parser.add_argument("schematic", nargs="?", help="Path to .kicad_sch file")
+    parser.add_argument("schematic", nargs="?",
+                        help="Path to .kicad_sch, .kicad_pro, or project directory")
     parser.add_argument("--output", "-o", help="Output JSON file (default: stdout)")
     parser.add_argument("--compact", action="store_true", help="Compact JSON output")
     parser.add_argument("--schema", action="store_true",
@@ -9015,6 +9043,17 @@ def main():
 
     if not args.schematic:
         parser.error("the following arguments are required: schematic")
+
+    # Resolve .kicad_pro or directory to the root .kicad_sch
+    from kicad_utils import resolve_project_input
+    try:
+        resolved, note = resolve_project_input(args.schematic, '.kicad_sch')
+        if note:
+            print(f"Note: {note} → {os.path.basename(resolved)}",
+                  file=sys.stderr)
+        args.schematic = resolved
+    except FileNotFoundError as e:
+        parser.error(str(e))
 
     # Load project config (for project settings — suppressions applied to
     # EMC/thermal findings, not schematic warnings which lack rule_ids)
