@@ -3240,7 +3240,7 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
     _SIGNAL_PIN_TYPES = {"power_in", "input", "bidirectional",
                          "output", "tri_state", "open_collector",
                          "open_emitter"}
-    _SKIP_PIN_TYPES = {"no_connect", "free", "unspecified"}
+    _SKIP_PIN_TYPES = {"no_connect", "free", "unspecified", "unconnected"}
     single_pin_nets = []
     single_pin_net_findings: list[dict] = []
     for net_name, net_info in nets.items():
@@ -3250,8 +3250,13 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
         pin_type = (pin.get("pin_type") or "").lower()
         if pin_type in _SKIP_PIN_TYPES:
             continue
-        # Retain the legacy summary shape for downstream consumers
-        single_pin_nets.append({"net": net_name, "pin": pin})
+        # Retain the legacy summary shape for downstream consumers —
+        # keep the pre-existing __unnamed_* guard on the legacy list so
+        # format-report / diff_analysis don't surface mid-edit passive
+        # stubs that the old code filtered out. The rich NT-001 finding
+        # below still covers those cases for reviewers who want them.
+        if not net_name.startswith("__unnamed_"):
+            single_pin_nets.append({"net": net_name, "pin": pin})
         # Emit a weighted finding.
         if pin_type in _SIGNAL_PIN_TYPES:
             severity = "warning"
