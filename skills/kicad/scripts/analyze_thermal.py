@@ -411,6 +411,19 @@ def _compute_junction_temps(power_comps: list, pcb: dict,
             "tj_max_source": tj_max_source,
             "margin_c": round(margin, 1),
             "position": position,
+            "detector": "analyze_thermal",
+            "rule_id": "TH-DET",
+            "category": "thermal",
+            "severity": "info",
+            "confidence": rtheta_source,
+            "evidence_source": rtheta_source,
+            "summary": f"Thermal: {ref} Tj={round(tj, 1)}C (margin {round(margin, 1)}C)",
+            "description": f"Component {ref} in {pkg_name} package: Tj={round(tj, 1)}C, margin {round(margin, 1)}C to Tj_max ({tj_max}C).",
+            "components": [ref],
+            "nets": [],
+            "pins": [],
+            "recommendation": "",
+            "report_context": {"section": "Thermal", "impact": "", "standard_ref": ""},
         })
 
     # Sort by Tj descending (hottest first)
@@ -465,6 +478,12 @@ def _generate_findings(assessments: list) -> list:
                     "thermal path (add thermal vias, larger copper pour), or use "
                     "a more efficient topology (switching regulator instead of LDO)."
                 ),
+                "detector": "analyze_thermal",
+                "summary": f"{label} estimated Tj {tj:.0f}°C exceeds abs max {tj_max:.0f}°C",
+                "nets": [],
+                "pins": [],
+                "evidence_source": confidence,
+                "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
         elif margin < 15:
             findings.append({
@@ -485,6 +504,12 @@ def _generate_findings(assessments: list) -> list:
                     "Consider improving thermal path or reducing input-output "
                     "voltage differential."
                 ),
+                "detector": "analyze_thermal",
+                "summary": f"{label} estimated Tj {tj:.0f}°C — only {margin:.0f}°C margin to abs max",
+                "nets": [],
+                "pins": [],
+                "evidence_source": confidence,
+                "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
         elif tj > 85:
             findings.append({
@@ -505,6 +530,12 @@ def _generate_findings(assessments: list) -> list:
                     "capacitance at this temperature. Consider spacing "
                     "temperature-sensitive components away from heat source."
                 ),
+                "detector": "analyze_thermal",
+                "summary": f"{label} estimated Tj {tj:.0f}°C may affect nearby components",
+                "nets": [],
+                "pins": [],
+                "evidence_source": confidence,
+                "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
         elif pdiss > 0.1:
             findings.append({
@@ -519,6 +550,12 @@ def _generate_findings(assessments: list) -> list:
                 ),
                 "components": [ref],
                 "recommendation": "",
+                "detector": "analyze_thermal",
+                "summary": f"{label} Tj {tj:.0f}°C, margin {margin:.0f}°C",
+                "nets": [],
+                "pins": [],
+                "evidence_source": confidence,
+                "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
 
     # TS-004: High-power component with no thermal vias
@@ -543,6 +580,12 @@ def _generate_findings(assessments: list) -> list:
                     "Add thermal vias under the component's thermal pad or "
                     "exposed pad. Minimum 5 vias for QFN, more for larger pads."
                 ),
+                "detector": "analyze_thermal",
+                "summary": f"{label} dissipates {a['pdiss_w']:.2f}W with no thermal vias",
+                "nets": [],
+                "pins": [],
+                "evidence_source": "deterministic",
+                "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
 
     return findings
@@ -611,6 +654,14 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
                         "Move capacitor away from heat source or use a "
                         "ceramic capacitor rated for higher temperature."
                     ),
+                    "detector": "analyze_thermal",
+                    "summary": (f"Electrolytic {cap['ref']} ({cap['value']}) "
+                                f"is {dist:.1f}mm from {hot_label} "
+                                f"(Tj={hot['tj_estimated_c']:.0f}°C)"),
+                    "nets": [],
+                    "pins": [],
+                    "evidence_source": "deterministic",
+                    "report_context": {"section": "Thermal Proximity", "impact": "Component reliability", "standard_ref": ""},
                 })
             else:
                 findings.append({
@@ -631,6 +682,13 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
                         "at the elevated temperature, or use C0G/NP0 "
                         "dielectric for temperature-critical applications."
                     ),
+                    "detector": "analyze_thermal",
+                    "summary": (f"MLCC {cap['ref']} is {dist:.1f}mm from "
+                                f"{hot_label} (Tj={hot['tj_estimated_c']:.0f}°C)"),
+                    "nets": [],
+                    "pins": [],
+                    "evidence_source": "deterministic",
+                    "report_context": {"section": "Thermal Proximity", "impact": "Component reliability", "standard_ref": ""},
                 })
 
     return findings
