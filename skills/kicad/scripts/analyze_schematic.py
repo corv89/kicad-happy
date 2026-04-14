@@ -8063,10 +8063,14 @@ def analyze_inrush_current(ctx: AnalysisContext,
 def detect_sub_sheet(root_tree: list, file_path: str = None) -> bool:
     """Detect whether a parsed schematic is a sub-sheet (not the root).
 
-    Uses a multi-tier heuristic (KH-228):
+    Uses a multi-tier heuristic (KH-228, refined KH-304/306):
       1. symbol_instances present → ROOT (KiCad 7+ roots always have this)
-      2. sheet blocks present → ROOT (files that reference sub-sheets)
-      3. .kicad_pro stem matches file stem → ROOT; doesn't match → SUB-SHEET
+      2. sheet blocks present AND not referenced by sibling → ROOT
+         (KH-304: intermediate nodes also have sheet blocks; check
+         whether a sibling file references us as a child.)
+      3. .kicad_pro stem matches file stem → ROOT
+         (KH-306: when multiple .kicad_pro exist, only match if ANY
+         stem matches; don't blindly pick the first.)
       4. hierarchical_label presence → SUB-SHEET (original heuristic)
       5. Default: not a sub-sheet (standalone single-sheet design)
     """
@@ -8076,23 +8080,31 @@ def detect_sub_sheet(root_tree: list, file_path: str = None) -> bool:
         return False
 
     # Tier 2: Files with (sheet ...) blocks reference other sheets → root
+    # KH-304: intermediate sub-sheets also have sheet blocks (they have
+    # children). Check if any sibling file references US as a child —
+    # if so, we're an intermediate node, not the root.
     has_sheet_blocks = len(find_all(root_tree, "sheet")) > 0
     if has_sheet_blocks:
-        return False
+        if file_path:
+            from kicad_utils import is_referenced_as_child
+            if is_referenced_as_child(file_path):
+                return True  # Intermediate node — has children but IS a child
+        return False  # Has children, not referenced → root
 
     # Tier 3: .kicad_pro stem matching (reliable across all KiCad versions)
+    # KH-306: when multiple .kicad_pro exist, check ALL of them.
     if file_path:
-        import os
         parent_dir = os.path.dirname(os.path.abspath(file_path))
         file_stem = os.path.splitext(os.path.basename(file_path))[0]
         try:
-            for fname in os.listdir(parent_dir):
-                if fname.endswith('.kicad_pro'):
-                    pro_stem = fname[:-len('.kicad_pro')]
-                    if pro_stem == file_stem:
-                        return False  # This file IS the root
-                    else:
-                        return True   # A project exists but this isn't the root → sub-sheet
+            pro_stems = [fname[:-len('.kicad_pro')]
+                         for fname in os.listdir(parent_dir)
+                         if fname.endswith('.kicad_pro')]
+            if pro_stems:
+                if file_stem in pro_stems:
+                    return False  # This file IS a root
+                else:
+                    return True   # Project(s) exist but this isn't any of them
         except OSError:
             pass
 

@@ -1441,18 +1441,80 @@ def load_kicad_pro(file_path: str) -> dict | None:
     return None
 
 
+def is_referenced_as_child(file_path: str) -> bool:
+    """Check if a .kicad_sch is referenced as a child sheet by a sibling.
+
+    Scans sibling .kicad_sch files in the same directory for Sheetfile
+    properties containing this file's basename.  Used by detect_sub_sheet()
+    to distinguish intermediate hierarchy nodes from the root (KH-304).
+
+    Reads the full file because sheet blocks can appear after large
+    lib_symbols sections (e.g. 680KB root with sheets at byte 681K).
+    """
+    abs_path = os.path.abspath(file_path)
+    basename = os.path.basename(abs_path)
+    parent_dir = os.path.dirname(abs_path)
+
+    try:
+        for fname in os.listdir(parent_dir):
+            if fname.endswith('.kicad_sch') and fname != basename:
+                sibling = os.path.join(parent_dir, fname)
+                try:
+                    with open(sibling, 'r', encoding='utf-8',
+                              errors='replace') as f:
+                        content = f.read()
+                    if basename in content:
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return False
+
+
+def _root_references_target(root_sch: str, target: str) -> bool:
+    """Check if root_sch's sheet tree references target (by relative path).
+
+    Handles both same-directory and sub-directory layouts by computing the
+    relative path from the root's directory to the target.  Reads the full
+    file because sheet blocks can appear after large lib_symbols sections.
+    """
+    try:
+        root_dir = os.path.dirname(os.path.abspath(root_sch))
+        target_abs = os.path.abspath(target)
+        # Compute the relative path the root would use in Sheetfile property
+        rel_path = os.path.relpath(target_abs, root_dir)
+        # Also try just the basename (same-directory case)
+        basename = os.path.basename(target_abs)
+
+        with open(root_sch, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+
+        # Check for relative path or basename in content
+        # KiCad uses forward slashes in Sheetfile even on Windows
+        for needle in (rel_path, rel_path.replace(os.sep, '/'), basename):
+            if needle in content:
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def discover_root_schematic(target_path: str) -> str | None:
     """Find the root .kicad_sch for a sub-sheet file.
 
     Returns the root schematic path, or None if the target appears to be
     the root or no root can be found.
 
-    Strategy:
-    1. Look for .kicad_pro in the same directory — its stem matches the
-       root .kicad_sch stem (KiCad convention).
-    2. Scan sibling .kicad_sch files for (sheet ...) blocks whose
-       Sheetfile property references the target filename.
-    3. Return None if neither succeeds.
+    Strategy (KH-305, KH-306 hardened):
+    1. Same directory: look for .kicad_pro, derive root .kicad_sch.
+       When multiple .kicad_pro exist (KH-306), verify each candidate's
+       sheet tree references the target.
+    2. Same directory: scan sibling .kicad_sch files for references.
+    3. Parent directories (KH-305): walk up to 5 levels looking for
+       .kicad_pro whose root .kicad_sch references the target via a
+       relative path (handles sheets/ subdirectory layouts).
+    4. Return None if nothing found.
     """
     target = os.path.abspath(target_path)
     parent_dir = os.path.dirname(target)
@@ -1461,30 +1523,58 @@ def discover_root_schematic(target_path: str) -> str | None:
     try:
         entries = os.listdir(parent_dir)
     except OSError:
-        return None
+        entries = []
 
-    # Tier 1: .kicad_pro stem match
-    for fname in entries:
-        if fname.endswith('.kicad_pro'):
-            stem = fname[:-len('.kicad_pro')]
+    # Tier 1: .kicad_pro stem match (same directory)
+    # KH-306: when multiple .kicad_pro exist, verify sheet-tree membership
+    pro_files = [f for f in entries if f.endswith('.kicad_pro')]
+
+    if len(pro_files) == 1:
+        stem = pro_files[0][:-len('.kicad_pro')]
+        candidate = os.path.join(parent_dir, stem + '.kicad_sch')
+        if os.path.isfile(candidate) and os.path.abspath(candidate) != target:
+            return candidate
+    elif len(pro_files) > 1:
+        # Multiple projects — check which one's sheet tree references us
+        for pro in pro_files:
+            stem = pro[:-len('.kicad_pro')]
             candidate = os.path.join(parent_dir, stem + '.kicad_sch')
-            if os.path.isfile(candidate) and os.path.abspath(candidate) != target:
+            if (os.path.isfile(candidate)
+                    and os.path.abspath(candidate) != target
+                    and _root_references_target(candidate, target)):
                 return candidate
 
     # Tier 2: scan sibling .kicad_sch files for (sheet ...) blocks
-    # referencing target_basename
     siblings = [f for f in entries
                 if f.endswith('.kicad_sch') and f != target_basename]
     for fname in siblings:
         candidate = os.path.join(parent_dir, fname)
         try:
             with open(candidate, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read(256_000)  # read first 256KB — sheets are near top
-            # Quick string check before expensive parsing
+                content = f.read()
             if target_basename in content:
                 return candidate
         except OSError:
             continue
+
+    # Tier 3 (KH-305): walk up parent directories looking for .kicad_pro
+    # Handles sub-directory layouts (e.g., sheets/video.kicad_sch)
+    search_dir = parent_dir
+    for _ in range(5):
+        search_dir = os.path.dirname(search_dir)
+        if search_dir == os.path.dirname(search_dir):
+            break  # Hit filesystem root
+        try:
+            parent_entries = os.listdir(search_dir)
+        except OSError:
+            continue
+        for fname in parent_entries:
+            if fname.endswith('.kicad_pro'):
+                stem = fname[:-len('.kicad_pro')]
+                candidate = os.path.join(search_dir, stem + '.kicad_sch')
+                if (os.path.isfile(candidate)
+                        and _root_references_target(candidate, target)):
+                    return candidate
 
     return None
 
