@@ -5907,30 +5907,44 @@ def detect_energy_harvesting(ctx: AnalysisContext) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def detect_pwm_led_dimming(ctx: AnalysisContext, transistor_circuits: list[dict]) -> list[dict]:
-    """PL-001: Detect PWM-driven LED strings with MOSFET + current sense."""
+    """PL-001: Detect transistor-driven LED circuits.
+
+    Finds transistors whose load_type is 'led' or whose collector/drain net
+    connects to LEDs. Covers both MOSFET and BJT LED drivers.
+    """
     results: list[dict] = []
     for tc in transistor_circuits:
-        if tc.get('circuit_type') not in ('low_side_switch', 'high_side_switch'):
-            continue
-        ref = tc.get('transistor_ref', tc.get('reference', ''))
-        load_net = tc.get('load_net', '')
-        leds_on_load = []
-        if load_net and load_net in ctx.nets:
-            for p in ctx.nets[load_net]['pins']:
-                comp = ctx.comp_lookup.get(p['component'])
-                if comp and comp['type'] == 'led':
-                    leds_on_load.append(p['component'])
+        ref = tc.get('reference', '')
+        leds_on_load: list[str] = []
+
+        if tc.get('load_type') == 'led':
+            for net_key in ('collector_net', 'drain_net'):
+                load_net = tc.get(net_key, '')
+                if load_net and load_net in ctx.nets:
+                    for p in ctx.nets[load_net]['pins']:
+                        comp = ctx.comp_lookup.get(p['component'])
+                        if comp and comp['type'] == 'led' and p['component'] not in leds_on_load:
+                            leds_on_load.append(p['component'])
+
         if not leds_on_load:
             continue
-        sense_r = tc.get('sense_resistor')
+
+        sense_r = tc.get('emitter_resistor') or tc.get('source_resistor')
+        load_net = tc.get('collector_net', tc.get('drain_net', ''))
+
         results.append({
             'detector': 'detect_pwm_led_dimming', 'rule_id': 'PL-001',
             'category': 'led_control', 'reference': ref,
-            'switch_type': tc.get('circuit_type', ''), 'leds': leds_on_load,
+            'transistor_type': tc.get('type', ''),
+            'leds': leds_on_load,
             'sense_resistor': sense_r,
-            'severity': 'info', 'confidence': 'heuristic', 'evidence_source': 'topology',
-            'summary': f'PWM LED dimming via {ref} driving {len(leds_on_load)} LED(s)',
-            'description': f'MOSFET {ref} switches LED(s) {", ".join(leds_on_load)} {"with" if sense_r else "without"} current sensing.',
+            'severity': 'info', 'confidence': 'deterministic', 'evidence_source': 'topology',
+            'summary': f'Transistor-driven LED: {ref} driving {", ".join(leds_on_load)}',
+            'description': (
+                f'Transistor {ref} ({tc.get("value", "")}) drives LED(s) '
+                f'{", ".join(leds_on_load)} {"with" if sense_r else "without"} '
+                f'current sense resistor.'
+            ),
             'components': [ref] + leds_on_load, 'nets': [load_net] if load_net else [],
             'pins': [],
             'recommendation': '' if sense_r else 'Consider adding a current sense resistor for LED current regulation.',
