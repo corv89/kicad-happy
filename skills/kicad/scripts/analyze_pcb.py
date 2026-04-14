@@ -6015,6 +6015,93 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         except Exception:
             pass  # Non-critical — degrade gracefully
 
+    # --- Harmonization: collect all findings into top-level list ---
+    findings = []
+
+    # Simple list sections (entries have rule_id from Batch 7 migration)
+    _FINDING_LIST_KEYS = [
+        'tombstoning_risk', 'thermal_pad_vias', 'orientation_consistency',
+        'silkscreen_pad_overlaps', 'via_in_pad_issues',
+        'board_edge_via_clearance', 'keepout_violations',
+    ]
+    for key in _FINDING_LIST_KEYS:
+        data = result.pop(key, None)
+        if isinstance(data, list):
+            findings.extend(data)
+
+    # Dict sections with findings sub-key
+    fiducial = result.pop('fiducial_check', None)
+    if fiducial and isinstance(fiducial, dict):
+        findings.extend(fiducial.get('findings', []))
+
+    test_point = result.pop('test_point_coverage', None)
+    if test_point and isinstance(test_point, dict) and 'rule_id' in test_point:
+        findings.append(test_point)
+
+    # Nested sections: extract findings, keep summary data
+    dfm_data = result.pop('dfm', None)
+    if dfm_data:
+        findings.extend(dfm_data.get('violations', []))
+        ipc = dfm_data.get('ipc_class_compliance', {})
+        findings.extend(ipc.get('violations', []))
+        # Keep non-finding DFM data
+        result['dfm_summary'] = {
+            'dfm_tier': dfm_data.get('dfm_tier', ''),
+            'metrics': dfm_data.get('metrics', {}),
+            'violation_count': dfm_data.get('violation_count', 0),
+        }
+        if ipc:
+            result['dfm_summary']['ipc_class_compliance'] = {
+                'detected_class': ipc.get('detected_class'),
+                'detection_source': ipc.get('detection_source', ''),
+            }
+
+    placement = result.pop('placement_analysis', None)
+    if placement:
+        findings.extend(placement.get('courtyard_overlaps', []))
+        findings.extend(placement.get('edge_clearance_warnings', []))
+        if placement.get('density'):
+            result['placement_density'] = placement['density']
+
+    thermal_sec = result.pop('thermal_analysis', None)
+    if thermal_sec:
+        findings.extend(thermal_sec.get('zone_stitching', []))
+        findings.extend(thermal_sec.get('thermal_pads', []))
+
+    current_cap = result.pop('current_capacity', None)
+    if current_cap:
+        findings.extend(current_cap.get('power_ground_nets', []))
+        findings.extend(current_cap.get('narrow_signal_nets', []))
+        if 'board_thickness_mm' in current_cap:
+            result['board_thickness_mm'] = current_cap['board_thickness_mm']
+
+    connectivity_dict = result.get('connectivity', {})
+    if isinstance(connectivity_dict, dict):
+        unrouted = connectivity_dict.pop('unrouted', None)
+        if unrouted:
+            findings.extend(unrouted)
+
+    copper = result.pop('copper_presence', None)
+    if copper:
+        findings.extend(copper.get('same_layer_foreign_zones', []))
+        findings.extend(copper.get('no_opposite_layer_copper_findings', []))
+        findings.extend(copper.get('touch_pad_gnd_clearance', []))
+        if copper.get('opposite_layer_summary'):
+            result['copper_presence_summary'] = copper['opposite_layer_summary']
+
+    result['findings'] = findings
+
+    # Build summary
+    sev_counts = {"error": 0, "warning": 0, "info": 0}
+    for f in findings:
+        sev = f.get("severity", "info").lower()
+        if sev in sev_counts:
+            sev_counts[sev] += 1
+    result['summary'] = {
+        'total_findings': len(findings),
+        'by_severity': sev_counts,
+    }
+
     return result
 
 
@@ -6079,6 +6166,8 @@ def main():
                         help="Write output to analysis cache directory (timestamped runs)")
     parser.add_argument("--schematic",
                         help="Schematic analysis JSON for cross-analyzer enrichment")
+    parser.add_argument("--text", action="store_true",
+                        help="Print human-readable text report to stdout")
     args = parser.parse_args()
 
     if args.schema:
@@ -6142,6 +6231,12 @@ def main():
         result['design_intent'] = intent
     except ImportError:
         pass
+
+    if args.text:
+        for f in result.get("findings", []):
+            sev = f.get("severity", "info").upper()
+            print(f'[{sev:8s}] {f.get("rule_id", ""):8s} {f.get("summary", "")}')
+        sys.exit(0)
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
