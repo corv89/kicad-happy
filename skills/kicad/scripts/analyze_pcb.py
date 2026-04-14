@@ -1674,9 +1674,13 @@ def _min_power_pad_distance(ic_fp: dict, cap_fp: dict) -> float:
     # Minimum distance between any IC power pad and any cap pad
     min_dist = float("inf")
     for ip in power_pads:
-        ix, iy = ip["abs_x"], ip["abs_y"]
+        ix, iy = ip.get("abs_x"), ip.get("abs_y")
+        if ix is None or iy is None:
+            continue
         for cp in cap_pads:
-            cx, cy = cp["abs_x"], cp["abs_y"]
+            cx, cy = cp.get("abs_x"), cp.get("abs_y")
+            if cx is None or cy is None:
+                continue
             d = math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2)
             if d < min_dist:
                 min_dist = d
@@ -4025,6 +4029,8 @@ def analyze_design_rule_compliance(
                 ctype = constraint.get('type', '')
                 cmin = constraint.get('min')
                 if cmin is None:
+                    continue
+                if not isinstance(cmin, (int, float)):
                     continue
 
                 # Only check constraints we can verify globally

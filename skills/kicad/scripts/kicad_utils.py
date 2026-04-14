@@ -1447,7 +1447,7 @@ def extract_pro_net_classes(pro: dict) -> list[dict]:
     """
     ns = pro.get('net_settings', {})
     raw_classes = ns.get('classes', [])
-    patterns = ns.get('netclass_patterns', [])
+    patterns = ns.get('netclass_patterns') or []
     assignments = ns.get('netclass_assignments') or {}
 
     # Build pattern-based net lists per class

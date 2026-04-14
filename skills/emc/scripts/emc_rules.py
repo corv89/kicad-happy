@@ -1117,7 +1117,7 @@ def check_crystal_guard_ring(pcb: Dict, schematic: Optional[Dict] = None) -> Lis
                 break
 
         if not has_ground_pour:
-            freq = xtal.get('frequency', 0)
+            freq = xtal.get('frequency') or 0
             freq_str = f"{freq/1e6:.1f} MHz" if freq > 1e6 else f"{freq/1e3:.1f} kHz"
             findings.append(_make_finding(
                 'clock_routing', 'MEDIUM', 'CK-004',
