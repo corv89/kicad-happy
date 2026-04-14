@@ -5965,7 +5965,39 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     if return_path:
         result["return_path_continuity"] = return_path
 
+    # New assembly/DFM checks
+    fiducial_check = analyze_fiducials(footprints)
+    if fiducial_check.get("findings"):
+        result["fiducial_check"] = fiducial_check
+
+    test_point_cov = analyze_test_point_coverage(footprints, net_names)
+    result["test_point_coverage"] = test_point_cov
+
+    orientation = analyze_orientation_consistency(footprints)
+    if orientation:
+        result["orientation_consistency"] = orientation
+
+    silkscreen_overlaps = analyze_silkscreen_pad_overlaps(
+        footprints, silkscreen.get("board_texts", []))
+    if silkscreen_overlaps:
+        result["silkscreen_pad_overlaps"] = silkscreen_overlaps
+
+    keepout_list = result.get("keepout_zones", [])
+    keepout_violations = analyze_keepout_violations(footprints, vias, keepout_list)
+    if keepout_violations:
+        result["keepout_violations"] = keepout_violations
+
     if include_trace_segments:
+        via_in_pad = analyze_via_in_pad(
+            footprints, vias,
+            {e.get("component", "") for e in (thermal_pad_vias or [])})
+        if via_in_pad:
+            result["via_in_pad_issues"] = via_in_pad
+
+        edge_via = analyze_board_edge_via_clearance(vias, outline)
+        if edge_via:
+            result["board_edge_via_clearance"] = edge_via
+
         result["tracks"]["segments"] = tracks.get("segments", [])
         result["tracks"]["arcs"] = tracks.get("arcs", [])
         result["vias"]["vias"] = vias.get("vias", [])
