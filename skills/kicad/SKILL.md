@@ -177,6 +177,28 @@ All scripts output JSON to stdout by default. Use `--output file.json` to write 
 
 **Analyzer JSON is worth keeping** — these are expensive to regenerate (large schematics take time). Use `--output` to save them for multi-pass analysis. They're not worth committing to git, but don't delete them between analysis steps.
 
+### Harmonized Output Format
+
+All analyzers produce a uniform output structure:
+
+```json
+{
+    "analyzer_type": "schematic|pcb|emc|cross_analysis|thermal|gerber|lifecycle",
+    "elapsed_s": 1.23,
+    "summary": {
+        "total_findings": 42,
+        "by_severity": {"error": 3, "warning": 15, "info": 24}
+    },
+    "findings": [
+        {"rule_id": "...", "detector": "...", "severity": "...", "summary": "...", ...}
+    ]
+}
+```
+
+The `findings` list is the single authoritative source for all findings. Use `finding_schema.get_findings()` or `finding_schema.group_findings()` to filter by detector, rule prefix, or category. Detector names are available as constants in `finding_schema.Det`.
+
+All analyzers support `--text` for human-readable output and `--output` for JSON file output. Most support `--analysis-dir` for cache directory output.
+
 ### Generated Files
 
 Analysis outputs are stored in `analysis/` with timestamped run folders managed by `analysis_cache.py`. The manifest (`analysis/manifest.json`) tracks all runs.
@@ -221,13 +243,18 @@ All fields are optional. Missing fields use defaults.
 
 **Schematic analyzer top-level keys:**
 ```
+analyzer_type, elapsed_s, summary, findings,
 file, kicad_version, file_version, title_block, statistics, bom, components,
-nets, subcircuits, ic_pin_analysis, signal_analysis, design_analysis,
+nets, subcircuits, ic_pin_analysis, design_analysis,
 connectivity_issues, labels, no_connects, power_symbols, annotation_issues,
 label_shape_warnings, pwr_flag_warnings, footprint_filter_warnings,
 sourcing_audit, ground_domains, bus_topology, wire_geometry,
-simulation_readiness, property_issues, placement_analysis, hierarchical_labels
+simulation_readiness, property_issues, placement_analysis, hierarchical_labels,
+power_regulators, voltage_dividers, rc_filters, lc_filters, feedback_networks,
+opamp_circuits, transistor_circuits, bridge_circuits, crystal_circuits,
+current_sense, decoupling_analysis, protection_devices, design_observations
 ```
+(plus domain-specific subcircuit keys when present; `signal_analysis` wrapper removed — see note below)
 Optional (present when non-empty): `text_annotations`, `alternate_pin_summary`, `pin_coverage_warnings`, `instance_consistency_warnings`, `pdn_impedance`, `sleep_current_audit`, `voltage_derating`, `power_budget`, `power_sequencing`, `bom_optimization`, `test_coverage`, `assembly_complexity`, `usb_compliance`, `inrush_analysis`, `sheets`
 
 Key nested structures:
@@ -235,7 +262,7 @@ Key nested structures:
 - `bom[]`: `{reference, references[], value, footprint, mpn, manufacturer, datasheet, quantity, dnp, ...}`
 - `components[]`: `{reference, value, footprint, lib_id, lib_name, type, category, mpn, datasheet, dnp, in_bom, parsed_value, ...}`
 - `nets{net_name}`: `{pins[], wires, labels[], ...}` — each pin: `{component, pin_number, pin_name, pin_type, ...}` (NOT `ref` or `pin`)
-- `signal_analysis`: `{power_regulators[], voltage_dividers[], rc_filters[], lc_filters[], feedback_networks[], opamp_circuits[], transistor_circuits[], bridge_circuits[], crystal_circuits[], current_sense[], decoupling_analysis[], protection_devices[], buzzer_speaker_circuits[], ethernet_interfaces[], hdmi_dvi_interfaces[], memory_interfaces[], rf_chains[], rf_matching[], bms_systems[], key_matrices[], isolation_barriers[], addressable_led_chains[], design_observations[]}`
+- `signal_analysis` wrapper no longer exists — detected subcircuit lists (`power_regulators[]`, `voltage_dividers[]`, `rc_filters[]`, `lc_filters[]`, `feedback_networks[]`, `opamp_circuits[]`, `transistor_circuits[]`, `bridge_circuits[]`, `crystal_circuits[]`, `current_sense[]`, `decoupling_analysis[]`, `protection_devices[]`, `buzzer_speaker_circuits[]`, `ethernet_interfaces[]`, `hdmi_dvi_interfaces[]`, `memory_interfaces[]`, `rf_chains[]`, `rf_matching[]`, `bms_systems[]`, `key_matrices[]`, `isolation_barriers[]`, `addressable_led_chains[]`, `design_observations[]`) are now top-level keys alongside `findings`. All rule-flagged issues are in `findings[]`; subcircuit lists contain non-finding structured data.
 
 **PCB analyzer top-level keys:**
 ```
