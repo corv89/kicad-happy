@@ -122,6 +122,7 @@ class Det:
     HEADPHONE_JACK = 'detect_headphone_jack'
     SOLDER_JUMPERS = 'detect_solder_jumpers'
     LABEL_ALIASES = 'detect_label_aliases'
+    POWER_PIN_DC_PATH = 'audit_power_pin_dc_paths'
     # Audit detectors
     ESD_AUDIT = 'audit_esd_protection'
     LED_AUDIT = 'audit_led_circuits'

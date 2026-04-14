@@ -4112,3 +4112,220 @@ def detect_label_aliases(ctx: AnalysisContext) -> list[dict]:
         })
     return findings
 
+
+# ---------------------------------------------------------------------------
+# IC power pin DC path audit (PP-001)
+# ---------------------------------------------------------------------------
+
+def audit_power_pin_dc_paths(ctx: AnalysisContext,
+                             solder_jumpers: list[dict] | None = None
+                             ) -> list[dict]:
+    """For every IC power_in pin, prove a DC path to a power rail exists.
+
+    A power_in pin that only reaches ground through a capacitor is
+    AC-coupled — the IC's supply floats DC, ERC is silent, and the
+    board behaves unpredictably. Walk the net graph starting at each
+    power_in pin, crossing:
+      - wires on the same net                           (free)
+      - resistors with parsed value <= 1 Ω              (bridge)
+      - inductors / ferrite beads                       (bridge)
+      - solder jumpers with default_state='bridged'    (bridge)
+    and REJECT crossing capacitors. If no named power rail is reachable
+    within 2 hops, emit PP-001 at severity=high.
+    """
+    findings: list[dict] = []
+    nets = ctx.nets or {}
+    components = {c.get("reference"): c for c in (ctx.components or [])}
+
+    # Map component ref -> list of (pin_number, net_name, pin_type) for net hops.
+    ref_pins: dict[str, list[tuple[str, str, str]]] = {}
+    for net_name, net_info in nets.items():
+        for p in net_info.get("pins", []):
+            ref = p.get("component") or ""
+            if not ref:
+                continue
+            ref_pins.setdefault(ref, []).append(
+                (str(p.get("pin_number", "")), net_name,
+                 str(p.get("pin_type", ""))))
+
+    # Component-type-based bridge predicate.
+    def _bridges_dc(ref: str) -> bool:
+        c = components.get(ref) or {}
+        t = (c.get("type") or c.get("category") or "").lower()
+        if t in ("inductor", "ferrite_bead"):
+            return True
+        if t == "resistor":
+            # Small value resistors count as DC-conductive.
+            v = parse_value(c.get("value", ""), component_type="resistor")
+            if v is None:
+                # 0R / DNP heuristic
+                val = (c.get("value") or "").strip().lower().replace(" ", "")
+                if val in ("0", "0r", "0ohm", "0ohms"):
+                    return True
+                return False
+            return v <= 1.0
+        if t == "jumper":
+            for sj in (solder_jumpers or []):
+                if sj.get("reference") == ref:
+                    return sj.get("default_state") == "bridged"
+            return False
+        return False
+
+    def _is_capacitor(ref: str) -> bool:
+        c = components.get(ref) or {}
+        return (c.get("type") or "").lower() == "capacitor"
+
+    def _is_connector(ref: str) -> bool:
+        """Return True if ref looks like a connector (external supply entry point)."""
+        c = components.get(ref) or {}
+        t = (c.get("type") or "").lower()
+        if t in ("connector",):
+            return True
+        # Reference prefix heuristic: J / P / CN are standard connector prefixes.
+        return bool(ref and ref[0] in ("J", "P") and ref[1:2].isdigit())
+
+    # Build per-net connector presence set — nets with connectors may have
+    # external DC supply; suppress PP-001 for those nets to avoid false
+    # positives on boards where the power comes in from a header.
+    nets_with_connector: set[str] = set()
+    for net_name_c, net_info_c in nets.items():
+        for p in net_info_c.get("pins", []):
+            cref = p.get("component") or ""
+            if _is_connector(cref):
+                nets_with_connector.add(net_name_c)
+                break
+
+    MAX_HOPS = 2
+    # Track (ref, pin) pairs already checked to avoid duplicate findings.
+    seen: set[tuple[str, str]] = set()
+
+    for net_name, net_info in nets.items():
+        for p in net_info.get("pins", []):
+            if p.get("pin_type") != "power_in":
+                continue
+            ref = p.get("component") or ""
+            pin_num = str(p.get("pin_number", ""))
+            pin_name = p.get("pin_name") or ""
+            if not ref or ref.startswith("#"):
+                continue  # PWR_FLAG / power symbol virtuals
+
+            # Ground pins (VSS, GND, AGND, SGND, VSSA, etc.) are already
+            # at the ground reference — they don't need a path to a positive
+            # power rail. Flagging them would be a false positive.
+            if ctx.is_ground(net_name):
+                continue
+
+            # If a connector is on this net, external DC supply is plausible.
+            # Suppress — the RS-001 rule handles "no declared source" separately.
+            if net_name in nets_with_connector:
+                continue
+
+            key = (ref, pin_num)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            frontier: set[str] = {net_name}
+            visited: set[str] = {net_name}
+            # A power_in pin directly on a named power rail already has DC.
+            reached_rail = (ctx.is_power_net(net_name)
+                            and not ctx.is_ground(net_name))
+            # Track whether any capacitor blocked the walk — only emit PP-001
+            # when a cap-only path exists (not just "no source declared").
+            # That distinguishes the AC-coupling bug from missing-PWR_FLAG
+            # which RS-001 already covers.
+            saw_cap_blocking: bool = False
+            for _hop in range(MAX_HOPS):
+                if reached_rail:
+                    break
+                next_frontier: set[str] = set()
+                for cur_net in frontier:
+                    cur_info = nets.get(cur_net, {})
+                    for cp in cur_info.get("pins", []):
+                        cref = cp.get("component") or ""
+                        if not cref or cref == ref:
+                            continue
+                        if _is_capacitor(cref):
+                            saw_cap_blocking = True
+                            continue
+                        if not _bridges_dc(cref):
+                            continue
+                        for _other_pn, other_net, _pt in ref_pins.get(cref, []):
+                            if other_net == cur_net:
+                                continue
+                            if other_net in visited:
+                                continue
+                            visited.add(other_net)
+                            next_frontier.add(other_net)
+                            if (ctx.is_power_net(other_net)
+                                    and not ctx.is_ground(other_net)):
+                                reached_rail = True
+                frontier = next_frontier
+                if not frontier:
+                    break
+
+            if reached_rail:
+                continue
+            # Only emit if a capacitor was present on the path — this is the
+            # specific "AC-coupled supply" wiring bug PP-001 targets. Pins on
+            # nets with no source at all (no PWR_FLAG, no regulator output)
+            # are already flagged by RS-001 and don't need a second finding.
+            if not saw_cap_blocking:
+                continue
+
+            # Suppress if a DC bridge component was also on the starting net.
+            # When a net has both a cap-to-GND (decoupling) AND a DC-bridge
+            # element (inductor, 0Ω, ferrite), the topology is a filtered
+            # supply rail, not a cap-only path. The real AC-coupled bug has
+            # ONLY caps between the VCC pin and ground — no DC bridges at all.
+            net_pins = nets.get(net_name, {}).get("pins", [])
+            has_bridge_on_start_net = any(
+                _bridges_dc(cp.get("component") or "")
+                for cp in net_pins
+                if cp.get("component") and cp.get("component") != ref
+            )
+            if has_bridge_on_start_net:
+                continue
+
+            pin_label = f"{ref}.{pin_num}"
+            if pin_name:
+                pin_label += f" ({pin_name})"
+            findings.append({
+                "detector": "audit_power_pin_dc_paths",
+                "rule_id": "PP-001",
+                "severity": "high",
+                "confidence": "heuristic",
+                "evidence_source": "topology",
+                "category": "power",
+                "summary": (f"IC power pin {pin_label} has no DC path to a "
+                            f"power rail (net {net_name!r})"),
+                "description": (f"Pin {pin_label} is type=power_in on net "
+                                f"{net_name!r}. Graph walk (≤{MAX_HOPS} "
+                                f"hops, rejecting capacitor edges, "
+                                f"accepting resistors≤1Ω, inductors, "
+                                f"ferrite beads, bridged solder jumpers) "
+                                f"did not reach a named power rail. The pin "
+                                f"is likely AC-coupled to ground only — "
+                                f"the IC will not power up reliably."),
+                "components": [ref],
+                "nets": sorted(visited)[:10],
+                "pins": [pin_label],
+                "start_net": net_name,
+                "visited_nets": sorted(visited),
+                "source_path": "none",
+                "recommendation": (
+                    "Verify the schematic for this pin: the DC route must "
+                    "go through a conducting element (direct wire, 0Ω "
+                    "resistor, inductor, ferrite bead, or bridged solder "
+                    "jumper) — not a capacitor. If the intent was to tie "
+                    "VCC through an LC filter, add the missing inductor "
+                    "or 0Ω in series."),
+                "report_context": {
+                    "section": "Power — DC Continuity",
+                    "impact": "IC supply floats DC; board will not run.",
+                    "standard_ref": "",
+                },
+            })
+
+    return findings
+

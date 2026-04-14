@@ -54,6 +54,7 @@ from kicad_utils import (
 )
 from kicad_types import AnalysisContext
 from signal_detectors import (
+    audit_power_pin_dc_paths,
     audit_rail_sources,
     detect_bridge_circuits,
     detect_crystal_circuits,
@@ -794,6 +795,8 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     rail_source_audit = audit_rail_sources(
         ctx, power_regulators=power_regulators, solder_jumpers=solder_jumpers)
     label_aliases = detect_label_aliases(ctx)
+    power_pin_dc_paths = audit_power_pin_dc_paths(
+        ctx, solder_jumpers=solder_jumpers)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -994,6 +997,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "solder_jumpers": solder_jumpers,
         "rail_source_audit": rail_source_audit,
         "label_aliases": label_aliases,
+        "power_pin_dc_paths": power_pin_dc_paths,
         "validation_findings": (
             pullup_findings +
             voltage_level_findings +
