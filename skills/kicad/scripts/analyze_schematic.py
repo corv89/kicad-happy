@@ -3231,14 +3231,77 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
                         "pin_type": pin["type"],
                     })
 
-    # Find single-pin nets (likely unfinished wiring)
+    # Find single-pin nets. Pin type determines severity — a floating
+    # power_in / input / bidirectional pin is a real wiring bug, while a
+    # lonely passive leg is usually mid-edit, and a no_connect pin is
+    # documentation. Unnamed nets (__unnamed_N) count when the pin type
+    # warrants it — KiCad lets users rely on the auto-generated name
+    # for boot caps and flying caps that genuinely shouldn't be labelled.
+    _SIGNAL_PIN_TYPES = {"power_in", "input", "bidirectional",
+                         "output", "tri_state", "open_collector",
+                         "open_emitter"}
+    _SKIP_PIN_TYPES = {"no_connect", "free", "unspecified"}
     single_pin_nets = []
+    single_pin_net_findings: list[dict] = []
     for net_name, net_info in nets.items():
-        if len(net_info["pins"]) == 1 and not net_name.startswith("__unnamed_") and not net_info.get("no_connect"):
-            single_pin_nets.append({
-                "net": net_name,
-                "pin": net_info["pins"][0],
-            })
+        if len(net_info["pins"]) != 1 or net_info.get("no_connect"):
+            continue
+        pin = net_info["pins"][0]
+        pin_type = (pin.get("pin_type") or "").lower()
+        if pin_type in _SKIP_PIN_TYPES:
+            continue
+        # Retain the legacy summary shape for downstream consumers
+        single_pin_nets.append({"net": net_name, "pin": pin})
+        # Emit a weighted finding.
+        if pin_type in _SIGNAL_PIN_TYPES:
+            severity = "warning"
+            impact = ("Likely unfinished wiring: a driven or powered pin "
+                      "has no counterpart.")
+        elif pin_type == "power_out":
+            severity = "info"
+            impact = ("Power source with no declared load — acceptable if "
+                      "loads are on another sheet, otherwise suspicious.")
+        else:
+            severity = "info"
+            impact = "Passive or unclassified pin lonely on its own net."
+        display_ref = pin.get("component", "?")
+        display_num = pin.get("pin_number", "?")
+        display_name = pin.get("pin_name") or ""
+        display_label = (f"{display_ref}.{display_num}"
+                         + (f" ({display_name})" if display_name else ""))
+        net_display = (f"{display_ref}.{display_name}"
+                       if net_name.startswith("__unnamed_") and display_name
+                       else net_name)
+        single_pin_net_findings.append({
+            "detector": "analyze_connectivity",
+            "rule_id": "NT-001",
+            "severity": severity,
+            "confidence": "deterministic",
+            "evidence_source": "topology",
+            "category": "connectivity",
+            "summary": (f"Single-pin net: {net_display} only connects to "
+                        f"{display_label} ({pin_type or 'unknown'})"),
+            "description": (f"Net {net_name!r} has exactly one pin: "
+                            f"{display_label}, pin_type={pin_type!r}. "
+                            "Verify the intended target — if this pin "
+                            "should connect somewhere, the wire/label is "
+                            "missing."),
+            "components": [display_ref] if display_ref else [],
+            "nets": [net_name],
+            "pins": [f"{display_ref}.{display_num}"],
+            "net_display_name": net_display,
+            "pin_type": pin_type,
+            "pin_name": display_name,
+            "recommendation": (
+                "Check the schematic at the referenced pin — add the "
+                "missing wire or place a no-connect marker if the pin is "
+                "intentionally floating."),
+            "report_context": {
+                "section": "Connectivity",
+                "impact": impact,
+                "standard_ref": "",
+            },
+        })
 
     # Find multi-driver nets (multiple outputs driving the same net)
     # Exclude power flags (#FLG, #PWR) — they're virtual, not real drivers
@@ -3273,6 +3336,7 @@ def analyze_connectivity(components: list[dict], nets: dict, no_connects: list[d
     return {
         "unconnected_pins": unconnected_pins,
         "single_pin_nets": single_pin_nets,
+        "single_pin_net_findings": single_pin_net_findings,
         "multi_driver_nets": multi_driver_nets,
         "power_net_summary": power_net_summary,
     }
@@ -8633,6 +8697,11 @@ def analyze_schematic(path: str, project_root: str | None = None,
 
     if sourcing_gate_findings:
         findings.extend(sourcing_gate_findings)
+
+    # NT-001 — single-pin nets weighted by pin type (Task 3)
+    nt_findings = connectivity_issues.get("single_pin_net_findings", [])
+    if nt_findings:
+        findings.extend(nt_findings)
 
     # Build severity summary
     sev_counts = {"error": 0, "warning": 0, "info": 0}
