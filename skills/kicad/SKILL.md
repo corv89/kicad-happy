@@ -199,6 +199,26 @@ The `findings` list is the single authoritative source for all findings. Use `fi
 
 All analyzers support `--text` for human-readable output and `--output` for JSON file output. Most support `--analysis-dir` for cache directory output.
 
+### Stage and Audience Filtering
+
+All analyzers support `--stage` and `--audience` flags:
+
+**Stages:** `schematic`, `layout`, `pre_fab`, `bring_up`
+**Audiences:** `designer` (default), `reviewer`, `manager`
+
+```bash
+# Show only layout-relevant findings for a reviewer
+python3 <skill-path>/scripts/analyze_pcb.py board.kicad_pcb --stage layout --audience reviewer --text
+
+# Manager summary of schematic review readiness
+python3 <skill-path>/scripts/analyze_schematic.py design.kicad_sch --audience manager --text
+
+# Pre-fab checklist for cross-domain analysis
+python3 <skill-path>/scripts/cross_analysis.py -s sch.json -p pcb.json --stage pre_fab --text
+```
+
+JSON output always includes all findings. `--stage` adds `stages` and `in_active_stage` fields to each finding plus a `stage_filter` summary. `audience_summary` is always computed with designer/reviewer/manager views. `--text` output respects both flags.
+
 ### Generated Files
 
 Analysis outputs are stored in `analysis/` with timestamped run folders managed by `analysis_cache.py`. The manifest (`analysis/manifest.json`) tracks all runs.
