@@ -4181,7 +4181,9 @@ def audit_power_pin_dc_paths(ctx: AnalysisContext,
         t = (c.get("type") or "").lower()
         if t in ("connector",):
             return True
-        # Reference prefix heuristic: J / P / CN are standard connector prefixes.
+        # J<digit> / P<digit> reference prefixes are conservative connector
+        # heuristics; other connector refs must carry type="connector" in the
+        # component dict (caught by the preceding check).
         return bool(ref and ref[0] in ("J", "P") and ref[1:2].isdigit())
 
     # Build per-net connector presence set — nets with connectors may have
@@ -4234,7 +4236,7 @@ def audit_power_pin_dc_paths(ctx: AnalysisContext,
             # when a cap-only path exists (not just "no source declared").
             # That distinguishes the AC-coupling bug from missing-PWR_FLAG
             # which RS-001 already covers.
-            saw_cap_blocking: bool = False
+            saw_capacitor_on_path: bool = False
             for _hop in range(MAX_HOPS):
                 if reached_rail:
                     break
@@ -4246,7 +4248,7 @@ def audit_power_pin_dc_paths(ctx: AnalysisContext,
                         if not cref or cref == ref:
                             continue
                         if _is_capacitor(cref):
-                            saw_cap_blocking = True
+                            saw_capacitor_on_path = True
                             continue
                         if not _bridges_dc(cref):
                             continue
@@ -4270,21 +4272,7 @@ def audit_power_pin_dc_paths(ctx: AnalysisContext,
             # specific "AC-coupled supply" wiring bug PP-001 targets. Pins on
             # nets with no source at all (no PWR_FLAG, no regulator output)
             # are already flagged by RS-001 and don't need a second finding.
-            if not saw_cap_blocking:
-                continue
-
-            # Suppress if a DC bridge component was also on the starting net.
-            # When a net has both a cap-to-GND (decoupling) AND a DC-bridge
-            # element (inductor, 0Ω, ferrite), the topology is a filtered
-            # supply rail, not a cap-only path. The real AC-coupled bug has
-            # ONLY caps between the VCC pin and ground — no DC bridges at all.
-            net_pins = nets.get(net_name, {}).get("pins", [])
-            has_bridge_on_start_net = any(
-                _bridges_dc(cp.get("component") or "")
-                for cp in net_pins
-                if cp.get("component") and cp.get("component") != ref
-            )
-            if has_bridge_on_start_net:
+            if not saw_capacitor_on_path:
                 continue
 
             pin_label = f"{ref}.{pin_num}"

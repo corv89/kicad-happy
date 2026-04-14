@@ -1022,7 +1022,7 @@ def is_power_net_name(net_name: str | None, power_rails: set[str] | None = None)
     if first_seg in ("VDD", "VCC", "AVDD", "AVCC", "DVDD", "DVCC", "VBAT",
                       "VBATT", "VSYS", "VBUS", "VMAIN", "VPWR", "VCORE",
                       "VDDIO", "VCCIO", "VIN", "VOUT", "VREG", "POW",
-                      "PWR", "VMOT", "VHEAT"):
+                      "PWR", "VMOT", "VHEAT", "REGIN", "REGOUT"):
         return True
     return False
 
