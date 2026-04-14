@@ -595,15 +595,15 @@ All schematic rule findings appear in `findings[]`. The following rule IDs are p
 
 | Rule | Detector | Condition | Severity |
 |------|----------|-----------|----------|
-| SS-001 | `audit_sourcing` | MPN coverage < 50% | high |
-| SS-002 | `audit_sourcing` | MPN coverage 50–80% | warning |
-| SS-003 | `audit_sourcing` | MPN coverage 80–100% | info |
-| NT-001 | `audit_single_pin_nets` | Single-pin net: signal pin | warning |
-| NT-001 | `audit_single_pin_nets` | Single-pin net: power_out or passive pin | info |
-| RS-001 | `audit_rail_source` | Rail has a declared source (direct, PWR_FLAG, or bridged jumper) | info or warning |
-| RS-002 | `audit_rail_source` | Rail depends on user closing an open jumper | high |
-| LB-001 | `audit_label_aliases` | Net has >= 2 distinct global/hierarchical labels (power nets excluded) | info |
-| PP-001 | `audit_ic_power_pins` | IC power_in pin reaches a rail only through a capacitor (2-hop BFS) | high |
+| SS-001 | `audit_sourcing_gate` | MPN coverage < 50% | high |
+| SS-002 | `audit_sourcing_gate` | MPN coverage 50–80% | warning |
+| SS-003 | `audit_sourcing_gate` | MPN coverage 80–100% | info |
+| NT-001 | `analyze_connectivity` | Single-pin net: signal pin | warning |
+| NT-001 | `analyze_connectivity` | Single-pin net: power_out or passive pin | info |
+| RS-001 | `audit_rail_sources` | Rail has a declared source (direct, PWR_FLAG, or bridged jumper) | info or warning |
+| RS-002 | `audit_rail_sources` | Rail depends on user closing an open jumper | high |
+| LB-001 | `detect_label_aliases` | Net has >= 2 distinct global/hierarchical labels (power nets excluded) | info |
+| PP-001 | `audit_power_pin_dc_paths` | IC power_in pin reaches a rail only through a capacitor (2-hop BFS) | high |
 
 SS-001 is a pre-fab blocker — a `high` finding that should be resolved before ordering. NT-001 severity depends on pin type: signal pins (digital I/O, bidirectional) are `warning`; power_out and passive pins are `info`. RS-001 severity varies by confidence level in the detected source. PP-001 uses a 2-hop BFS over the net graph, rejecting capacitor edges, to confirm a direct DC path from a power rail to each IC power_in pin.
 
