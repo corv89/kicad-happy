@@ -187,12 +187,13 @@ def _estimate_all_power_dissipation(schematic: dict) -> list:
     Only includes components with P > MIN_PDISS_W.
     """
     results = []
-    signal = schematic.get("signal_analysis", {})
+    regulators = [f for f in schematic.get("findings", [])
+                  if f.get("detector") == "detect_power_regulators"]
     power_budget = schematic.get("power_budget", {})
     seen_refs = set()
 
     # 1. Linear regulators (LDOs) — use pre-computed power_dissipation
-    for reg in signal.get("power_regulators", []):
+    for reg in regulators:
         ref = reg.get("ref", "")
         topology = reg.get("topology", "").lower()
         pdiss = reg.get("power_dissipation", {})

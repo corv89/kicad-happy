@@ -122,15 +122,17 @@ def _get_highest_frequency(schematic):
     highest = 0.0
     if not schematic:
         return highest
-    sa = schematic.get('signal_analysis', {})
-    for xc in sa.get('crystal_circuits', []):
-        f = xc.get('frequency')
-        if isinstance(f, (int, float)) and f > highest:
-            highest = f
-    for reg in sa.get('power_regulators', []):
-        f = reg.get('switching_frequency_hz')
-        if isinstance(f, (int, float)) and f > highest:
-            highest = f
+    findings = schematic.get('findings', [])
+    for f in findings:
+        det = f.get('detector', '')
+        if det == 'detect_crystal_circuits':
+            freq = f.get('frequency')
+            if isinstance(freq, (int, float)) and freq > highest:
+                highest = freq
+        elif det == 'detect_power_regulators':
+            freq = f.get('switching_frequency_hz')
+            if isinstance(freq, (int, float)) and freq > highest:
+                highest = freq
     return highest
 
 
@@ -168,7 +170,8 @@ def check_connector_current(schematic: dict, pcb: dict | None) -> list[dict]:
 
     components = schematic.get('components', [])
     connectors = [c for c in components if c.get('type') == 'connector']
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = [f for f in schematic.get('findings', [])
+                  if f.get('detector') == 'detect_power_regulators']
 
     for conn in connectors:
         ref = conn['reference']
@@ -225,8 +228,8 @@ _EXTERNAL_CONNECTOR_KEYWORDS = (
 def check_esd_coverage_gaps(schematic: dict, pcb: dict | None) -> list[dict]:
     """EG-001: Check for external connector pins missing ESD protection."""
     findings: list[dict] = []
-    sa = schematic.get('signal_analysis', {})
-    protection = sa.get('protection_devices', [])
+    protection = [f for f in schematic.get('findings', [])
+                  if f.get('detector') == 'detect_protection_devices']
 
     protected_nets: set[str] = set()
     for pd in protection:
@@ -294,8 +297,9 @@ def check_esd_coverage_gaps(schematic: dict, pcb: dict | None) -> list[dict]:
 def check_decoupling_adequacy(schematic: dict, pcb: dict | None) -> list[dict]:
     """DA-001: Per-IC decoupling assessment — count, value, and placement."""
     findings: list[dict] = []
-    sa = schematic.get('signal_analysis', {})
-    decoupling = sa.get('decoupling_analysis', {})
+    decoupling_list = [f for f in schematic.get('findings', [])
+                       if f.get('detector') == 'detect_decoupling']
+    decoupling = decoupling_list[0] if decoupling_list else {}
     if not decoupling:
         return findings
 
@@ -549,7 +553,8 @@ def check_trace_width_power(schematic, pcb):
     if not segments:
         return findings
     net_id_map = _build_net_id_map(pcb)
-    regulators = schematic.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = [f for f in schematic.get('findings', [])
+                  if f.get('detector') == 'detect_power_regulators']
     net_current = {}
     for reg in regulators:
         output_rail = reg.get('output_rail', '')

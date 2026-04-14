@@ -331,7 +331,8 @@ def check_power_traces(sch: dict, pcb: dict) -> list[dict]:
     Matches regulator output rails against PCB power net routing data.
     Surfaces trace widths and total lengths for reviewer assessment.
     """
-    regulators = sch.get("signal_analysis", {}).get("power_regulators", [])
+    regulators = [f for f in sch.get("findings", [])
+                  if f.get("detector") == "detect_power_regulators"]
     if not regulators:
         return []
 
@@ -395,7 +396,8 @@ def check_decoupling_placement(sch: dict, pcb: dict) -> list[dict]:
     against PCB footprint positions. Uses PCB decoupling_placement data
     when available, otherwise computes distances from footprint coordinates.
     """
-    sch_decoupling = sch.get("signal_analysis", {}).get("decoupling_analysis", [])
+    sch_decoupling = [f for f in sch.get("findings", [])
+                      if f.get("detector") == "detect_decoupling"]
     if not sch_decoupling or not isinstance(sch_decoupling, list):
         return []
 

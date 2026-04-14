@@ -442,7 +442,7 @@ def run_datasheet_verification(analysis: dict, project_dir: str = "") -> dict:
     """
     components = analysis.get("components", [])
     nets = analysis.get("nets", {})
-    rail_voltages = analysis.get("signal_analysis", {}).get("rail_voltages", {})
+    rail_voltages = analysis.get("rail_voltages", {})
     parsed_values = {}
     comp_lookup = {}
     for c in components:

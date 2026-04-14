@@ -51,6 +51,66 @@ class SweepSpec:
 # Value key -> unit name for display
 _VALUE_UNITS = {"ohms": "ohms", "farads": "F", "henries": "H"}
 
+
+# Mapping from detector names to the legacy signal_analysis keys
+# used by detection_schema SCHEMAS, SPICE TEMPLATE_REGISTRY, etc.
+_DETECTOR_TO_LEGACY_KEY = {
+    "detect_power_regulators": "power_regulators",
+    "detect_integrated_ldos": "power_regulators",
+    "detect_voltage_dividers": "voltage_dividers",
+    "detect_rc_filters": "rc_filters",
+    "detect_lc_filters": "lc_filters",
+    "detect_crystal_circuits": "crystal_circuits",
+    "detect_decoupling": "decoupling_analysis",
+    "detect_current_sense": "current_sense",
+    "detect_protection_devices": "protection_devices",
+    "detect_opamp_circuits": "opamp_circuits",
+    "detect_transistor_circuits": "transistor_circuits",
+    "detect_bridge_circuits": "bridge_circuits",
+    "detect_rf_matching": "rf_matching",
+    "detect_rf_chains": "rf_chains",
+    "detect_bms_systems": "bms_systems",
+    "detect_battery_chargers": "battery_chargers",
+    "detect_motor_drivers": "motor_drivers",
+    "detect_ethernet_interfaces": "ethernet_interfaces",
+    "detect_buzzer_speakers": "buzzer_speaker_circuits",
+    "detect_key_matrices": "key_matrices",
+    "detect_isolation_barriers": "isolation_barriers",
+    "detect_hdmi_dvi_interfaces": "hdmi_dvi_interfaces",
+    "detect_lvds_interfaces": "lvds_interfaces",
+    "detect_memory_interfaces": "memory_interfaces",
+    "detect_addressable_leds": "addressable_led_chains",
+    "detect_debug_interfaces": "debug_interfaces",
+    "detect_adc_circuits": "adc_circuits",
+    "detect_reset_supervisors": "reset_supervisors",
+    "detect_clock_distribution": "clock_distribution",
+    "detect_display_interfaces": "display_interfaces",
+    "detect_sensor_interfaces": "sensor_interfaces",
+    "detect_level_shifters": "level_shifters",
+    "detect_audio_circuits": "audio_circuits",
+    "detect_led_driver_ics": "led_driver_ics",
+    "detect_rtc_circuits": "rtc_circuits",
+    "detect_thermocouple_rtd": "thermocouple_rtd",
+}
+
+
+def _findings_by_detector(analysis: dict) -> dict:
+    """Group flat findings[] by legacy signal_analysis key names.
+
+    Returns {legacy_key: [finding, ...]} dict compatible with the
+    old signal_analysis dict-of-lists layout.  Detector names are
+    mapped back to legacy keys so that downstream code (SCHEMAS,
+    SPICE templates, --fix CLI) works unchanged.
+    """
+    sa: dict[str, list] = {}
+    for f in analysis.get("findings", []):
+        det = f.get("detector", "")
+        if det:
+            key = _DETECTOR_TO_LEGACY_KEY.get(det, det)
+            sa.setdefault(key, []).append(f)
+    return sa
+
+
 # ---------------------------------------------------------------------------
 # Parse change specifications
 # ---------------------------------------------------------------------------
@@ -361,7 +421,7 @@ def _run_spice_comparison(affected: list, patched_dets: list,
 def _run_sweep(analysis: dict, sweep: SweepSpec, fixed_changes: dict,
                spice: bool = False) -> dict:
     """Run the what-if pipeline for each sweep value, collect tabular results."""
-    signal = analysis.get("signal_analysis", {})
+    signal = _findings_by_detector(analysis)
     results_per_step = []
 
     for val, val_str in zip(sweep.values, sweep.value_strs):
@@ -403,7 +463,7 @@ def _run_tolerance(analysis: dict, changes: dict, spice: bool = False) -> list:
     Evaluates all 2^N corner combinations (each component at +tol and -tol).
     Capped at 6 components (64 corners).
     """
-    signal = analysis.get("signal_analysis", {})
+    signal = _findings_by_detector(analysis)
 
     # Resolve tolerances (use defaults for components without explicit tolerance)
     _DEFAULT_TOL = {"C": 0.10, "VC": 0.10, "L": 0.20}  # everything else = 0.05
@@ -485,9 +545,18 @@ def _patch_full_json(analysis_json: dict, affected: list,
     """Create a patched copy of the full analysis JSON."""
     patched = copy.deepcopy(analysis_json)
 
-    # Replace affected detections
-    for (det_type, idx, _orig, _matched), new_det in zip(affected, patched_dets):
-        patched["signal_analysis"][det_type][idx] = new_det
+    # Replace affected detections in flat findings[]
+    # Build a lookup from detection_id to findings list index for O(1) patching.
+    findings = patched.get("findings", [])
+    id_to_fi = {f.get("detection_id"): fi for fi, f in enumerate(findings)
+                if f.get("detection_id")}
+    for (_det_type, _idx, orig_det, _matched), new_det in zip(affected, patched_dets):
+        did = orig_det.get("detection_id")
+        if did and did in id_to_fi:
+            # Preserve detector metadata from original finding
+            new_det.setdefault("detector", orig_det.get("detector", ""))
+            new_det.setdefault("detection_id", did)
+            findings[id_to_fi[did]] = new_det
 
     # Update components[] parsed_value
     for comp in patched.get("components", []):
@@ -1274,9 +1343,9 @@ def main():
         print(f"Error reading {args.input}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    signal = analysis.get("signal_analysis", {})
+    signal = _findings_by_detector(analysis)
     if not signal:
-        print("Error: no signal_analysis in input JSON", file=sys.stderr)
+        print("Error: no findings in input JSON", file=sys.stderr)
         sys.exit(1)
 
     # Load PCB analysis if available

@@ -5139,7 +5139,8 @@ def _compute_switching_loop_areas(footprints: list, schematic_data: dict) -> lis
     Returns list of {regulator_ref, regulator_value, inductor_ref, cap_ref,
     area_mm2, vertices_mm}.
     """
-    regulators = schematic_data.get('signal_analysis', {}).get('power_regulators', [])
+    regulators = [f for f in schematic_data.get('findings', [])
+                  if f.get('detector') == 'detect_power_regulators']
     if not regulators:
         return []
 
