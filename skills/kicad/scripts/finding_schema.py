@@ -120,10 +120,12 @@ class Det:
     ENERGY_HARVESTING = 'detect_energy_harvesting'
     PWM_LED_DIMMING = 'detect_pwm_led_dimming'
     HEADPHONE_JACK = 'detect_headphone_jack'
+    SOLDER_JUMPERS = 'detect_solder_jumpers'
     # Audit detectors
     ESD_AUDIT = 'audit_esd_protection'
     LED_AUDIT = 'audit_led_circuits'
     CONNECTOR_GROUND_AUDIT = 'audit_connector_ground_distribution'
+    RAIL_SOURCE_AUDIT = 'audit_rail_sources'
     # Validation detectors
     PULLUPS = 'validate_pullups'
     VOLTAGE_LEVELS = 'validate_voltage_levels'

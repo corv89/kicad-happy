@@ -921,6 +921,57 @@ def classify_connector(lib_id: str, value: str, pin_count: int = 0) -> tuple[boo
     return is_external, layout
 
 
+def classify_jumper_default_state(value: str, lib_id: str = "",
+                                  footprint: str = "") -> str:
+    """Classify a jumper's default conduction state from its symbol/footprint.
+
+    KiCad ships distinct symbol and footprint variants for solder jumpers,
+    and whether a jumper starts closed or open is a design-intent fact the
+    layout encodes — not something an analyzer should guess from the ref.
+
+    Returns one of:
+      'bridged'     — closed/conducting by default (e.g.
+                      Jumper:SolderJumper_2_Bridged,
+                      footprint ending *_Bridged*). The user has to score/
+                      cut the bridge to break the connection.
+      'open'        — open/non-conducting by default (e.g.
+                      Jumper:Jumper_2_Open, footprint ending *_Open*). The
+                      user has to solder the pads to close it.
+      'switchable'  — a physical jumper (shunt/header) whose state is set
+                      by a removable part (Conn_01x02, Jumper_3_Bridged12,
+                      etc.). Treat as 'unknown' for conduction purposes —
+                      the schematic can't tell you.
+      'unknown'     — any other jumper-like component we can't classify.
+    """
+    val = (value or "").lower()
+    lib = (lib_id or "").lower()
+    fp = (footprint or "").lower()
+
+    # Footprint wins when present — it's the physical reality.
+    if "_bridged" in fp:
+        # Mixed 3-pin cases like Bridged12 / Bridged23 are "partial" — treat
+        # as bridged because at least some pins are connected.
+        return "bridged"
+    if "_open" in fp:
+        return "open"
+
+    # Symbol/value fallbacks when the footprint is absent or non-specific.
+    if "bridged" in val or "bridged" in lib or val == "closed":
+        return "bridged"
+    if val in ("open", "opened") or val.startswith("opened(") or \
+       "jumper_2_open" in lib or "_open" in lib.split(":", 1)[-1]:
+        return "open"
+
+    # A shorting block across a pin header is user-configurable.
+    if "conn_01x" in lib or "pinheader" in lib.replace("_", ""):
+        return "switchable"
+
+    if "jumper" in lib or "jumper" in val:
+        return "unknown"
+
+    return "unknown"
+
+
 def is_power_net_name(net_name: str | None, power_rails: set[str] | None = None) -> bool:
     """Check if a net name looks like a power rail by naming convention.
 

@@ -10,7 +10,10 @@ import re
 
 from kicad_utils import (
     _LOAD_TYPE_KEYWORDS,
+    classify_jumper_default_state,
     format_frequency as _format_frequency,
+    is_ground_name,
+    is_power_net_name,
     lookup_regulator_vref as _lookup_regulator_vref,
     lookup_switching_freq,
     match_known_switching as _match_known_switching,
@@ -3705,5 +3708,132 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
         })
 
     return design_observations
+
+
+# ---------------------------------------------------------------------------
+# Solder Jumper Inventory (SJ-DET)
+# ---------------------------------------------------------------------------
+
+def detect_solder_jumpers(ctx: AnalysisContext) -> list[dict]:
+    """Enumerate every solder jumper in the design and report its default state.
+
+    Emits one INFO finding per jumper so downstream rules and LLM reviewers
+    can tell at a glance whether a net is bridged-by-default (works without
+    any user action) or open-by-default (requires soldering to function).
+    KiCad encodes this in the library symbol and footprint name — e.g.
+    ``Jumper:SolderJumper_2_Bridged`` with footprint
+    ``SolderJumper-2_P1.3mm_Bridged_*`` is closed until the bridge is
+    scored, while ``Jumper:Jumper_2_Open`` with ``*_Open_*`` is a pair of
+    pads that must be soldered.
+
+    The finding records the two nets the jumper straddles and which of
+    them (if any) look like power rails by name. Rule ID ``SJ-DET``.
+    """
+    findings: list[dict] = []
+    nets = ctx.nets or {}
+
+    # Build ref → [(pin_number, net_name)] map from the nets side so we
+    # handle implicit power-symbol nets (+3.3V, GND) the same as ordinary
+    # wired nets.
+    ref_pins: dict[str, list[tuple[str, str]]] = {}
+    for net_name, net_info in nets.items():
+        if not isinstance(net_info, dict):
+            continue
+        for pin in net_info.get("pins", []) or []:
+            ref = pin.get("component") or pin.get("ref")
+            pnum = pin.get("pin_number") or pin.get("pin") or ""
+            if ref:
+                ref_pins.setdefault(ref, []).append((str(pnum), net_name))
+
+    for comp in ctx.components:
+        if comp.get("type") != "jumper" and comp.get("category") != "jumper":
+            continue
+        ref = comp.get("reference")
+        if not ref:
+            continue
+        value = comp.get("value", "") or ""
+        lib_id = comp.get("lib_id", "") or ""
+        footprint = comp.get("footprint", "") or ""
+        state = classify_jumper_default_state(value, lib_id, footprint)
+
+        # A 2-pin jumper is the common case; 3-pin selector jumpers exist
+        # but carry multiple bridge variants (Bridged12, Bridged23). We
+        # report them but don't attempt per-pin state inference here.
+        pins = sorted(set(ref_pins.get(ref, [])))
+        net_list = []
+        for pnum, net in pins:
+            if net and net not in net_list:
+                net_list.append(net)
+
+        power_nets = [n for n in net_list if is_power_net_name(n, None)]
+        ground_nets = [n for n in net_list if is_ground_name(n)]
+
+        if state == "bridged":
+            severity = "info"
+            if len(net_list) >= 2:
+                summary = (f"{ref} ({value or lib_id}) — closed by default, "
+                           f"connecting {' ↔ '.join(net_list[:2])}")
+            else:
+                summary = f"{ref} ({value or lib_id}) — closed by default"
+            recommendation = ("Bridged solder jumper conducts without user "
+                              "action. Scoring/cutting the bridge isolates "
+                              "the two nets. Treat as a normal connection "
+                              "unless the design-intent note says otherwise.")
+            impact = "Connection is live out of the box; no user action required."
+        elif state == "open":
+            severity = "warning" if power_nets or ground_nets else "info"
+            summary = (f"{ref} ({value or lib_id}) — open by default"
+                       + (f", between {' ↔ '.join(net_list[:2])}" if len(net_list) >= 2 else ""))
+            recommendation = ("Open solder jumper is non-conducting until "
+                              "the pads are soldered. If either side is a "
+                              "power rail or required signal, the board "
+                              "won't function without the solder step.")
+            impact = ("Connection requires soldering; board won't pass "
+                      "bring-up if left unpopulated."
+                      if power_nets or ground_nets else
+                      "Optional / configuration jumper.")
+        elif state == "switchable":
+            severity = "info"
+            summary = (f"{ref} ({value or lib_id}) — physical shunt (state "
+                       "set at assembly/board-bring-up)")
+            recommendation = ("Shunt-block configuration — actual conduction "
+                              "depends on whether the shunt is installed.")
+            impact = "Runtime-configurable; state not visible in schematic."
+        else:
+            severity = "info"
+            summary = (f"{ref} ({value or lib_id}) — jumper with unknown "
+                       "default state")
+            recommendation = ("Unable to determine default conduction from "
+                              "symbol/footprint. Inspect manually.")
+            impact = ""
+
+        findings.append({
+            "detector": "detect_solder_jumpers",
+            "rule_id": "SJ-DET",
+            "severity": severity,
+            "confidence": "high",
+            "evidence_source": "symbol_footprint",
+            "category": "topology",
+            "summary": summary,
+            "reference": ref,
+            "value": value,
+            "lib_id": lib_id,
+            "footprint": footprint,
+            "default_state": state,
+            "nets": net_list,
+            "power_nets": power_nets,
+            "ground_nets": ground_nets,
+            "pin_count": len(pins),
+            "components": [ref],
+            "pins": [f"{ref}.{pn}" for pn, _ in pins],
+            "recommendation": recommendation,
+            "report_context": {
+                "section": "Solder Jumpers",
+                "impact": impact,
+                "standard_ref": "",
+            },
+        })
+
+    return findings
 
 

@@ -66,6 +66,7 @@ from signal_detectors import (
     detect_power_regulators,
     detect_protection_devices,
     detect_rc_filters,
+    detect_solder_jumpers,
     detect_transistor_circuits,
     detect_voltage_dividers,
     postfilter_vd_and_dedup,
@@ -787,6 +788,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
     energy_harvesting = detect_energy_harvesting(ctx)
     pwm_led_dimming = detect_pwm_led_dimming(ctx, transistor_circuits)
     headphone_jacks = detect_headphone_jack(ctx)
+    solder_jumpers = detect_solder_jumpers(ctx)
 
     # Remove R/C components that appear in crystal circuits from RC filter
     # results — prevents misclassifying crystal feedback resistors + load caps
@@ -984,6 +986,7 @@ def analyze_signal_paths(ctx: AnalysisContext) -> dict:
         "energy_harvesting": energy_harvesting,
         "pwm_led_dimming": pwm_led_dimming,
         "headphone_jacks": headphone_jacks,
+        "solder_jumpers": solder_jumpers,
         "validation_findings": (
             pullup_findings +
             voltage_level_findings +
@@ -4701,6 +4704,177 @@ def validate_footprint_filters(components: list[dict], lib_symbols: dict) -> lis
     return warnings
 
 
+def audit_datasheet_coverage(components: list[dict],
+                             project_dir: str) -> list[dict]:
+    """Emit a banner-level finding when datasheet evidence is absent.
+
+    Datasheets are what separate a consistency check from a correctness
+    check: without them, the reviewer can only confirm the design agrees
+    with itself. When the project has no ``datasheets/`` directory AND
+    none of its BOM components carry an MPN, any pin-level or electrical
+    claim in a downstream review is guesswork. Surface that fact loudly
+    instead of letting it slip into a footnote.
+
+    Rule IDs: DS-001 (no datasheets dir + no MPNs — reviews cannot be
+    grounded in manufacturer data), DS-002 (datasheets dir missing but
+    MPNs are set — offer to sync).
+    """
+    findings: list[dict] = []
+    real = [c for c in components
+            if c.get("type") not in ("power_symbol", "power_flag", "flag",
+                                     "test_point", "mounting_hole",
+                                     "fiducial", "graphic")
+            and c.get("in_bom") and not c.get("dnp")]
+    # Deduplicate by reference (multi-unit symbols)
+    seen = set()
+    unique = []
+    for c in real:
+        ref = c.get("reference", "")
+        if ref and ref not in seen:
+            seen.add(ref)
+            unique.append(c)
+    total = len(unique)
+    if total == 0:
+        return findings
+
+    with_mpn = [c for c in unique if c.get("mpn")]
+    mpn_count = len(with_mpn)
+    mpn_pct = (mpn_count / total * 100) if total else 0.0
+
+    # Look for datasheets in conventional locations relative to the
+    # project directory. extracted/ holds structured extractions from the
+    # datasheet_extract_cache; its presence implies datasheets exist.
+    import os as _os
+    pd = project_dir or "."
+    candidates = [
+        _os.path.join(pd, "datasheets"),
+        _os.path.join(pd, "datasheets", "extracted"),
+        _os.path.join(pd, "docs", "datasheets"),
+        _os.path.join(_os.path.dirname(pd), "datasheets"),
+    ]
+    ds_dir_found = next(
+        (c for c in candidates if _os.path.isdir(c)), None)
+    ds_file_count = 0
+    if ds_dir_found:
+        try:
+            for _root, _dirs, _files in _os.walk(ds_dir_found):
+                ds_file_count += sum(1 for f in _files
+                                     if f.lower().endswith((".pdf", ".json")))
+        except OSError:
+            pass
+
+    # Build finding.
+    refs_without_mpn = sorted(c.get("reference", "")
+                              for c in unique if not c.get("mpn"))[:20]
+
+    if ds_dir_found and ds_file_count > 0:
+        # Datasheets present — no banner needed. Emit info-only if coverage
+        # is partial so the reviewer knows which refs are ungrounded.
+        if mpn_pct < 90 and refs_without_mpn:
+            findings.append({
+                "detector": "audit_datasheet_coverage",
+                "rule_id": "DS-003",
+                "severity": "info",
+                "confidence": "deterministic",
+                "evidence_source": "bom",
+                "category": "verification",
+                "summary": (f"Datasheets present ({ds_file_count} files) but "
+                            f"{total - mpn_count}/{total} BOM parts lack an "
+                            "MPN — those parts can't be cross-referenced."),
+                "components": refs_without_mpn,
+                "nets": [],
+                "pins": [],
+                "datasheets_dir": ds_dir_found,
+                "datasheet_file_count": ds_file_count,
+                "bom_size": total,
+                "mpn_coverage_percent": round(mpn_pct, 1),
+                "recommendation": ("Set the MPN field on the listed parts "
+                                   "and re-sync datasheets so every BOM "
+                                   "entry has manufacturer evidence."),
+                "report_context": {
+                    "section": "Datasheet Coverage",
+                    "impact": ("Partial coverage: pin mapping and electrical "
+                               "claims for unmapped parts remain unverified."),
+                    "standard_ref": "",
+                },
+            })
+        return findings
+
+    if mpn_count == 0:
+        # DS-001: no datasheets dir AND no MPNs. Downstream review cannot
+        # make any verified claim — this is a correctness-vs-consistency
+        # gap the reviewer has to state up front.
+        findings.append({
+            "detector": "audit_datasheet_coverage",
+            "rule_id": "DS-001",
+            "severity": "high",
+            "confidence": "deterministic",
+            "evidence_source": "bom",
+            "category": "verification",
+            "summary": ("No datasheets directory found and no BOM parts "
+                        "have MPNs. Review is a consistency check only — "
+                        "manufacturer specs cannot be verified."),
+            "components": [],
+            "nets": [],
+            "pins": [],
+            "datasheets_dir": None,
+            "datasheet_file_count": 0,
+            "bom_size": total,
+            "mpn_coverage_percent": 0.0,
+            "recommendation": (
+                "Before reporting 'verified' findings, (1) populate the MPN "
+                "field on BOM parts, (2) run the datasheet sync skill "
+                "(digikey, mouser, lcsc, or element14) to download PDFs "
+                "into ./datasheets/, then re-run analysis. If datasheets "
+                "are unreachable, state every pin-level and electrical "
+                "claim as 'per symbol/library' (consistency), not "
+                "'verified against datasheet' (correctness)."),
+            "report_context": {
+                "section": "Datasheet Coverage",
+                "impact": ("Report wording must avoid 'verified' / "
+                           "'datasheet-confirmed' language for every BOM "
+                           "part — none have manufacturer evidence "
+                           "attached."),
+                "standard_ref": "",
+            },
+        })
+    else:
+        # DS-002: MPNs exist but no datasheets dir. Low-friction fix — tell
+        # the reviewer to run sync.
+        findings.append({
+            "detector": "audit_datasheet_coverage",
+            "rule_id": "DS-002",
+            "severity": "medium",
+            "confidence": "deterministic",
+            "evidence_source": "bom",
+            "category": "verification",
+            "summary": (f"No datasheets directory found ({mpn_count}/{total}"
+                        " parts have MPNs). Sync datasheets before making "
+                        "pin-level claims."),
+            "components": sorted(c.get("reference", "")
+                                 for c in with_mpn)[:20],
+            "nets": [],
+            "pins": [],
+            "datasheets_dir": None,
+            "datasheet_file_count": 0,
+            "bom_size": total,
+            "mpn_coverage_percent": round(mpn_pct, 1),
+            "recommendation": (
+                "Run datasheet sync via the digikey / mouser / lcsc / "
+                "element14 skill (which one depends on the user's "
+                "distributor access and API credentials). A ./datasheets/ "
+                "directory with PDFs and an index.json enables pin-level "
+                "verification in the next analyzer run."),
+            "report_context": {
+                "section": "Datasheet Coverage",
+                "impact": ("Review claims must stay at consistency level "
+                           "until datasheets land."),
+                "standard_ref": "",
+            },
+        })
+    return findings
+
+
 def audit_sourcing_fields(components: list[dict]) -> dict:
     """Audit component sourcing completeness: MPN, distributor part numbers.
 
@@ -8258,6 +8432,8 @@ def analyze_schematic(path: str, project_root: str | None = None,
     pwr_flag_warnings = audit_pwr_flags(all_components, nets, known_power_rails)
     fp_filter_warnings = validate_footprint_filters(all_components, all_lib_symbols)
     sourcing_audit = audit_sourcing_fields(all_components)
+    datasheet_coverage_findings = audit_datasheet_coverage(
+        all_components, str(Path(path).parent))
     alternate_pins = summarize_alternate_pins(all_lib_symbols)
     ground_domains = classify_ground_domains(nets, all_components)
     bus_topology = analyze_bus_topology(merged_bus, all_labels, nets)
@@ -8367,6 +8543,12 @@ def analyze_schematic(path: str, project_root: str | None = None,
                 if isinstance(_item, dict) and "detector" not in _item:
                     _item["detector"] = _det_name
             findings.extend(_sa_value)
+
+    # Datasheet-coverage audit findings (DS-001 / DS-002 / DS-003) surface
+    # up front so reviewers can't miss the "this is a consistency-only
+    # check" banner when no manufacturer evidence is available.
+    if datasheet_coverage_findings:
+        findings.extend(datasheet_coverage_findings)
 
     # Build severity summary
     sev_counts = {"error": 0, "warning": 0, "info": 0}

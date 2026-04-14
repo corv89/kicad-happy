@@ -6066,7 +6066,13 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     thermal_sec = result.pop('thermal_analysis', None)
     if thermal_sec:
         findings.extend(thermal_sec.get('zone_stitching', []))
-        findings.extend(thermal_sec.get('thermal_pads', []))
+        # TP-DET (per-pad "nearby vias" count) is superseded by TV-001
+        # which copper-verifies the same vias through zone fills. Emitting
+        # both produced conflicting counts on the same pad and confused
+        # reviewers. Keep the raw thermal_pads data accessible for manual
+        # inspection but don't surface it as findings.
+        if thermal_sec.get('thermal_pads'):
+            result['thermal_pad_scan'] = thermal_sec['thermal_pads']
 
     current_cap = result.pop('current_capacity', None)
     if current_cap:
