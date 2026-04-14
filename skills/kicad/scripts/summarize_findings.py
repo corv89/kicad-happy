@@ -28,7 +28,10 @@ _SEV_RANK = {"high": 0, "error": 0, "critical": 0,
              "info": 2}
 
 
-def _resolve_run_dir(analysis_dir: str, run_override: str | None) -> str:
+def _resolve_run_dir(
+        analysis_dir: str, run_override: str | None,
+) -> "tuple[str, str, int]":
+    """Return (run_dir_path, run_id, manifest_version)."""
     manifest_path = os.path.join(analysis_dir, "manifest.json")
     if not os.path.isfile(manifest_path):
         raise SystemExit(
@@ -44,7 +47,8 @@ def _resolve_run_dir(analysis_dir: str, run_override: str | None) -> str:
     if not os.path.isdir(path):
         raise SystemExit(
             f"error: run directory missing on disk: {path!r}")
-    return path
+    manifest_version = int(manifest.get("version", 1))
+    return path, run_id, manifest_version
 
 
 def _collect_findings(run_dir: str) -> list[dict]:
@@ -65,19 +69,28 @@ def _collect_findings(run_dir: str) -> list[dict]:
     return out
 
 
+def _norm(s: str) -> str:
+    """Normalise a severity string to one of: high, warning, info."""
+    s = (s or "").lower()
+    if s in ("critical", "high", "error"):
+        return "high"
+    if s in ("medium", "warning", "warn"):
+        return "warning"
+    return "info"
+
+
+_KNOWN_SEVERITIES = frozenset(
+    ("critical", "high", "error", "warning", "medium", "warn", "info"))
+
+
 def _filter_severity(findings: list[dict], severity: str | None) -> list[dict]:
     if not severity:
         return findings
-    want = severity.lower()
-
-    def _norm(s: str) -> str:
-        s = (s or "").lower()
-        if s in ("critical", "high", "error"):
-            return "high"
-        if s in ("medium", "warning", "warn"):
-            return "warning"
-        return "info"
-
+    if severity.lower() not in _KNOWN_SEVERITIES:
+        raise SystemExit(
+            f"error: unknown --severity {severity!r} — "
+            "accepted: high/critical/error, warning/medium/warn, info")
+    want = _norm(severity)
     return [f for f in findings if _norm(f.get("severity", "info")) == want]
 
 
@@ -112,7 +125,7 @@ def _aggregate(findings: list[dict]) -> list[dict]:
             "sources": sorted(x for x in g["source_files"] if x),
             "examples": g["examples"],
         })
-    rows.sort(key=lambda r: (_SEV_RANK.get(r["severity"], 99), -r["count"]))
+    rows.sort(key=lambda r: (_SEV_RANK.get(r["severity"], 99), -r["count"], r["rule_id"]))
     return rows
 
 
@@ -139,21 +152,39 @@ def main(argv: list[str] | None = None) -> int:
                     help="Show only the top N rule groups (0 = all). "
                          "Default 20.")
     ap.add_argument("--severity",
-                    choices=["high", "warning", "info"],
-                    help="Filter to a single severity bucket.")
+                    help=("Filter to a single severity bucket. Accepts any "
+                          "of: high/critical/error (all → high), "
+                          "warning/medium/warn (→ warning), info. "
+                          "Raises if the value is unrecognised."))
     ap.add_argument("--run",
                     help="Run ID override (defaults to manifest.current).")
     ap.add_argument("--json", action="store_true",
                     help="Emit the aggregated table as JSON instead of text.")
     args = ap.parse_args(argv)
 
-    run_dir = _resolve_run_dir(args.analysis_dir, args.run)
+    run_dir, run_id, manifest_version = _resolve_run_dir(args.analysis_dir, args.run)
     findings = _collect_findings(run_dir)
     findings = _filter_severity(findings, args.severity)
     rows = _aggregate(findings)
 
     if args.json:
-        json.dump({"run_dir": run_dir, "rows": rows}, sys.stdout, indent=2)
+        severity_totals: dict[str, int] = {"high": 0, "warning": 0, "info": 0}
+        for r in rows:
+            severity_totals[r["severity"]] = (
+                severity_totals.get(r["severity"], 0) + r["count"])
+        payload = {
+            "schema": "summarize_findings/1",
+            "run_dir": run_dir,
+            "run_id": run_id,
+            "manifest_version": manifest_version,
+            "totals": {
+                "findings": sum(r["count"] for r in rows),
+                "rule_groups": len(rows),
+                "by_severity": severity_totals,
+            },
+            "rows": rows,
+        }
+        json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:
         print(f"# Run: {run_dir}")
