@@ -4992,6 +4992,34 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
                 n for fp_pad in foreign_pads
                 for n in fp_pad["foreign_zones"]
             ))
+            # Classify: is every foreign zone a ground rail AND does this
+            # component have a pin on that ground? That's the "desired"
+            # case (decoupling cap sitting over GND pour) and should
+            # surface as info, not warning. Anything else stays a
+            # warning — mixed rails, non-ground foreign zones, or
+            # components that don't actually reference the foreign net.
+            fz_all_ground = bool(fz_nets) and all(
+                is_ground_name(n) for n in fz_nets
+            )
+            comp_pad_nets = {
+                (p.get("net_name") or "").upper()
+                for p in fp.get("pads", []) or []
+                if p.get("net_name")
+            }
+            comp_has_gnd_pad = any(
+                is_ground_name(n) for n in comp_pad_nets
+            )
+            if fz_all_ground and comp_has_gnd_pad:
+                severity = "info"
+                impact = ("Decoupling / bypass cap sitting over the GND pour — "
+                          "expected layout, not a clearance violation.")
+                rec = ("No action. Bypass caps are intentionally placed over "
+                       "the ground return to minimise loop area.")
+            else:
+                severity = "warning"
+                impact = "Electrical isolation"
+                rec = "Verify zone clearance rules or add keepout."
+
             foreign_zone_details.append({
                 "component": ref,
                 "value": fp.get("value", ""),
@@ -5000,7 +5028,7 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
                 "detector": "analyze_copper_presence",
                 "rule_id": "CP-001",
                 "category": "copper_integrity",
-                "severity": "warning",
+                "severity": severity,
                 "confidence": "deterministic",
                 "evidence_source": "geometry",
                 "summary": f"Foreign zone under {ref}",
@@ -5011,10 +5039,10 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
                 "components": [ref],
                 "nets": fz_nets,
                 "pins": [fp_pad["pad"] for fp_pad in foreign_pads],
-                "recommendation": "Verify zone clearance rules or add keepout.",
+                "recommendation": rec,
                 "report_context": {
                     "section": "Copper Integrity",
-                    "impact": "Electrical isolation",
+                    "impact": impact,
                     "standard_ref": "",
                 },
             })
