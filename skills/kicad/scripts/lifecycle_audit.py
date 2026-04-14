@@ -696,6 +696,75 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
 
         lifecycle_findings.append(finding)
 
+        # LC-005: Single-source detection
+        if status == 'active':
+            active_sources = [src_name for src_name, src_data in finding.get('sources', {}).items()
+                              if src_data.get('status') in ('active', 'Active', None)
+                              and src_data.get('found', True)]
+            total_queried = len(finding.get('sources', {}))
+            if total_queried >= 2 and len(active_sources) == 1:
+                lifecycle_findings.append({
+                    'mpn': mpn,
+                    'references': sorted(refs),
+                    'status': 'active',
+                    'single_source': True,
+                    'source_name': active_sources[0],
+                    'detector': 'audit_bom',
+                    'rule_id': 'LC-005',
+                    'category': 'lifecycle',
+                    'severity': 'info',
+                    'confidence': 'deterministic',
+                    'evidence_source': 'datasheet',
+                    'summary': f'{mpn}: single source ({active_sources[0]})',
+                    'description': f'Component {mpn} ({len(refs)} ref(s)) is only available from {active_sources[0]} out of {total_queried} sources checked.',
+                    'components': sorted(refs),
+                    'nets': [],
+                    'pins': [],
+                    'recommendation': 'Consider qualifying an alternative source for supply chain resilience.',
+                    'report_context': {'section': 'Lifecycle', 'impact': 'Supply chain fragility', 'standard_ref': ''},
+                })
+
+        # LC-006: Long lead time
+        max_lead_weeks = 0
+        lead_source = ''
+        for src_name, src_data in finding.get('sources', {}).items():
+            lt = src_data.get('lead_time')
+            if lt:
+                weeks = 0
+                if isinstance(lt, (int, float)):
+                    weeks = int(lt)
+                elif isinstance(lt, str):
+                    m = re.search(r'(\d+)', lt)
+                    if m:
+                        weeks = int(m.group(1))
+                        if 'day' in lt.lower():
+                            weeks = weeks // 7
+                if weeks > max_lead_weeks:
+                    max_lead_weeks = weeks
+                    lead_source = src_name
+
+        if max_lead_weeks > 12:
+            severity = 'warning' if max_lead_weeks > 26 else 'info'
+            lifecycle_findings.append({
+                'mpn': mpn,
+                'references': sorted(refs),
+                'lead_weeks': max_lead_weeks,
+                'lead_source': lead_source,
+                'detector': 'audit_bom',
+                'rule_id': 'LC-006',
+                'category': 'lifecycle',
+                'severity': severity,
+                'confidence': 'deterministic',
+                'evidence_source': 'datasheet',
+                'summary': f'{mpn}: {max_lead_weeks} week lead time',
+                'description': f'Component {mpn} has {max_lead_weeks} week lead time (from {lead_source}).',
+                'components': sorted(refs),
+                'nets': [],
+                'pins': [],
+                'recommendation': f'Pre-order or stock {mpn} — long lead time risk.',
+                'report_context': {'section': 'Lifecycle', 'impact': 'Procurement delay risk', 'standard_ref': ''},
+            })
+
         # Temperature
         temp = data.get("temperature")
         if temp and temp_range:
