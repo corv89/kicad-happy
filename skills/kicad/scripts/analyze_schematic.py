@@ -3067,7 +3067,28 @@ def parse_legacy_schematic(path: str) -> dict:
                 if isinstance(_det, dict):
                     _det["detection_id"] = _compute_det_id(_det, _det_type)
 
+    # Flatten signal_analysis: all list values become findings, dict values move to top level
+    findings = []
+    for key, value in signal_analysis.items():
+        if isinstance(value, list):
+            findings.extend(value)
+        elif isinstance(value, dict):
+            # rail_voltages, net_classifications, etc.
+            pass  # legacy path doesn't promote dicts to top level
+
+    sev_counts = {"error": 0, "warning": 0, "info": 0}
+    for f in findings:
+        sev = f.get("severity", "info").lower() if isinstance(f, dict) else "info"
+        if sev in ("critical", "high"):
+            sev_counts["error"] += 1
+        elif sev in ("medium", "warning"):
+            sev_counts["warning"] += 1
+        else:
+            sev_counts["info"] += 1
+
     return {
+        "analyzer_type": "schematic",
+        "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "file": str(path),
         "kicad_version": "5 (legacy)",
         "file_version": "4",
@@ -3078,7 +3099,7 @@ def parse_legacy_schematic(path: str) -> dict:
         "components": real_components,
         "nets": nets,
         "subcircuits": subcircuits,
-        "signal_analysis": signal_analysis,
+        "findings": findings,
         "design_analysis": design_analysis,
         "labels": all_labels,
         "no_connects": all_no_connects,
@@ -8286,7 +8307,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "property_issues": "heuristic",
         "wire_geometry": "heuristic",
         # Datasheet-backed — when Vref comes from lookup table
-        "signal_analysis.power_regulators": "heuristic",  # mixed; per-item vref_source overrides
+        "findings.power_regulators": "heuristic",  # mixed; per-item vref_source overrides
     }
 
     # Load .kicad_pro for project metadata (KiCad 6+)
@@ -8329,14 +8350,33 @@ def analyze_schematic(path: str, project_root: str | None = None,
             _comp['pin_nets'] = _all_pn
         _comp.pop("_unit_pins", None)
 
+    # Flatten signal_analysis: all list values become findings, dict values promote to top level
+    findings = []
+    for _sa_key, _sa_value in signal_analysis.items():
+        if isinstance(_sa_value, list):
+            findings.extend(_sa_value)
+
+    # Build severity summary
+    sev_counts = {"error": 0, "warning": 0, "info": 0}
+    for _f in findings:
+        _sev = _f.get("severity", "info").lower() if isinstance(_f, dict) else "info"
+        if _sev in ("critical", "high"):
+            sev_counts["error"] += 1
+        elif _sev in ("medium", "warning"):
+            sev_counts["warning"] += 1
+        else:
+            sev_counts["info"] += 1
+
     result = {
         "analyzer_type": "schematic",
+        "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "confidence_map": confidence_map,
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": file_version,
         "title_block": root_title_block,
         "statistics": stats,
+        "findings": findings,
         "bom": bom,
         "components": [
             {k: v for k, v in c.items() if k != "pins"}
@@ -8346,7 +8386,6 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "nets": nets,
         "subcircuits": subcircuits,
         "ic_pin_analysis": ic_analysis,
-        "signal_analysis": signal_analysis,
         "design_analysis": design_analysis,
         "connectivity_issues": connectivity_issues,
         "labels": all_labels,
@@ -8365,6 +8404,11 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "placement_analysis": placement,
         "hierarchical_labels": hier_label_analysis,
     }
+
+    # Promote dict values from signal_analysis to top level (rail_voltages, net_classifications, etc.)
+    for _sa_key, _sa_value in signal_analysis.items():
+        if isinstance(_sa_value, dict):
+            result[_sa_key] = _sa_value
 
     # Only include non-empty optional sections
     if all_text_annotations:
@@ -8496,29 +8540,10 @@ def _get_schema():
         "nets": "{net_name: {name, pins: [{component, pin_number, pin_name, pin_type}], point_count: int}}",
         "subcircuits": "[{reference, path, sheet_name, sheet_file, instances: int}]",
         "ic_pin_analysis": "{ic_ref: {reference, value, pin_summary: {pin_number: {name, type, connected: bool, net}}, function, notes: [string]}}",
-        "signal_analysis": {
-            "voltage_dividers": "[{top_ref, bottom_ref, ratio, vout_estimated, input_net, output_net}]",
-            "rc_filters": "[{resistor, capacitor, cutoff_frequency_hz, type: lowpass|highpass}]",
-            "lc_filters": "[{inductor, capacitors, resonant_formatted}]",
-            "power_regulators": "[{ref, value, lib_id, topology: ldo|buck|boost|buck_boost|inverting|..., input_rail, output_rail, estimated_vout, vref_source: lookup|heuristic}]",
-            "crystal_circuits": "[{reference, value, frequency, type: passive|active_oscillator, load_caps}]",
-            "opamp_circuits": "[{reference, configuration, gain}]",
-            "transistor_circuits": "[{reference, type, load_classification}]",
-            "bridge_circuits": "[{topology, fet_refs}]",
-            "protection_devices": "[{type: tvs|esd|fuse|..., reference, protected_net}]",
-            "current_sense": "[{shunt: {ref, value, ohms}, sense_ic: {ref, value, type}, high_net, low_net, max_current_50mV_A, max_current_100mV_A}]",
-            "decoupling_analysis": "[{rail, capacitors: [{ref, value, farads, self_resonant_hz}], total_capacitance_uF, cap_count}]",
-            "key_matrices": "[{rows, cols, diodes}]",
-            "isolation_barriers": "[{isolator_ref, side_a_nets, side_b_nets}]",
-            "ethernet_interfaces": "[{phy_ref, magnetics_ref, connector_ref, impedance_advisory}]",
-            "lvds_interfaces": "[{reference, value, role: serializer|deserializer|unknown, impedance_required}]",
-            "memory_interfaces": "[{type, bus_signals}]",
-            "rf_chains": "[{components_in_chain}]",
-            "rf_matching": "[{antenna, antenna_value, topology: pi_match|L_match|T_match|matching_network, components: [{ref, type, value}], target_ic, target_value}]",
-            "bms_systems": "[{ic_ref, cell_count}]",
-            "battery_chargers": "[{charger_reference, charger_type, charge_current: {prog_resistor, programmed_current_mA, formula}, cell_protection}]",
-            "motor_drivers": "[{driver_reference, driver_type: dc_brushed_h_bridge|stepper|brushless_3phase|gate_driver, motor_outputs, bootstrap_caps, freewheeling_diodes, external_fets}]",
-        },
+        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
+        "findings": "[{rule_id, severity, summary, category, ...detection-specific fields}] — flat list of ALL signal analysis findings",
+        "rail_voltages": "{net_name: voltage_float} — promoted from signal_analysis",
+        "net_classifications": "{net_name: {type, ...}} — promoted from signal_analysis",
         "design_analysis": {
             "buses": "{i2c|spi|uart|can|sdio|differential_pairs: [bus_instances]}",
             "power_domains": "{ic_ref: domain_info}",
@@ -8558,6 +8583,8 @@ def main():
                         help="Run lifecycle/obsolescence audit (requires network + API keys)")
     parser.add_argument("--analysis-dir", default=None,
                         help="Write output to analysis cache directory (timestamped runs)")
+    parser.add_argument("--text", action="store_true",
+                        help="Print human-readable text report to stdout")
     args = parser.parse_args()
 
     if args.schema:
@@ -8603,17 +8630,16 @@ def main():
     # Apply power_rails config (ignore/flag/voltage_overrides)
     try:
         from project_config import apply_power_rails_config
-        sig = result.get('signal_analysis', {})
         stats = result.get('statistics', {})
-        rv = sig.get('rail_voltages', {})
+        rv = result.get('rail_voltages', {})
         pr = stats.get('power_rails', [])
         if rv or pr:
             filtered_rv, filtered_pr, flagged = apply_power_rails_config(
                 rv, pr, config)
-            sig['rail_voltages'] = filtered_rv
+            result['rail_voltages'] = filtered_rv
             stats['power_rails'] = filtered_pr
             if flagged:
-                sig['flagged_rails'] = flagged
+                result['flagged_rails'] = flagged
     except (ImportError, Exception):
         pass
 
@@ -8646,6 +8672,13 @@ def main():
             "findings": [],
             "summary": {"error": str(e)},
         }
+
+    if args.text:
+        for f in result.get("findings", []):
+            if isinstance(f, dict):
+                sev = f.get("severity", "info").upper()
+                print(f'[{sev:8s}] {f.get("rule_id", ""):8s} {f.get("summary", "")}')
+        sys.exit(0)
 
     indent = None if args.compact else 2
     output = json.dumps(result, indent=indent, default=str)
