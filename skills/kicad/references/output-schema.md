@@ -185,7 +185,7 @@ via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}
 
 ### Optional sections
 
-`power_net_routing`, `decoupling_placement`, `ground_domains`, `current_capacity`, `thermal_analysis`, `placement_analysis`, `trace_proximity` (with `--proximity`), `dfm`, `tombstoning_risk`, `thermal_pad_vias`, `copper_presence`
+`power_net_routing`, `decoupling_placement`, `ground_domains`, `trace_proximity` (with `--proximity`), `layer_transitions`, `silkscreen`, `board_metadata`, `dfm_summary`, `placement_density`, `copper_presence_summary`, `board_thickness_mm`. Sections previously at top level (`thermal_analysis`, `thermal_pad_vias`, `tombstoning_risk`, `placement_analysis`, `current_capacity`, `copper_presence`, `dfm`) are now flattened into `findings[]`.
 
 ---
 

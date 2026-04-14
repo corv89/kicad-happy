@@ -291,7 +291,7 @@ file, kicad_version, file_version, statistics, layers, setup, nets,
 board_outline, component_groups, footprints, tracks, vias, zones,
 connectivity, net_lengths
 ```
-Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `current_capacity`, `thermal_analysis`, `layer_transitions`, `placement_analysis`, `silkscreen`, `dfm`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `tombstoning_risk`, `thermal_pad_vias`, `copper_presence`, `trace_proximity` (with `--proximity`)
+Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `layer_transitions`, `silkscreen`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `dfm_summary`, `placement_density`, `copper_presence_summary`, `board_thickness_mm`, `trace_proximity` (with `--proximity`). Sections previously at top level (`thermal_analysis`, `thermal_pad_vias`, `tombstoning_risk`, `placement_analysis`, `current_capacity`, `copper_presence`, `dfm`) are now in `findings[]`.
 
 Key nested structures:
 - `net_lengths` is a **list** (not dict): `[{net, net_number, total_length_mm, segment_count, via_count, layers{}}, ...]` sorted by length descending

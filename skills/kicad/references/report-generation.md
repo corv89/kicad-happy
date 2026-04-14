@@ -479,16 +479,19 @@ Quick reference for what each analyzer produces, to ensure no analysis dimension
 | `net_lengths` | Signal Integrity | per-net trace length and layer transitions |
 | `power_net_routing` | Power & Ground | power net width/length/current capacity |
 | `ground_domains` | Power & Ground | AGND/DGND domains, multi-domain components |
-| `current_capacity` | Current Capacity | per-net capacity vs load |
-| `thermal_analysis` | Thermal Analysis | zone stitching density |
-| `thermal_pad_vias` | Thermal Analysis | per-footprint thermal pad via count and adequacy; `effective_via_count` weights by `(drill/0.3)²` — see pcb-layout-analysis.md for methodology |
+| `findings[] (detector: analyze_current_capacity)` | Current Capacity | per-net capacity vs load |
+| `findings[] (detector: analyze_thermal_vias)` | Thermal Analysis | zone stitching density |
+| `findings[] (detector: analyze_thermal_pad_vias)` | Thermal Analysis | per-footprint thermal pad via count and adequacy; `effective_via_count` weights by `(drill/0.3)²` — see pcb-layout-analysis.md for methodology |
 | `decoupling_placement` | Decoupling Placement | cap-to-IC distances |
-| `placement_analysis` | Footprint Placement | density, courtyard overlaps, edge clearance |
+| `findings[] (detector: analyze_placement)` | Footprint Placement | courtyard overlaps, edge clearance |
+| `placement_density` | Footprint Placement | density metrics |
 | `layer_transitions` | Signal Integrity | per-net layer change tracking |
 | `silkscreen` | Silkscreen | ref visibility, documentation warnings |
-| `dfm` | DFM Assessment | tier, metrics, violations |
-| `tombstoning_risk` | Manufacturing | at-risk 0201/0402 components, thermal asymmetry reasons |
-| `copper_presence` | Copper Presence | opposite_layer_summary, no_opposite_layer_copper (components WITHOUT zone copper on opposite layer — check capacitive touch pads, antennas), same_layer_foreign_zones |
+| `dfm_summary` | DFM Assessment | tier, metrics, violation_count |
+| `findings[] (category: dfm)` | DFM Assessment | individual violations |
+| `findings[] (detector: analyze_tombstoning_risk)` | Manufacturing | at-risk 0201/0402 components, thermal asymmetry reasons |
+| `findings[] (detector: analyze_copper_presence)` | Copper Presence | no_opposite_layer_copper, same_layer_foreign_zones, touch_pad_gnd_clearance |
+| `copper_presence_summary` | Copper Presence | opposite_layer_summary |
 
 ### Gerber Analyzer (`analyze_gerbers.py`)
 

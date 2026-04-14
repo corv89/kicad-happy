@@ -191,7 +191,12 @@ analyze_ic_pinouts()          -- Per-IC pin connectivity summary
 compute_statistics()          -- Counts, BOM dedup
     |
     v
-JSON output
+Output harmonization           -- All detections → flat findings[] with rich envelopes
+                                  (detector, rule_id, severity, confidence, recommendation)
+                                  rail_voltages/net_classifications promoted to top level
+    |
+    v
+JSON output                    -- {analyzer_type, summary, findings[], components, nets, ...}
 ```
 
 ### Key Data Structures

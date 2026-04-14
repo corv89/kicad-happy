@@ -428,6 +428,26 @@ Or just set up the GitHub Action and get automated reviews on every PR.
 | KiCad 6  | Full                          | Full | Full   |
 | KiCad 5  | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
+## 🎯 v1.3 — Harmonized Analysis (Prerelease)
+
+v1.2 made findings trustworthy. v1.3 makes them uniform. **Every analyzer** — schematic, PCB, Gerber, thermal, lifecycle — now produces the same flat `findings[]` format with rich envelopes (`detector`, `rule_id`, `severity`, `confidence`, `recommendation`, `report_context`). One schema to query, filter, and export. The `signal_analysis` wrapper is gone; subcircuit detections sit alongside validation checks in a single stream you can slice by stage or audience.
+
+52 commits. 16 new detectors. PCB intelligence (union-find connectivity, 6 cross-domain checks). Stage/audience filtering. Output harmonization across 25 consumer files. Full harness regression at 1.76M assertions, 99.98% pass.
+
+**Highlights:**
+
+| Category | Capabilities |
+| --- | --- |
+| **Harmonized output** | All 7 analyzers produce `{analyzer_type, summary, findings[]}`. Flat finding envelope with detector/rule_id/severity/confidence/recommendation/report_context. `signal_analysis` wrapper removed. |
+| **16 new detectors** | Wireless modules, transformer SMPS feedback, I2C address conflicts, energy harvesting, PWM LED dimming, headphone jacks, plus 10 validation detectors (pull-ups, voltage levels, protocol buses, feedback stability). |
+| **PCB intelligence** | Union-find copper connectivity graph. 6 new cross-domain checks: critical net routing, return path continuity, trace width vs current, power island detection, voltage plane splits, differential pair return paths. |
+| **PCB DFM/assembly** | 7 new checks: fiducial presence, test point coverage, orientation consistency, silkscreen-pad overlap, via-in-pad tenting, board-edge via clearance, keepout violations. |
+| **Stage/audience filtering** | `--stage schematic\|layout\|pre_fab\|bring_up` and `--audience designer\|reviewer\|manager` flags on all analyzers. Filter findings to what matters for each review phase. |
+| **Rich format migration** | All detectors (75+) migrated to rich finding format. Centralized `Det` constants, `get_findings()`, `group_findings()` helpers in `finding_schema.py`. |
+| **Test corpus** | 5,829 repos, 1.76M regression assertions, 350K structural assertions, 802 unit tests, zero crashes. |
+
+See the full [CHANGELOG](CHANGELOG.md) for details.
+
 ## 🎯 v1.2 — Trust + Reach
 
 v1.1 shipped the analysis engine. v1.2 makes it something you'd actually hand to a teammate. **Trust** — every finding now carries a confidence label, can be suppressed with a reason, and is cross-checked against datasheets and a 5,829-project regression corpus. When it says there's a problem, you can believe it. **Reach** — first-class Codex support, analysis caching with manifests, and CI infrastructure mean it works wherever your team works, not just on one developer's machine.

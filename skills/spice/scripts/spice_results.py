@@ -57,7 +57,7 @@ def evaluate_rc_filter(det, sim_results):
     """Evaluate RC filter simulation results against expected values.
 
     Args:
-        det: Analyzer detection dict (from signal_analysis.rc_filters[])
+        det: Detection finding dict (from findings[] with detector=detect_rc_filters)
         sim_results: Dict from parse_output_file()
 
     Returns:
