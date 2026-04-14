@@ -539,6 +539,23 @@ SCHEMAS = {
         identity_fields=["via_x", "via_y"],
         value_fields=["edge_clearance_mm"],
     ),
+    # Batch 8: Remaining analyzer rich format
+    "thermal_assessments": DetectionSchema(
+        identity_fields=["ref"],
+        value_fields=["tj_estimated_c", "margin_c"],
+    ),
+    "gerber_findings": DetectionSchema(
+        identity_fields=["rule_id", "summary"],
+        value_fields=["severity"],
+    ),
+    "lifecycle_findings": DetectionSchema(
+        identity_fields=["mpn"],
+        value_fields=["status", "severity"],
+    ),
+    "temperature_findings": DetectionSchema(
+        identity_fields=["mpn"],
+        value_fields=["component_grade"],
+    ),
 }
 
 
