@@ -326,6 +326,12 @@ def main():
                              '(creates/updates manifest)')
     parser.add_argument('--schema', action='store_true',
                         help='Print JSON output schema and exit')
+    parser.add_argument('--stage', default=None,
+                        choices=['schematic', 'layout', 'pre_fab', 'bring_up'],
+                        help='Filter findings by review stage')
+    parser.add_argument('--audience', default=None,
+                        choices=['designer', 'reviewer', 'manager'],
+                        help='Audience level for summaries and --text output')
 
     args = parser.parse_args()
 
@@ -495,6 +501,9 @@ def main():
         result['findings'] = [f for f in result['findings']
                               if f.get('severity', 'INFO') != 'INFO']
 
+    from output_filters import apply_output_filters
+    apply_output_filters(result, args.stage, args.audience)
+
     # Analysis cache integration
     if args.analysis_dir:
         import tempfile
@@ -558,7 +567,11 @@ def main():
         print(f'EMC analysis complete: {len(findings)} findings '
               f'(score {risk_score}/100) → {args.output}', file=sys.stderr)
     elif args.text:
-        print(format_text_report(result))
+        if args.audience:
+            from output_filters import format_text
+            print(format_text(result.get('findings', []), args.audience, args.stage))
+        else:
+            print(format_text_report(result))
     else:
         json.dump(result, sys.stdout, indent=2)
         print(file=sys.stdout)

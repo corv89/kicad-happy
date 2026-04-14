@@ -878,6 +878,12 @@ def main():
     parser.add_argument('--schema', action='store_true', help='Print output schema and exit')
     parser.add_argument('--text', action='store_true', help='Print human-readable text report')
     parser.add_argument('--analysis-dir', default=None, help='Write into analysis cache directory')
+    parser.add_argument('--stage', default=None,
+                        choices=['schematic', 'layout', 'pre_fab', 'bring_up'],
+                        help='Filter findings by review stage')
+    parser.add_argument('--audience', default=None,
+                        choices=['designer', 'reviewer', 'manager'],
+                        help='Audience level for summaries and --text output')
 
     args = parser.parse_args()
 
@@ -919,10 +925,12 @@ def main():
         'findings': findings,
     }
 
+    from output_filters import apply_output_filters
+    apply_output_filters(result, args.stage, args.audience)
+
     if args.text:
-        for f in result.get('findings', []):
-            sev = f.get('severity', 'info').upper()
-            print(f'[{sev:8s}] {f.get("rule_id", ""):8s} {f.get("summary", "")}')
+        from output_filters import format_text
+        print(format_text(result.get('findings', []), args.audience or 'designer', args.stage))
         sys.exit(0)
 
     if args.output:

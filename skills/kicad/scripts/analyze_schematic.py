@@ -8597,6 +8597,12 @@ def main():
                         help="Write output to analysis cache directory (timestamped runs)")
     parser.add_argument("--text", action="store_true",
                         help="Print human-readable text report to stdout")
+    parser.add_argument('--stage', default=None,
+                        choices=['schematic', 'layout', 'pre_fab', 'bring_up'],
+                        help='Filter findings by review stage')
+    parser.add_argument('--audience', default=None,
+                        choices=['designer', 'reviewer', 'manager'],
+                        help='Audience level for summaries and --text output')
     args = parser.parse_args()
 
     if args.schema:
@@ -8685,11 +8691,12 @@ def main():
             "summary": {"error": str(e)},
         }
 
+    from output_filters import apply_output_filters
+    apply_output_filters(result, args.stage, args.audience)
+
     if args.text:
-        for f in result.get("findings", []):
-            if isinstance(f, dict):
-                sev = f.get("severity", "info").upper()
-                print(f'[{sev:8s}] {f.get("rule_id", ""):8s} {f.get("summary", "")}')
+        from output_filters import format_text
+        print(format_text(result.get('findings', []), args.audience or 'designer', args.stage))
         sys.exit(0)
 
     indent = None if args.compact else 2

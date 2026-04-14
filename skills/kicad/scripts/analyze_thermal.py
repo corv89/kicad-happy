@@ -844,6 +844,12 @@ def main():
                         help="Path to .kicad-happy.json project config file")
     parser.add_argument("--analysis-dir",
                         help="Write thermal.json to this directory (analysis folder convention)")
+    parser.add_argument('--stage', default=None,
+                        choices=['schematic', 'layout', 'pre_fab', 'bring_up'],
+                        help='Filter findings by review stage')
+    parser.add_argument('--audience', default=None,
+                        choices=['designer', 'reviewer', 'manager'],
+                        help='Audience level for summaries and --text output')
     args = parser.parse_args()
 
     # Load inputs
@@ -969,6 +975,9 @@ def main():
     # Merge thermal_assessments into findings (TH-DET entries)
     result["findings"] = result.get("findings", []) + result.pop("thermal_assessments", [])
 
+    from output_filters import apply_output_filters
+    apply_output_filters(result, args.stage, args.audience)
+
     # Determine output path
     output_path = args.output
     if not output_path and hasattr(args, "analysis_dir") and args.analysis_dir:
@@ -981,7 +990,11 @@ def main():
         print(f"Thermal analysis complete: {len(findings)} findings "
               f"(score {score}/100) -> {output_path}", file=sys.stderr)
     elif args.text:
-        print(format_text_report(result))
+        if args.audience:
+            from output_filters import format_text
+            print(format_text(result.get('findings', []), args.audience, args.stage))
+        else:
+            print(format_text_report(result))
     else:
         json.dump(result, sys.stdout, indent=2)
         print(file=sys.stdout)

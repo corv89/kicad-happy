@@ -1569,6 +1569,12 @@ def main():
                         help="Print human-readable text summary")
     parser.add_argument("--schema", action="store_true",
                         help="Print JSON output schema and exit")
+    parser.add_argument('--stage', default=None,
+                        choices=['schematic', 'layout', 'pre_fab', 'bring_up'],
+                        help='Filter findings by review stage')
+    parser.add_argument('--audience', default=None,
+                        choices=['designer', 'reviewer', 'manager'],
+                        help='Audience level for summaries and --text output')
     args = parser.parse_args()
 
     if args.schema:
@@ -1579,6 +1585,9 @@ def main():
         parser.error("the following arguments are required: directory")
 
     result = analyze_gerbers(args.directory, full=args.full)
+
+    from output_filters import apply_output_filters
+    apply_output_filters(result, args.stage, args.audience)
 
     # Determine output path
     output_path = args.output
@@ -1592,15 +1601,8 @@ def main():
         Path(output_path).write_text(output_json)
         print(f"Written to {output_path}", file=sys.stderr)
     elif args.text:
-        summary = result.get("summary", {})
-        findings = result.get("findings", [])
-        print(f"Gerber analysis: {result.get('layer_count', 0)} layers, "
-              f"{result.get('statistics', {}).get('total_holes', 0)} holes, "
-              f"{summary.get('total_findings', 0)} findings "
-              f"({summary.get('error', 0)} errors, {summary.get('warning', 0)} warnings)")
-        for f in findings:
-            sev = f.get("severity", "info").upper()
-            print(f"  [{sev}] {f.get('rule_id', '?')}: {f.get('summary', '')}")
+        from output_filters import format_text
+        print(format_text(result.get('findings', []), args.audience or 'designer', args.stage))
     else:
         print(output_json)
 
