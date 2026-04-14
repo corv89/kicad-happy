@@ -168,6 +168,7 @@ All PCB analysis sections now produce findings with the rich format (detector, r
 - **VP-001**: Via-in-pad without tenting (--full mode)
 - **BV-001**: Via clearance from board edges (--full mode)
 - **KO-001**: Keepout zone violations
+- **CP-001**: Same-layer foreign zone under a component. Severity is `warning` when the foreign zone is a non-ground net or the component has no GND pad; severity is `info` when the foreign zone is GND and the component has a GND pad (the common case of a bypass cap sitting over the ground pour — expected layout, not a clearance issue).
 
 ### Cross-Domain Analysis
 
@@ -540,6 +541,26 @@ python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --output patched.j
 
 Patches component values in the analyzer JSON, recalculates derived fields (filter cutoff, divider ratio, opamp gain, crystal load, current sense range, regulator Vout), and shows before/after comparison with percentage deltas. Supports single changes, multi-point sweeps (comma or log-range), tolerance corner analysis, inverse fix suggestions with E-series snapping, EMC impact preview, PCB parasitic awareness (auto-discovered or via `--pcb`), and SPICE re-verification.
 
+### Findings Summary
+
+Summarises findings across all analyzers in a run. Use when the user wants a top-N list, a severity-filtered view, or a machine-readable roll-up without reading individual JSON files. Reads the current run from `analysis/manifest.json`.
+
+```bash
+# Top findings from the current run (default: top 20)
+python3 <skill-path>/scripts/summarize_findings.py analysis/
+
+# Limit to top 10 high-severity findings
+python3 <skill-path>/scripts/summarize_findings.py analysis/ --top 10 --severity high
+
+# JSON output for programmatic consumption
+python3 <skill-path>/scripts/summarize_findings.py analysis/ --json
+
+# Summarise a specific run by ID
+python3 <skill-path>/scripts/summarize_findings.py analysis/ --run <run_id>
+```
+
+Flags: `--top N` (default 20), `--severity` (filter to `critical`/`high`/`warning`/`info`), `--run` (explicit run ID instead of latest), `--json` (machine-readable output).
+
 ### Component Lifecycle & Temperature Audit
 
 Queries distributor APIs to check component lifecycle status (active, NRND, EOL, obsolete) and operating temperature range coverage. Use when the user says "check for obsolete parts", "lifecycle audit", "are any parts end of life", "temperature audit", "will this work at industrial temp range", or during production readiness reviews.
@@ -567,6 +588,24 @@ Reads the analyzer JSON BOM section, extracts unique MPNs, queries distributors 
 The lifecycle audit produces rich format findings: LC-001 (obsolete/discontinued), LC-002 (last time buy), LC-003 (NRND), LC-004 (unknown status), LC-005 (single source), LC-006 (long lead time), LT-001 (temperature violation).
 
 **Requires network access** — unlike the core analyzers, this script calls distributor APIs. Same environment variables as the distributor skills (DIGIKEY_CLIENT_ID/SECRET, MOUSER_SEARCH_API_KEY, ELEMENT14_API_KEY). LCSC requires no credentials.
+
+### Schematic Analyzer Rule IDs
+
+All schematic rule findings appear in `findings[]`. The following rule IDs are produced by the schematic analyzer:
+
+| Rule | Detector | Condition | Severity |
+|------|----------|-----------|----------|
+| SS-001 | `audit_sourcing` | MPN coverage < 50% | high |
+| SS-002 | `audit_sourcing` | MPN coverage 50–80% | warning |
+| SS-003 | `audit_sourcing` | MPN coverage 80–100% | info |
+| NT-001 | `audit_single_pin_nets` | Single-pin net: signal pin | warning |
+| NT-001 | `audit_single_pin_nets` | Single-pin net: power_out or passive pin | info |
+| RS-001 | `audit_rail_source` | Rail has a declared source (direct, PWR_FLAG, or bridged jumper) | info or warning |
+| RS-002 | `audit_rail_source` | Rail depends on user closing an open jumper | high |
+| LB-001 | `audit_label_aliases` | Net has >= 2 distinct global/hierarchical labels (power nets excluded) | info |
+| PP-001 | `audit_ic_power_pins` | IC power_in pin reaches a rail only through a capacitor (2-hop BFS) | high |
+
+SS-001 is a pre-fab blocker — a `high` finding that should be resolved before ordering. NT-001 severity depends on pin type: signal pins (digital I/O, bidirectional) are `warning`; power_out and passive pins are `info`. RS-001 severity varies by confidence level in the detected source. PP-001 uses a 2-hop BFS over the net graph, rejecting capacitor edges, to confirm a direct DC path from a power rail to each IC power_in pin.
 
 ## Reference Files
 
