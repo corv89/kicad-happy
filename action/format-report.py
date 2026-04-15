@@ -154,6 +154,126 @@ def _render_missing_info(sch, thermal):
 
 
 # ---------------------------------------------------------------------------
+# Trust / Evidence Section
+# ---------------------------------------------------------------------------
+
+def _render_trust_evidence(sch, pcb, emc, thermal):
+    """Render trust/evidence summary from analyzer trust_summary blocks."""
+    sections = []
+    if sch:
+        sections.append(('Schematic', sch.get('trust_summary')))
+    if pcb:
+        sections.append(('PCB', pcb.get('trust_summary')))
+    if emc:
+        sections.append(('EMC', emc.get('trust_summary')))
+    if thermal:
+        sections.append(('Thermal', thermal.get('trust_summary')))
+
+    # Filter to sections that have trust_summary
+    sections = [(name, ts) for name, ts in sections if ts]
+    if not sections:
+        return []
+
+    L = []
+
+    # Compute aggregate counts across all analyzers
+    total_findings = 0
+    total_deterministic = 0
+    total_heuristic = 0
+    total_datasheet = 0
+    total_unknown = 0
+    for _, ts in sections:
+        total_findings += ts.get('total_findings', 0)
+        bc = ts.get('by_confidence', {})
+        total_deterministic += bc.get('deterministic', 0)
+        total_heuristic += bc.get('heuristic', 0)
+        total_datasheet += bc.get('datasheet-backed', 0)
+        total_unknown += ts.get('unknown_confidence', 0)
+
+    if total_findings == 0:
+        return []
+
+    # Determine overall trust level (worst of all analyzers)
+    levels = [ts.get('trust_level', 'high') for _, ts in sections]
+    if 'low' in levels:
+        overall = 'low'
+    elif 'mixed' in levels:
+        overall = 'mixed'
+    else:
+        overall = 'high'
+
+    trust_icon = {'high': '\u2705', 'mixed': '\u26a0\ufe0f', 'low': '\u274c'}
+    level_icon = trust_icon.get(overall, '')
+
+    det_pct = round(100 * total_deterministic / total_findings)
+    heur_pct = round(100 * total_heuristic / total_findings)
+
+    header = (f"Trust / Evidence {level_icon} — "
+              f"{det_pct}% deterministic, {heur_pct}% heuristic"
+              f" ({total_findings} findings)")
+
+    L.append(f"<details><summary>{header}</summary>")
+    L.append("")
+
+    # Per-analyzer breakdown
+    L.append("| Analyzer | Findings | Deterministic | Heuristic | Datasheet | Trust |")
+    L.append("|----------|----------|---------------|-----------|-----------|-------|")
+    for name, ts in sections:
+        n = ts.get('total_findings', 0)
+        if n == 0:
+            continue
+        bc = ts.get('by_confidence', {})
+        d = bc.get('deterministic', 0)
+        h = bc.get('heuristic', 0)
+        ds = bc.get('datasheet-backed', 0)
+        level = ts.get('trust_level', '?')
+        icon = trust_icon.get(level, '')
+        L.append(f"| {name} | {n} | {d} ({round(100*d/n)}%) | "
+                 f"{h} ({round(100*h/n)}%) | {ds} | {icon} {level} |")
+    L.append("")
+
+    # BOM coverage (schematic only)
+    if sch:
+        ts = sch.get('trust_summary', {})
+        bom_cov = ts.get('bom_coverage')
+        if bom_cov:
+            mpn_pct = bom_cov.get('mpn_pct', 0)
+            ds_pct = bom_cov.get('datasheet_pct', 0)
+            total_comp = bom_cov.get('total_components', 0)
+            L.append(f"**BOM evidence** ({total_comp} components): "
+                     f"{mpn_pct:.0f}% have MPNs, {ds_pct:.0f}% have datasheets")
+            L.append("")
+
+    # Provenance coverage
+    prov_values = [ts.get('provenance_coverage_pct', 0) for _, ts in sections
+                   if ts.get('total_findings', 0) > 0]
+    if prov_values:
+        avg_prov = round(sum(prov_values) / len(prov_values), 1)
+        L.append(f"**Provenance coverage**: {avg_prov}% of findings carry detector provenance")
+        L.append("")
+
+    # Evidence blockers
+    blockers = []
+    if total_unknown > 0:
+        blockers.append(f"{total_unknown} findings with unknown confidence")
+    if sch:
+        ts = sch.get('trust_summary', {})
+        bom_cov = ts.get('bom_coverage')
+        if bom_cov and bom_cov.get('mpn_pct', 100) < 50:
+            blockers.append(f"Low MPN coverage ({bom_cov['mpn_pct']:.0f}%) "
+                            "limits datasheet-backed verification")
+    if blockers:
+        L.append("**Evidence blockers:**")
+        for b in blockers:
+            L.append(f"- {b}")
+        L.append("")
+
+    L.append("</details>")
+    L.append("")
+    return L
+
+
+# ---------------------------------------------------------------------------
 # Tier 1: PR Comment
 # ---------------------------------------------------------------------------
 
@@ -393,7 +513,9 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
             issues = finding.get("issues", []) or []
             checks = finding.get("checks", {})
             devices = finding.get("devices", [])
-            dev_str = f" ({', '.join(devices[:4])})" if devices else ""
+            dev_names = [d.get('reference', str(d)) if isinstance(d, dict) else str(d)
+                         for d in devices[:4]]
+            dev_str = f" ({', '.join(dev_names)})" if dev_names else ""
 
             if proto == "I2C" and checks:
                 detail_key = f"I2C:{finding.get('sda_net','')}"
@@ -616,6 +738,11 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
     mi_lines = _render_missing_info(sch, thermal)
     if mi_lines:
         L.extend(mi_lines)
+
+    # === Trust / Evidence ===
+    trust_lines = _render_trust_evidence(sch, pcb, emc, thermal)
+    if trust_lines:
+        L.extend(trust_lines)
 
     # === Verified (collapsible, at bottom) ===
     if verified:
