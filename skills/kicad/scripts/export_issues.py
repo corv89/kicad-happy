@@ -232,6 +232,8 @@ def issue_labels(finding: dict, extra_labels: "list[str]") -> list[str]:
       - ``kicad-happy``
       - ``kicad-happy:{rule_id}``
       - ``severity:{severity}``
+      - ``confidence:{confidence}``  (if present)
+      - ``evidence:{evidence_source}``  (if present)
 
     Plus any caller-supplied extra labels.
     """
@@ -242,6 +244,12 @@ def issue_labels(finding: dict, extra_labels: "list[str]") -> list[str]:
         f"kicad-happy:{rule_id}",
         f"severity:{severity}",
     ]
+    confidence = finding.get("confidence", "")
+    if confidence:
+        labels.append(f"confidence:{confidence}")
+    evidence = finding.get("evidence_source", "")
+    if evidence:
+        labels.append(f"evidence:{evidence}")
     labels.extend(extra_labels or [])
     return labels
 

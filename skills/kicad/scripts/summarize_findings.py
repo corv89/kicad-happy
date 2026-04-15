@@ -97,7 +97,8 @@ def _filter_severity(findings: list[dict], severity: str | None) -> list[dict]:
 def _aggregate(findings: list[dict]) -> list[dict]:
     groups: dict[tuple, dict] = defaultdict(
         lambda: {"rule_id": "", "severity": "info", "count": 0,
-                 "examples": [], "detectors": set(), "source_files": set()})
+                 "examples": [], "detectors": set(), "source_files": set(),
+                 "by_confidence": {"deterministic": 0, "heuristic": 0, "datasheet-backed": 0}})
     for f in findings:
         rid = f.get("rule_id") or "(unknown)"
         sev_norm = (f.get("severity") or "info").lower()
@@ -114,6 +115,9 @@ def _aggregate(findings: list[dict]) -> list[dict]:
             g["examples"].append(f.get("summary") or "")
         g["detectors"].add(f.get("detector") or "")
         g["source_files"].add(f.get("_source_file") or "")
+        conf = f.get("confidence", "")
+        if conf in g["by_confidence"]:
+            g["by_confidence"][conf] += 1
 
     rows = []
     for (rid, sev), g in groups.items():
@@ -124,6 +128,7 @@ def _aggregate(findings: list[dict]) -> list[dict]:
             "detectors": sorted(x for x in g["detectors"] if x),
             "sources": sorted(x for x in g["source_files"] if x),
             "examples": g["examples"],
+            "by_confidence": dict(g["by_confidence"]),
         })
     rows.sort(key=lambda r: (_SEV_RANK.get(r["severity"], 99), -r["count"], r["rule_id"]))
     return rows
@@ -135,14 +140,62 @@ def _print_table(rows: list[dict], top: int | None) -> None:
         return
     print(f"# {len(rows)} rule groups across "
           f"{sum(r['count'] for r in rows)} findings")
-    print(f"{'rule_id':<14} {'severity':<9} {'count':>5}  example")
-    print("-" * 80)
+    print(f"{'rule_id':<14} {'severity':<9} {'count':>5}  {'det':>4} {'heu':>4} {'ds':>3}  example")
+    print("-" * 90)
     shown = rows[:top] if top else rows
     for r in shown:
-        ex = r["examples"][0][:60] if r["examples"] else ""
-        print(f"{r['rule_id']:<14} {r['severity']:<9} {r['count']:>5}  {ex}")
+        bc = r.get("by_confidence", {})
+        det = bc.get("deterministic", 0)
+        heu = bc.get("heuristic", 0)
+        ds = bc.get("datasheet-backed", 0)
+        ex = r["examples"][0][:50] if r["examples"] else ""
+        print(f"{r['rule_id']:<14} {r['severity']:<9} {r['count']:>5}  {det:>4} {heu:>4} {ds:>3}  {ex}")
     if top and len(rows) > top:
         print(f"# …({len(rows) - top} more groups omitted — use --top 0 to show all)")
+
+
+def _aggregate_by_confidence(findings: list[dict]) -> list[dict]:
+    """Group findings by confidence level."""
+    buckets: dict[str, dict] = {}
+    for f in findings:
+        conf = f.get("confidence", "(unknown)")
+        if conf not in buckets:
+            buckets[conf] = {"confidence": conf, "count": 0,
+                             "top_rules": defaultdict(int),
+                             "severities": {"high": 0, "warning": 0, "info": 0}}
+        b = buckets[conf]
+        b["count"] += 1
+        rid = f.get("rule_id") or "(unknown)"
+        b["top_rules"][rid] += 1
+        sev_norm = _norm(f.get("severity", "info"))
+        b["severities"][sev_norm] = b["severities"].get(sev_norm, 0) + 1
+
+    rows = []
+    for conf, b in sorted(buckets.items(), key=lambda x: -x[1]["count"]):
+        top_rules = sorted(b["top_rules"].items(), key=lambda x: -x[1])[:3]
+        rows.append({
+            "confidence": conf,
+            "count": b["count"],
+            "severities": b["severities"],
+            "top_rules": [{"rule_id": r, "count": c} for r, c in top_rules],
+        })
+    return rows
+
+
+def _print_confidence_table(rows: list[dict]) -> None:
+    if not rows:
+        print("# No findings.")
+        return
+    total = sum(r["count"] for r in rows)
+    print(f"# {total} findings by confidence level")
+    print(f"{'confidence':<18} {'count':>5} {'pct':>5}  {'high':>4} {'warn':>4} {'info':>4}  top rules")
+    print("-" * 90)
+    for r in rows:
+        pct = round(100 * r["count"] / total) if total else 0
+        s = r["severities"]
+        top = ", ".join(f"{t['rule_id']}({t['count']})" for t in r["top_rules"])
+        print(f"{r['confidence']:<18} {r['count']:>5} {pct:>4}%  "
+              f"{s.get('high',0):>4} {s.get('warning',0):>4} {s.get('info',0):>4}  {top}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -160,11 +213,31 @@ def main(argv: list[str] | None = None) -> int:
                     help="Run ID override (defaults to manifest.current).")
     ap.add_argument("--json", action="store_true",
                     help="Emit the aggregated table as JSON instead of text.")
+    ap.add_argument("--by-confidence", action="store_true",
+                    help="Group findings by confidence level instead of rule_id.")
     args = ap.parse_args(argv)
 
     run_dir, run_id, manifest_version = _resolve_run_dir(args.analysis_dir, args.run)
     findings = _collect_findings(run_dir)
     findings = _filter_severity(findings, args.severity)
+    if args.by_confidence:
+        conf_rows = _aggregate_by_confidence(findings)
+        if args.json:
+            payload = {
+                "schema": "summarize_findings/1",
+                "run_dir": run_dir,
+                "run_id": run_id,
+                "manifest_version": manifest_version,
+                "mode": "by_confidence",
+                "rows": conf_rows,
+            }
+            json.dump(payload, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+        else:
+            print(f"# Run: {run_dir}")
+            _print_confidence_table(conf_rows)
+        return 0
+
     rows = _aggregate(findings)
 
     if args.json:
@@ -172,6 +245,10 @@ def main(argv: list[str] | None = None) -> int:
         for r in rows:
             severity_totals[r["severity"]] = (
                 severity_totals.get(r["severity"], 0) + r["count"])
+        confidence_totals: dict[str, int] = {}
+        for r in rows:
+            for k, v in r.get("by_confidence", {}).items():
+                confidence_totals[k] = confidence_totals.get(k, 0) + v
         payload = {
             "schema": "summarize_findings/1",
             "run_dir": run_dir,
@@ -181,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
                 "findings": sum(r["count"] for r in rows),
                 "rule_groups": len(rows),
                 "by_severity": severity_totals,
+                "by_confidence": confidence_totals,
             },
             "rows": rows,
         }
