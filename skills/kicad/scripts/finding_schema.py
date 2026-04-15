@@ -112,6 +112,104 @@ def make_provenance(evidence: str, confidence: str = 'heuristic',
     }
 
 
+def compute_trust_summary(findings, bom=None):
+    """Compute a trust summary from a list of findings.
+
+    Aggregates finding metadata into a single trust posture block that
+    tells users how much of the report is solid, heuristic, or missing
+    evidence.
+
+    Args:
+        findings: List of finding dicts (each should have confidence,
+            evidence_source fields).
+        bom: Optional BOM list from schematic analyzer. If provided,
+            computes manufacturer evidence coverage.
+
+    Returns:
+        Dict with trust posture fields.
+    """
+    total = len(findings)
+
+    by_confidence = {}
+    for c in VALID_CONFIDENCES:
+        by_confidence[c] = 0
+    by_evidence = {}
+    for e in VALID_EVIDENCE_SOURCES:
+        by_evidence[e] = 0
+
+    has_provenance = 0
+    unknown_confidence = 0
+    unknown_evidence = 0
+
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        conf = f.get('confidence', '')
+        ev = f.get('evidence_source', '')
+        if conf in by_confidence:
+            by_confidence[conf] += 1
+        else:
+            unknown_confidence += 1
+        if ev in by_evidence:
+            by_evidence[ev] += 1
+        else:
+            unknown_evidence += 1
+        if f.get('provenance') is not None:
+            has_provenance += 1
+
+    # BOM evidence coverage
+    bom_coverage = None
+    if bom is not None:
+        bom_total = 0
+        bom_with_mpn = 0
+        bom_with_datasheet = 0
+        for comp in bom:
+            if not isinstance(comp, dict):
+                continue
+            if comp.get('type') in ('power_symbol', 'power_flag', 'flag'):
+                continue
+            bom_total += 1
+            if comp.get('mpn') or comp.get('MPN'):
+                bom_with_mpn += 1
+            if comp.get('datasheet') and comp['datasheet'] not in ('', '~'):
+                bom_with_datasheet += 1
+        if bom_total > 0:
+            bom_coverage = {
+                'total_components': bom_total,
+                'with_mpn': bom_with_mpn,
+                'with_datasheet': bom_with_datasheet,
+                'mpn_pct': round(100 * bom_with_mpn / bom_total, 1),
+                'datasheet_pct': round(100 * bom_with_datasheet / bom_total, 1),
+            }
+
+    # Determine trust level
+    if total == 0:
+        trust_level = 'high'
+    else:
+        heuristic_pct = 100 * by_confidence.get('heuristic', 0) / total
+        if heuristic_pct > 50 or unknown_confidence > 0:
+            trust_level = 'low'
+        elif heuristic_pct > 20:
+            trust_level = 'mixed'
+        else:
+            trust_level = 'high'
+
+    result = {
+        'total_findings': total,
+        'trust_level': trust_level,
+        'by_confidence': by_confidence,
+        'by_evidence_source': by_evidence,
+        'provenance_coverage_pct': round(100 * has_provenance / total, 1) if total else 100.0,
+    }
+    if unknown_confidence:
+        result['unknown_confidence'] = unknown_confidence
+    if unknown_evidence:
+        result['unknown_evidence_source'] = unknown_evidence
+    if bom_coverage is not None:
+        result['bom_coverage'] = bom_coverage
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Detector name constants — avoids string typos across consumers
 # ---------------------------------------------------------------------------

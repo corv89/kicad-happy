@@ -1359,6 +1359,8 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
         "warning": sev_counts.get("warning", 0),
         "info": sev_counts.get("info", 0),
     }
+    from finding_schema import compute_trust_summary
+    result["trust_summary"] = compute_trust_summary(findings)
 
     # Full mode: include raw pin-to-net connectivity
     if full and any(g.get("x2_objects") for g in gerbers):

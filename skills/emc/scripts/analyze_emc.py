@@ -29,6 +29,7 @@ if os.path.isdir(_kicad_scripts):
 
 from emc_rules import run_all_checks, generate_test_plan, analyze_regulatory_coverage
 from emc_formulas import STANDARDS, MARKET_STANDARDS
+from finding_schema import compute_trust_summary
 
 # Shared severity weights — used by both risk score and per-net scoring
 SEVERITY_WEIGHTS = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
@@ -503,6 +504,7 @@ def main():
         'category_summary': category_summary,
         'board_info': extract_board_info(schematic, pcb),
         'elapsed_s': round(elapsed, 3),
+        'trust_summary': compute_trust_summary(findings),
     }
 
     # --compact is presentation-only: strip INFO findings from output

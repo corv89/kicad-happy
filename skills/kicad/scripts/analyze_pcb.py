@@ -37,6 +37,7 @@ from kicad_utils import (is_ground_name, is_power_net_name,
                          extract_pro_design_rules, extract_pro_text_variables,
                          load_kicad_dru, load_lib_tables)
 from pcb_connectivity import build_connectivity_graph
+from finding_schema import compute_trust_summary
 
 
 # ---------------------------------------------------------------------------
@@ -6124,6 +6125,7 @@ def analyze_pcb(path: str, *, proximity: bool = False,
             result['copper_presence_summary'] = copper['opposite_layer_summary']
 
     result['findings'] = findings
+    result['trust_summary'] = compute_trust_summary(findings)
 
     # Build summary
     sev_counts = {"error": 0, "warning": 0, "info": 0}

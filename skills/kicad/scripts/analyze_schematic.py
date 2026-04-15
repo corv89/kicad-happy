@@ -124,6 +124,7 @@ from validation_detectors import (
     validate_led_resistors,
     validate_feedback_stability,
 )
+from finding_schema import compute_trust_summary
 
 
 # ---------------------------------------------------------------------------
@@ -3162,6 +3163,7 @@ def parse_legacy_schematic(path: str) -> dict:
     result = {
         "analyzer_type": "schematic",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
+        "trust_summary": compute_trust_summary(findings),
         "file": str(path),
         "kicad_version": "5 (legacy)",
         "file_version": "4",
@@ -8863,6 +8865,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "analyzer_type": "schematic",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "confidence_map": confidence_map,
+        "trust_summary": compute_trust_summary(findings, bom=bom),
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": file_version,

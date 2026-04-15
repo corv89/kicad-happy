@@ -5609,6 +5609,24 @@ def suggest_certifications(ctx: AnalysisContext, signal_analysis: dict) -> list[
             "reason": "All electronic devices require EMC compliance for EU market",
         })
 
+    # Annotate each suggestion with finding metadata so the trust_summary
+    # doesn't flag them as unknown confidence/evidence.
+    for s in suggestions:
+        s.setdefault('detector', 'suggest_certifications')
+        s.setdefault('rule_id', 'CERT-001')
+        s.setdefault('category', 'certification')
+        s.setdefault('severity', 'info')
+        s.setdefault('confidence', 'heuristic')
+        s.setdefault('evidence_source', 'topology')
+        s.setdefault('summary', s.get('reason', ''))
+        s.setdefault('description', f"{s.get('standard', '')}: {s.get('reason', '')}")
+        s.setdefault('components', s.get('components', []))
+        s.setdefault('nets', [])
+        s.setdefault('pins', [])
+        s.setdefault('recommendation', '')
+        s.setdefault('report_context', {
+            'section': 'Certifications', 'impact': '', 'standard_ref': ''})
+
     return suggestions
 
 

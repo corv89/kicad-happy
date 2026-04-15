@@ -868,6 +868,8 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
         "lifecycle_issues": len(lifecycle_findings),
         "temperature_issues": len(temperature_findings),
     }
+    from finding_schema import compute_trust_summary
+    result["trust_summary"] = compute_trust_summary(all_findings)
 
     return result
 

@@ -1001,6 +1001,9 @@ def main():
     # Merge thermal_assessments into findings (TH-DET entries)
     result["findings"] = result.get("findings", []) + result.pop("thermal_assessments", [])
 
+    from finding_schema import compute_trust_summary
+    result["trust_summary"] = compute_trust_summary(result["findings"])
+
     from output_filters import apply_output_filters
     apply_output_filters(result, args.stage, args.audience)
 
