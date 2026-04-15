@@ -21,6 +21,7 @@ from kicad_utils import (
     parse_voltage_from_net_name as _parse_voltage_from_net_name,
 )
 from kicad_types import AnalysisContext
+from finding_schema import make_provenance
 from detector_helpers import index_two_pin_components, get_components_by_type, get_unique_ics
 
 
@@ -342,6 +343,7 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
                                     divider["pins"] = []
                                     divider["recommendation"] = ""
                                     divider["report_context"] = {"section": "Voltage Dividers", "impact": "", "standard_ref": ""}
+                                    divider["provenance"] = make_provenance("vd_two_resistor", "deterministic", [r_top_ref, r_bot_ref])
                                     feedback_networks.append(divider)
                                     break
 
@@ -360,6 +362,7 @@ def detect_voltage_dividers(ctx: AnalysisContext) -> dict:
                     divider["pins"] = []
                     divider["recommendation"] = ""
                     divider["report_context"] = {"section": "Voltage Dividers", "impact": "", "standard_ref": ""}
+                    divider["provenance"] = make_provenance("vd_two_resistor", "deterministic", [r_top_ref, r_bot_ref])
 
                     voltage_dividers.append(divider)
 
@@ -645,6 +648,7 @@ def detect_rc_filters(ctx: AnalysisContext, voltage_dividers: list[dict],
                 rc_entry["pins"] = []
                 rc_entry["recommendation"] = ""
                 rc_entry["report_context"] = {"section": "Passive Filters", "impact": "", "standard_ref": ""}
+                rc_entry["provenance"] = make_provenance("rc_topology", "deterministic", [res["reference"], cap_ref])
 
                 seen_rc_pairs.add(rc_pair)
                 results_rc.append(rc_entry)
@@ -779,6 +783,7 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
                 lc_entry["pins"] = []
                 lc_entry["recommendation"] = ""
                 lc_entry["report_context"] = {"section": "Passive Filters", "impact": "", "standard_ref": ""}
+                lc_entry["provenance"] = make_provenance("lc_topology", "deterministic", [ind["reference"], cap["reference"]])
 
                 cap_other_net_for_group = (c_nets - {shared_net_lc}).pop()
                 _lc_groups.setdefault((ind["reference"], shared_net_lc, cap_other_net_for_group), []).append(lc_entry)
@@ -831,6 +836,7 @@ def detect_lc_filters(ctx: AnalysisContext) -> list[dict]:
             merged["pins"] = []
             merged["recommendation"] = ""
             merged["report_context"] = {"section": "Passive Filters", "impact": "", "standard_ref": ""}
+            merged["provenance"] = make_provenance("lc_topology", "deterministic", [entries[0]["inductor"]["ref"]] + cap_refs)
             lc_filters.append(merged)
 
     # KH-119: Suppress overcounting — if one inductor pairs with caps on BOTH
@@ -982,6 +988,9 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
         xtal_entry["pins"] = []
         xtal_entry["recommendation"] = ""
         xtal_entry["report_context"] = {"section": "Timing", "impact": "", "standard_ref": ""}
+        xtal_entry["provenance"] = make_provenance(
+            "xtal_passive_caps", "deterministic",
+            [xtal["reference"]] + [lc["ref"] for lc in load_caps])
 
         crystal_circuits.append(xtal_entry)
 
@@ -1052,6 +1061,7 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
             "pins": [],
             "recommendation": "",
             "report_context": {"section": "Timing", "impact": "", "standard_ref": ""},
+            "provenance": make_provenance("xtal_active_oscillator", "deterministic", [ref]),
         })
 
     # IC pin-based crystal detection: find ICs with crystal-related pin names
@@ -1151,6 +1161,9 @@ def detect_crystal_circuits(ctx: AnalysisContext) -> list[dict]:
                 entry["pins"] = []
                 entry["recommendation"] = ""
                 entry["report_context"] = {"section": "Timing", "impact": "", "standard_ref": ""}
+                entry["provenance"] = make_provenance(
+                    "xtal_ic_pin_inferred", "heuristic",
+                    [ic["reference"]] + [lc["ref"] for lc in load_caps])
                 crystal_circuits.append(entry)
 
     return crystal_circuits
@@ -1210,6 +1223,7 @@ def detect_decoupling(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Decoupling", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("decoup_cap_near_ic", "deterministic", [c["ref"] for c in rail_caps]),
             })
     return decoupling_analysis
 
@@ -1397,6 +1411,7 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
                 "evidence_source": "topology",
                 "summary": f"Current sense {shunt['reference']}",
                 "description": "Current sense shunt with amplifier IC detected",
+                "provenance": make_provenance("cs_ic_differential", "deterministic", [shunt["reference"], ic_ref]),
                 "components": [shunt["reference"], ic_ref],
                 "nets": [],
                 "pins": [],
@@ -1466,6 +1481,7 @@ def detect_current_sense(ctx: AnalysisContext) -> list[dict]:
                         "pins": [],
                         "recommendation": "",
                         "report_context": {"section": "Current Measurement", "impact": "", "standard_ref": ""},
+                        "provenance": make_provenance("cs_integrated_pin", "heuristic", [shunt["reference"], p["component"]]),
                     })
                     matched_shunts.add(shunt["reference"])
                     break
@@ -1601,6 +1617,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Power Management", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("reg_keyword", "heuristic", [ref]),
             })
             continue
 
@@ -1912,6 +1929,26 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
             reg_info["pins"] = []
             reg_info["recommendation"] = ""
             reg_info["report_context"] = {"section": "Power Management", "impact": "", "standard_ref": ""}
+            # Determine provenance evidence based on classification path
+            if sw_pin and reg_info.get("inductor"):
+                _prov_evidence = "reg_sw_pin_inductor"
+                _prov_confidence = "deterministic"
+            elif reg_info.get("vref_source") == "fixed_suffix":
+                _prov_evidence = "reg_fixed_suffix"
+                _prov_confidence = "deterministic"
+            elif sw_pin:
+                _prov_evidence = "reg_sw_pin_only"
+                _prov_confidence = "heuristic"
+            elif reg_info.get("feedback_divider"):
+                _prov_evidence = "reg_divider_vref"
+                _prov_confidence = "heuristic"
+            elif has_reg_keyword:
+                _prov_evidence = "reg_keyword"
+                _prov_confidence = "heuristic"
+            else:
+                _prov_evidence = "reg_keyword"
+                _prov_confidence = "heuristic"
+            reg_info["provenance"] = make_provenance(_prov_evidence, _prov_confidence, [ref])
             power_regulators.append(reg_info)
 
     # KH-084: Cross-reference feedback dividers with regulators.
@@ -2182,6 +2219,7 @@ def detect_integrated_ldos(ctx: AnalysisContext, power_regulators: list[dict]) -
                         "pins": [],
                         "recommendation": "",
                         "report_context": {"section": "Power Management", "impact": "", "standard_ref": ""},
+                        "provenance": make_provenance("ildo_vreg_pin", "heuristic", [ref]),
                     })
                     existing_refs.add(ref)
                     break
@@ -2244,6 +2282,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                     "pins": [],
                     "recommendation": "",
                     "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
+                    "provenance": make_provenance("prot_esd_array", "deterministic", [comp["reference"]]),
                 })
             continue
 
@@ -2294,6 +2333,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("prot_tvs", "deterministic", [comp["reference"]]),
             })
 
     # Also detect varistors and surge arresters (already typed correctly)
@@ -2334,6 +2374,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("prot_varistor", "deterministic", [comp["reference"]]),
             })
 
     # PTC fuses / polyfuses used as overcurrent protection
@@ -2372,6 +2413,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("prot_fuse", "deterministic", [comp["reference"]]),
             })
 
     # ---- IC-based ESD Protection ----
@@ -2417,6 +2459,7 @@ def detect_protection_devices(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Protection", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("prot_ic_based", "deterministic", [comp["reference"]]),
             })
 
     return protection_devices
@@ -2532,6 +2575,7 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Analog", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("opamp_topology", "deterministic", [ref]),
             })
             continue
 
@@ -2749,6 +2793,7 @@ def detect_opamp_circuits(ctx: AnalysisContext) -> list[dict]:
             entry["pins"] = []
             entry["recommendation"] = ""
             entry["report_context"] = {"section": "Analog", "impact": "", "standard_ref": ""}
+            entry["provenance"] = make_provenance("opamp_topology", "deterministic", [ref])
             opamp_circuits.append(entry)
 
     # ---- Unused channel detection for multi-channel opamps ----
@@ -2914,6 +2959,7 @@ def detect_bridge_circuits(ctx: AnalysisContext) -> tuple[list[dict], set, dict]
             "pins": [],
             "recommendation": "",
             "report_context": {"section": "Power Switching", "impact": "", "standard_ref": ""},
+            "provenance": make_provenance("bridge_matched_fets", "deterministic", _bridge_refs),
         })
 
     return bridge_circuits, matched, fet_pins
@@ -3150,6 +3196,7 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
             "pins": [],
             "recommendation": "",
             "report_context": {"section": "Discrete Semiconductors", "impact": "", "standard_ref": ""},
+            "provenance": make_provenance("transistor_mosfet", "deterministic", [ref]),
         }
         if topology:
             circuit["topology"] = topology
@@ -3223,6 +3270,7 @@ def detect_transistor_circuits(ctx: AnalysisContext, matched_fets: set, fet_pins
             "pins": [],
             "recommendation": "",
             "report_context": {"section": "Discrete Semiconductors", "impact": "", "standard_ref": ""},
+            "provenance": make_provenance("transistor_bjt", "deterministic", [ref]),
         }
         transistor_circuits.append(circuit)
 
@@ -3349,6 +3397,7 @@ def detect_led_drivers(ctx: AnalysisContext, transistor_circuits: list[dict]) ->
                     tc["pins"] = []
                     tc["recommendation"] = ""
                     tc["report_context"] = {"section": "LED Control", "impact": "", "standard_ref": ""}
+                    tc["provenance"] = make_provenance("led_driver_transistor", "deterministic", [tc["reference"], oc["reference"], dc["reference"]])
                     break
             if "led_driver" in tc:
                 break
@@ -3398,6 +3447,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", [ref]),
             })
 
     # 2. Regulator capacitor status
@@ -3428,6 +3478,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", [reg["ref"]]),
             })
 
     # 3. Single-pin signal nets
@@ -3472,6 +3523,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
             "pins": [],
             "recommendation": "",
             "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+            "provenance": make_provenance("obs_topology", "heuristic", [n["component"] for n in single_pin_nets]),
         })
 
     # 4. I2C bus pull-up status
@@ -3529,6 +3581,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", ic_refs),
             })
 
     # 5. Reset pin configuration
@@ -3579,6 +3632,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", [ref]),
             })
 
     # 6. Regulator feedback voltage estimation
@@ -3619,6 +3673,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
             obs["pins"] = []
             obs["recommendation"] = ""
             obs["report_context"] = {"section": "Design Observations", "impact": "", "standard_ref": ""}
+            obs["provenance"] = make_provenance("obs_topology", "heuristic", [reg["ref"]])
             design_observations.append(obs)
 
     # 7. Switching regulator bootstrap status
@@ -3644,6 +3699,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", [reg["ref"]]),
             })
 
     # 8. USB data line protection status
@@ -3679,6 +3735,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", _usb_devices),
             })
 
     # 9. Crystal load capacitance
@@ -3703,6 +3760,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
                 "pins": [],
                 "recommendation": "",
                 "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("obs_topology", "heuristic", [xtal["reference"]]),
             })
 
     # 10. Decoupling frequency coverage per rail
@@ -3732,6 +3790,7 @@ def detect_design_observations(ctx: AnalysisContext, results: dict) -> list[dict
             "pins": [],
             "recommendation": "",
             "report_context": {"section": "Design Observations", "impact": "", "standard_ref": ""},
+            "provenance": make_provenance("obs_topology", "heuristic", [c["ref"] for c in caps]),
         })
 
     return design_observations
@@ -3859,6 +3918,7 @@ def detect_solder_jumpers(ctx: AnalysisContext) -> list[dict]:
                 "impact": impact,
                 "standard_ref": "",
             },
+            "provenance": make_provenance("sj_symbol_footprint", "deterministic", [ref]),
         })
 
     return findings
@@ -3991,6 +4051,7 @@ def audit_rail_sources(ctx: AnalysisContext,
                                "dependent on bridged jumper."),
                     "standard_ref": "",
                 },
+                "provenance": make_provenance("rs_rail_audit", "deterministic", [j for _, j in bridged_sources]),
             })
             continue
 
@@ -4027,6 +4088,7 @@ def audit_rail_sources(ctx: AnalysisContext,
                                "user closes the solder jumper."),
                     "standard_ref": "",
                 },
+                "provenance": make_provenance("rs_rail_audit", "deterministic", [j for _, j in open_sources]),
             })
             continue
 
@@ -4060,6 +4122,7 @@ def audit_rail_sources(ctx: AnalysisContext,
                            "likely a wiring gap or missing PWR_FLAG."),
                 "standard_ref": "",
             },
+            "provenance": make_provenance("rs_rail_audit", "deterministic", []),
         })
 
     return findings
@@ -4136,6 +4199,7 @@ def detect_label_aliases(ctx: AnalysisContext) -> list[dict]:
                 "impact": "Maintainability — silent alias across future edits.",
                 "standard_ref": "",
             },
+            "provenance": make_provenance("lb_multi_label", "deterministic", []),
         })
     return findings
 
@@ -4340,6 +4404,7 @@ def audit_power_pin_dc_paths(ctx: AnalysisContext,
                     "impact": "IC supply floats DC; board will not run.",
                     "standard_ref": "",
                 },
+                "provenance": make_provenance("pp_dc_path_audit", "deterministic", [ref]),
             })
 
     return findings
