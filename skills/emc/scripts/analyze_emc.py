@@ -338,20 +338,23 @@ def main():
     if args.schema:
         schema = {
             "analyzer_type": "string — always 'emc'",
-            "standard": "string — target EMC standard (e.g. 'fcc-class-b')",
-            "analysis_time_s": "float",
+            "target_standard": "string — target EMC standard (e.g. 'fcc-class-b')",
+            "elapsed_s": "float — analysis wall-clock time",
             "summary": {
                 "total_findings": "int",
-                "by_severity": "{critical: int, high: int, medium: int, low: int, info: int}",
-                "risk_score": "float (0-100)",
-                "risk_level": "string (low|moderate|elevated|high|critical)",
                 "categories_checked": "int",
+                "active": "int — non-suppressed findings",
+                "suppressed": "int — suppressed findings count",
+                "critical": "int", "high": "int", "medium": "int", "low": "int", "info": "int",
+                "by_severity": "{error: int, warning: int, info: int}",
+                "emc_risk_score": "float (0-100)",
             },
-            "findings": "[{rule_id, category, severity, title, description, components: [string], nets: [string], recommendation, confidence}]",
+            "findings": "[{rule_id, category, severity, summary, description, components: [string], nets: [string], recommendation, confidence, evidence_source, report_context}]",
             "test_plan": "[{test: string, standard_clause, equipment, procedure, expected_result}]",
             "regulatory_coverage": "{standard: {applicable_clauses: int, covered: int, coverage_pct: float}}",
-            "category_breakdown": "{category: {count: int, max_severity}}",
-            "suppressed_findings": "[{rule_id, reason}] — from .kicad-happy.json suppressions",
+            "category_summary": "{category: {count: int, max_severity, severities: {}, suppressed_count: int}}",
+            "per_net_scores": "{net_name: {score: float, findings: int}}",
+            "board_info": "{layers: int, components: int, nets: int, switching_regulators: int, ...}",
         }
         print(json.dumps(schema, indent=2))
         sys.exit(0)

@@ -3811,7 +3811,7 @@ def detect_solder_jumpers(ctx: AnalysisContext) -> list[dict]:
             "detector": "detect_solder_jumpers",
             "rule_id": "SJ-DET",
             "severity": severity,
-            "confidence": "high",
+            "confidence": "deterministic",
             "evidence_source": "symbol_footprint",
             "category": "topology",
             "summary": summary,

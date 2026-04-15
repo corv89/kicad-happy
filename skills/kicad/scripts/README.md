@@ -212,7 +212,7 @@ JSON output                    -- {analyzer_type, summary, findings[], component
 Full support. S-expression format parsed by `sexp_parser.py`.
 
 ### Legacy `.sch` (KiCad 4/5)
-Line-based format. Components, wires, labels, power symbols parsed. **No pin-to-net mapping** — would require parsing `.lib` symbol library files to know pin positions, which isn't implemented. Net names come from labels and power symbols only.
+Line-based format. Components, wires, labels, power symbols parsed. `.lib` symbol libraries are parsed for pin definitions (`parse_legacy_lib()`), enabling pin-to-net mapping via geometric snapping. Library resolution searches cache-lib, sym-lib-table, LIBS: directives, and built-in defaults. Pin geometry uses a snapping radius (up to 12mm) when parsed symbols are incomplete — results are heuristic and carry reduced confidence compared to KiCad 6+ native pin data.
 
 ### Eagle `.sch`
 Not supported (binary and XML formats). Returns 0 components gracefully.
@@ -367,7 +367,7 @@ Location: `~/Projects/sandbox/batchtest/`
 
 ## Known Remaining Limitations
 
-- **Legacy pin mapping**: `.sch` files have no pin-to-net mapping (needs `.lib` parser)
+- **Legacy pin mapping**: `.sch` pin-to-net mapping uses heuristic geometry snapping (up to 12mm radius) when `.lib` symbols are incomplete or resolved from fallback sources
 - **Vout estimation**: Feedback divider Vout uses hardcoded Vref guesses (0.6, 0.8, 1.0, 1.22, 1.25V) without a component database
 - **Regulator output_rail**: Switching regulators sometimes show null output_rail when the power net is on the inductor output side
 - **Eagle files**: Not parseable — output 0 components

@@ -8264,8 +8264,8 @@ def build_hierarchy_context(target_path: str, root_path: str) -> tuple:
         (hierarchy_context_dict, root_symbol_instances_dict)
 
         hierarchy_context_dict contains:
-            root_schematic, target_sheet, target_instance_path,
-            sheets_in_project, cross_sheet_nets, project_power_rails,
+            root_schematic, target_sheet, sheets_in_project,
+            cross_sheet_nets, project_power_rails,
             reference_corrections_applied
 
         root_symbol_instances_dict is used by the caller to fix
@@ -8301,7 +8301,6 @@ def build_hierarchy_context(target_path: str, root_path: str) -> tuple:
         return {
             "root_schematic": Path(root_abs).name,
             "target_sheet": Path(target_abs).name,
-            "target_instance_path": "",
             "sheets_in_project": [Path(s).name for s in sheets_parsed],
             "cross_sheet_nets": {},
             "project_power_rails": [],
@@ -9008,7 +9007,6 @@ def _get_schema():
         "hierarchy_context": {
             "root_schematic": "string — root .kicad_sch filename",
             "target_sheet": "string — this sub-sheet filename",
-            "target_instance_path": "string — hierarchical path prefix",
             "sheets_in_project": "[string — all sheet filenames]",
             "cross_sheet_nets": "{label_name: {external_components: [{reference, value, lib_id, type, sheet}], is_power_rail: bool, connected_sheets: [string]}}",
             "project_power_rails": "[string — power rail net names]",

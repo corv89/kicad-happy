@@ -7,8 +7,8 @@ a self-describing dict consumable by kidoc, suggest-fixes, and lighter LLMs.
 from __future__ import annotations
 
 VALID_SEVERITIES = ('error', 'warning', 'info')
-VALID_CONFIDENCES = ('deterministic', 'heuristic')
-VALID_EVIDENCE_SOURCES = ('datasheet', 'topology', 'heuristic_rule')
+VALID_CONFIDENCES = ('deterministic', 'heuristic', 'datasheet-backed')
+VALID_EVIDENCE_SOURCES = ('datasheet', 'topology', 'heuristic_rule', 'symbol_footprint')
 VALID_FIX_TYPES = (
     'resistor_value_change', 'capacitor_value_change',
     'add_component', 'remove_component', 'swap_connection', 'add_protection',

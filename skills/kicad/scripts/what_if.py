@@ -932,7 +932,7 @@ def _scan_fixable(signal_analysis: dict) -> list:
                 "target ({err:.0f}% error, status={status})"
             ).format(ref=xref, actual=actual, target=target,
                      err=error_pct, status=status),
-            "confidence": "high",
+            "confidence": "deterministic",
             "category": "value_fix",
         })
 
