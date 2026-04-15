@@ -8,7 +8,10 @@ from __future__ import annotations
 
 VALID_SEVERITIES = ('error', 'warning', 'info')
 VALID_CONFIDENCES = ('deterministic', 'heuristic', 'datasheet-backed')
-VALID_EVIDENCE_SOURCES = ('datasheet', 'topology', 'heuristic_rule', 'symbol_footprint')
+VALID_EVIDENCE_SOURCES = (
+    'datasheet', 'topology', 'heuristic_rule', 'symbol_footprint',
+    'bom', 'geometry', 'api_lookup',
+)
 VALID_FIX_TYPES = (
     'resistor_value_change', 'capacitor_value_change',
     'add_component', 'remove_component', 'swap_connection', 'add_protection',
@@ -41,6 +44,18 @@ def make_finding(
 
     Extra kwargs are merged into the finding (e.g., domain-specific data).
     """
+    if severity not in VALID_SEVERITIES:
+        raise ValueError(
+            f"make_finding: invalid severity {severity!r} "
+            f"(valid: {VALID_SEVERITIES})")
+    if confidence not in VALID_CONFIDENCES:
+        raise ValueError(
+            f"make_finding: invalid confidence {confidence!r} "
+            f"(valid: {VALID_CONFIDENCES})")
+    if evidence_source not in VALID_EVIDENCE_SOURCES:
+        raise ValueError(
+            f"make_finding: invalid evidence_source {evidence_source!r} "
+            f"(valid: {VALID_EVIDENCE_SOURCES})")
     finding = {
         'detector': detector,
         'rule_id': rule_id,
@@ -84,6 +99,10 @@ def make_provenance(evidence: str, confidence: str = 'heuristic',
         Provenance dict with fields: evidence, confidence,
         claimed_components, excluded_by, suppressed_candidates.
     """
+    if confidence not in VALID_CONFIDENCES:
+        raise ValueError(
+            f"make_provenance: invalid confidence {confidence!r} "
+            f"(valid: {VALID_CONFIDENCES})")
     return {
         'evidence': evidence,
         'confidence': confidence,
