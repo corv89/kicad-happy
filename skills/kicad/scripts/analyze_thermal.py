@@ -475,6 +475,8 @@ def _generate_findings(assessments: list) -> list:
         pdiss = a["pdiss_w"]
         pkg = a["package"]
         confidence = _thermal_confidence(a)
+        ev_source = ("datasheet" if a.get("rtheta_ja_source") == "package_table"
+                     else "heuristic_rule")
 
         label = f"{ref} ({val})" if val else ref
 
@@ -500,7 +502,7 @@ def _generate_findings(assessments: list) -> list:
                 "summary": f"{label} estimated Tj {tj:.0f}°C exceeds abs max {tj_max:.0f}°C",
                 "nets": [],
                 "pins": [],
-                "evidence_source": confidence,
+                "evidence_source": ev_source,
                 "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
         elif margin < 15:
@@ -526,7 +528,7 @@ def _generate_findings(assessments: list) -> list:
                 "summary": f"{label} estimated Tj {tj:.0f}°C — only {margin:.0f}°C margin to abs max",
                 "nets": [],
                 "pins": [],
-                "evidence_source": confidence,
+                "evidence_source": ev_source,
                 "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
         elif tj > 85:
@@ -552,7 +554,7 @@ def _generate_findings(assessments: list) -> list:
                 "summary": f"{label} estimated Tj {tj:.0f}°C may affect nearby components",
                 "nets": [],
                 "pins": [],
-                "evidence_source": confidence,
+                "evidence_source": ev_source,
                 "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
         elif pdiss > 0.1:
@@ -572,7 +574,7 @@ def _generate_findings(assessments: list) -> list:
                 "summary": f"{label} Tj {tj:.0f}°C, margin {margin:.0f}°C",
                 "nets": [],
                 "pins": [],
-                "evidence_source": confidence,
+                "evidence_source": ev_source,
                 "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
 
@@ -602,7 +604,7 @@ def _generate_findings(assessments: list) -> list:
                 "summary": f"{label} dissipates {a['pdiss_w']:.2f}W with no thermal vias",
                 "nets": [],
                 "pins": [],
-                "evidence_source": "deterministic",
+                "evidence_source": "geometry",
                 "report_context": {"section": "Thermal Safety", "impact": "Component reliability", "standard_ref": ""},
             })
 
@@ -678,7 +680,7 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
                                 f"(Tj={hot['tj_estimated_c']:.0f}°C)"),
                     "nets": [],
                     "pins": [],
-                    "evidence_source": "deterministic",
+                    "evidence_source": "geometry",
                     "report_context": {"section": "Thermal Proximity", "impact": "Component reliability", "standard_ref": ""},
                 })
             else:
@@ -705,7 +707,7 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
                                 f"{hot_label} (Tj={hot['tj_estimated_c']:.0f}°C)"),
                     "nets": [],
                     "pins": [],
-                    "evidence_source": "deterministic",
+                    "evidence_source": "geometry",
                     "report_context": {"section": "Thermal Proximity", "impact": "Component reliability", "standard_ref": ""},
                 })
 
