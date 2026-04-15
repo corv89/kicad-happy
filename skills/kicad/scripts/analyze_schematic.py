@@ -2453,7 +2453,7 @@ def _parse_legacy_lib(path: str) -> dict:
     return symbols
 
 
-def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
+def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> tuple:
     """Find and parse .lib files for legacy schematics.
 
     Args:
@@ -2464,10 +2464,22 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
     1. Look for *-cache.lib alongside the root .sch file (self-contained, preferred)
     2. Parse LIBS: directives, search for each .lib in project directory tree
     3. Fall back to built-in defaults for standard KiCad symbols
+
+    Returns:
+        (symbols, resolution_info) where resolution_info describes which strategy
+        was used and how many symbols came from parsed vs built-in sources.
     """
     base = Path(sch_path)
     base_dir = base.parent
     stem = base.stem
+
+    resolution_info = {
+        "cache_lib_found": False,
+        "sym_lib_table_used": False,
+        "libs_directive_used": False,
+        "builtin_fallback_count": 0,
+        "parsed_lib_count": 0,
+    }
 
     # Strategy 1: cache lib — if present, it contains ALL symbols
     cache_path = base_dir / f"{stem}-cache.lib"
@@ -2481,7 +2493,10 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
                     "keywords": "", "is_power": False, "ki_fp_filters": "",
                     "alternates": None,
                 }
-        return symbols
+        resolution_info["cache_lib_found"] = True
+        resolution_info["parsed_lib_count"] = max(0, len(symbols) - len(_STANDARD_LIB_PINS))
+        resolution_info["builtin_fallback_count"] = len(_STANDARD_LIB_PINS)
+        return symbols, resolution_info
 
     # Strategy 2.5: Parse sym-lib-table for legacy library paths (KH-141)
     # KiCad 5 file version 4 uses sym-lib-table instead of LIBS: header directives
@@ -2518,7 +2533,10 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
                         "keywords": "", "is_power": False, "ki_fp_filters": "",
                         "alternates": None,
                     }
-            return slt_symbols
+            resolution_info["sym_lib_table_used"] = True
+            resolution_info["parsed_lib_count"] = max(0, len(slt_symbols) - len(_STANDARD_LIB_PINS))
+            resolution_info["builtin_fallback_count"] = len(_STANDARD_LIB_PINS)
+            return slt_symbols, resolution_info
 
     # Strategy 2: collect LIBS: directives from all parsed sheets
     lib_names = []
@@ -2578,7 +2596,10 @@ def _resolve_legacy_libs(sch_path: str, all_sch_lines: dict) -> dict:
                 "alternates": None,
             }
 
-    return symbols
+    resolution_info["libs_directive_used"] = bool(lib_names)
+    resolution_info["parsed_lib_count"] = max(0, len(symbols) - len(_STANDARD_LIB_PINS))
+    resolution_info["builtin_fallback_count"] = len(_STANDARD_LIB_PINS)
+    return symbols, resolution_info
 
 
 def _snap_pins_to_wires(components: list[dict], wires: list[dict]) -> None:
@@ -2656,6 +2677,7 @@ def _snap_pins_to_wires(components: list[dict], wires: list[dict]) -> None:
             if best_pt is not None:
                 pin["x"] = _snap_mil(best_pt[0])
                 pin["y"] = _snap_mil(best_pt[1])
+                comp["_pin_source"] = "snapped_to_wire"
                 claimed.add((round(pin["x"] / EPS) * EPS, round(pin["y"] / EPS) * EPS))
 
 
@@ -2960,7 +2982,7 @@ def parse_legacy_schematic(path: str) -> dict:
 
     # Resolve .lib files and parse pin data
     root_path = str(Path(path).resolve())
-    lib_symbols = _resolve_legacy_libs(root_path, all_sch_lines)
+    lib_symbols, _legacy_resolution = _resolve_legacy_libs(root_path, all_sch_lines)
 
     # Build a reverse lookup for cache lib names: bare_symbol -> full cache name.
     # Cache libs store "Library_Symbol" while schematics reference bare "Symbol"
@@ -2988,6 +3010,7 @@ def parse_legacy_schematic(path: str) -> dict:
     for comp in all_components:
         lib_id = comp.get("lib_id", "")
         sym_def = lib_symbols.get(lib_id)
+        _pin_src = "parsed_lib"
         if not sym_def and ":" in lib_id:
             # V4: try underscore form (cache lib naming) and bare symbol name
             bare_name = lib_id.split(":", 1)[1]
@@ -3001,8 +3024,10 @@ def parse_legacy_schematic(path: str) -> dict:
             cache_key = _cache_suffix_map.get(bare_name)
             if cache_key:
                 sym_def = lib_symbols.get(cache_key)
+                _pin_src = "suffix_match"
         if sym_def:
             comp["pins"] = compute_pin_positions(comp, {lib_id: sym_def})
+            comp["_pin_source"] = _pin_src
             # KH-216: Store unit-valid pin numbers for pin_nets filtering
             comp["_unit_pins"] = {p["number"] for p in comp["pins"]}
             # Snap pin positions to mil grid — eliminates floating-point drift
@@ -3125,6 +3150,15 @@ def parse_legacy_schematic(path: str) -> dict:
         else:
             sev_counts["info"] += 1
 
+    # Legacy analysis quality summary (KH-271)
+    _pin_source_counts = {"parsed_lib": 0, "suffix_match": 0, "snapped_to_wire": 0, "unresolved": 0}
+    for c in real_components:
+        src = c.get("_pin_source", "unresolved")
+        if src in _pin_source_counts:
+            _pin_source_counts[src] += 1
+        else:
+            _pin_source_counts[src] = 1
+
     result = {
         "analyzer_type": "schematic",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
@@ -3144,6 +3178,11 @@ def parse_legacy_schematic(path: str) -> dict:
         "no_connects": all_no_connects,
         "power_symbols": power_symbols,
         "annotation_issues": annotation_issues,
+        "legacy_analysis_quality": {
+            "is_legacy_schematic": True,
+            "library_resolution": _legacy_resolution,
+            "pin_source_coverage": _pin_source_counts,
+        },
     }
     # Promote dict values from signal_analysis to top level (rail_voltages, etc.)
     result.update(top_level_dicts)

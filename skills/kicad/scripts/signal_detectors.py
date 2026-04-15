@@ -1802,6 +1802,10 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
         if fixed_source == "fixed_suffix" and fixed_vout is not None:
             reg_info["estimated_vout"] = round(fixed_vout, 3)
             reg_info["vref_source"] = "fixed_suffix"
+            reg_info["_estimated_vout_provenance"] = {
+                "source": "fixed_suffix",
+                "confidence": "deterministic",
+            }
             if vout_pin:
                 reg_info["output_rail"] = vout_pin[1]
 
@@ -1824,6 +1828,10 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                         v_out = known_vref / ratio if ratio > 0 else 0
                         if 0.5 < v_out < 60:
                             reg_info["estimated_vout"] = round(v_out, 3)
+                            reg_info["_estimated_vout_provenance"] = {
+                                "source": "divider_plus_" + reg_info.get("vref_source", "lookup"),
+                                "confidence": "deterministic" if reg_info.get("vref_source") == "datasheet" else "heuristic",
+                            }
                             reg_info["assumed_vref"] = known_vref
                             reg_info["vref_source"] = "lookup"
                             reg_info["feedback_divider"] = {
@@ -1837,6 +1845,10 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                             v_out = vref / ratio if ratio > 0 else 0
                             if 0.5 < v_out < 60:
                                 reg_info["estimated_vout"] = round(v_out, 3)
+                                reg_info["_estimated_vout_provenance"] = {
+                                    "source": "divider_plus_" + reg_info.get("vref_source", "lookup"),
+                                    "confidence": "deterministic" if reg_info.get("vref_source") == "datasheet" else "heuristic",
+                                }
                                 reg_info["assumed_vref"] = vref
                                 reg_info["vref_source"] = "heuristic"
                                 reg_info["feedback_divider"] = {
@@ -2045,6 +2057,11 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     "dropout_V": round(dropout, 3),
                     "estimated_iout_A": round(estimated_iout_a, 3),
                     "estimated_pdiss_W": round(dropout * estimated_iout_a, 3),
+                    "_iout_provenance": {
+                        "source": "output_cap_proxy",
+                        "confidence": "weak",
+                        "basis": f"total_cout_{total_cout*1e6:.0f}uF",
+                    },
                 }
         elif topology == "switching" and vout and vout > 0:
             vin = _infer_rail_voltage(vin_rail)
@@ -2093,6 +2110,16 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     "estimated_pdiss_W": round(pdiss, 3),
                     "topology": "switching",
                     "sub_topology": sw_type,
+                    "_iout_provenance": {
+                        "source": "output_cap_proxy",
+                        "confidence": "weak",
+                        "basis": f"total_cout_{total_cout*1e6:.0f}uF",
+                    },
+                    "_pdiss_provenance": {
+                        "source": "topology_default_efficiency",
+                        "confidence": "weak",
+                        "basis": f"efficiency_{efficiency:.0%}_assumed",
+                    },
                 }
 
     return power_regulators
