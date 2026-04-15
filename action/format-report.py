@@ -513,7 +513,7 @@ def format_report(schematic_path, pcb_path, spice_path, emc_path,
             issues = finding.get("issues", []) or []
             checks = finding.get("checks", {})
             devices = finding.get("devices", [])
-            dev_names = [d.get('reference', str(d)) if isinstance(d, dict) else str(d)
+            dev_names = [d.get('reference', d.get('ref', str(d))) if isinstance(d, dict) else str(d)
                          for d in devices[:4]]
             dev_str = f" ({', '.join(dev_names)})" if dev_names else ""
 
