@@ -3514,6 +3514,7 @@ def _map_power_domains(ctx: AnalysisContext) -> dict:
                 "value": _fallback_value[ref],
                 "power_rails": sorted(rails),
                 "io_rails": None,
+                "_inferred_from": "pin_name_match",
             }
 
     # Group ICs by power domain

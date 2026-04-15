@@ -145,6 +145,8 @@ def _get_datasheet_thermal(mpn: str, extract_dir: str) -> dict:
     """Look up thermal data from datasheet extraction cache.
 
     Returns dict with optional keys: tj_max_c, temp_max_c.
+    Rejects extractions with quality score < 6.0 (matches the trust
+    gate used by datasheet_verify.py and spice_spec_fetcher.py).
     """
     if not mpn or not extract_dir:
         return {}
@@ -158,6 +160,12 @@ def _get_datasheet_thermal(mpn: str, extract_dir: str) -> dict:
         with open(path) as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
+        return {}
+
+    # Trust gate: reject low-quality extractions (matches
+    # datasheet_verify.py and spice_spec_fetcher.py threshold)
+    meta = data.get("meta", {})
+    if meta.get("extraction_score", 0) < 6.0:
         return {}
 
     result = {}
@@ -209,6 +217,7 @@ def _estimate_all_power_dissipation(schematic: dict) -> list:
                     "pdiss_source": (f"({pdiss.get('vin_estimated_V', '?')}V - "
                                      f"{pdiss.get('vout_V', '?')}V) × "
                                      f"{pdiss.get('estimated_iout_A', '?')}A"),
+                    "pdiss_confidence": "heuristic",
                     "vin_v": pdiss.get("vin_estimated_V"),
                     "vout_v": pdiss.get("vout_V"),
                     "iout_a": pdiss.get("estimated_iout_A"),
@@ -248,6 +257,7 @@ def _estimate_all_power_dissipation(schematic: dict) -> list:
                 "type": "switching_reg",
                 "pdiss_w": round(p_loss, 4),
                 "pdiss_source": f"{vout}V × {iout_a:.3f}A × (1/{eta:.0%} - 1)",
+                "pdiss_confidence": "heuristic",
                 "vout_v": vout,
                 "iout_a": iout_a,
             })
@@ -276,6 +286,7 @@ def _estimate_all_power_dissipation(schematic: dict) -> list:
                 "type": "shunt_resistor",
                 "pdiss_w": round(p_w, 4),
                 "pdiss_source": f"{i_max:.3f}A² × {r_ohms}Ω",
+                "pdiss_confidence": "deterministic",
             })
             seen_refs.add(ref)
 
@@ -405,6 +416,7 @@ def _compute_junction_temps(power_comps: list, pcb: dict,
             "component_type": comp["type"],
             "pdiss_w": pdiss,
             "pdiss_source": comp.get("pdiss_source", ""),
+            "pdiss_confidence": comp.get("pdiss_confidence", "heuristic"),
             "package": pkg_name,
             "rtheta_ja_raw": round(pkg_rtheta, 1),
             "rtheta_ja_source": rtheta_source,
