@@ -320,6 +320,78 @@ def check_emc(emc_data: Optional[Dict]) -> List[Dict]:
                         f"EMC score {score}/100 — no critical findings")]
 
 
+def _compute_trust_posture(sch, pcb, thermal_data, emc_data):
+    """Aggregate trust_summary from all analyzer inputs into a gate posture.
+
+    Returns a dict with overall trust_level, per-analyzer breakdown,
+    aggregate confidence counts, and evidence blockers.
+    """
+    sources = []
+    if sch:
+        sources.append(('schematic', sch.get('trust_summary')))
+    if pcb:
+        sources.append(('pcb', pcb.get('trust_summary')))
+    if thermal_data:
+        sources.append(('thermal', thermal_data.get('trust_summary')))
+    if emc_data:
+        sources.append(('emc', emc_data.get('trust_summary')))
+
+    sources = [(name, ts) for name, ts in sources if ts]
+    if not sources:
+        return None
+
+    total = 0
+    det = 0
+    heu = 0
+    ds_backed = 0
+    unknown = 0
+    for _, ts in sources:
+        total += ts.get('total_findings', 0)
+        bc = ts.get('by_confidence', {})
+        det += bc.get('deterministic', 0)
+        heu += bc.get('heuristic', 0)
+        ds_backed += bc.get('datasheet-backed', 0)
+        unknown += ts.get('unknown_confidence', 0)
+
+    levels = [ts.get('trust_level', 'high') for _, ts in sources]
+    if 'low' in levels:
+        overall = 'low'
+    elif 'mixed' in levels:
+        overall = 'mixed'
+    else:
+        overall = 'high'
+
+    blockers = []
+    if unknown > 0:
+        blockers.append(f"{unknown} findings with unknown confidence")
+    if sch:
+        bom_cov = (sch.get('trust_summary') or {}).get('bom_coverage')
+        if bom_cov and bom_cov.get('mpn_pct', 100) < 50:
+            blockers.append(f"Low MPN coverage ({bom_cov['mpn_pct']:.0f}%)")
+
+    prov_values = [ts.get('provenance_coverage_pct', 0) for _, ts in sources
+                   if ts.get('total_findings', 0) > 0]
+    avg_prov = round(sum(prov_values) / len(prov_values), 1) if prov_values else 0.0
+
+    posture = {
+        'trust_level': overall,
+        'total_findings': total,
+        'by_confidence': {
+            'deterministic': det,
+            'heuristic': heu,
+            'datasheet-backed': ds_backed,
+        },
+        'provenance_coverage_pct': avg_prov,
+        'per_analyzer': {name: ts.get('trust_level', '?') for name, ts in sources},
+    }
+    if unknown:
+        posture['unknown_confidence'] = unknown
+    if blockers:
+        posture['evidence_blockers'] = blockers
+
+    return posture
+
+
 # ---------------------------------------------------------------------------
 # Gate orchestrator
 # ---------------------------------------------------------------------------
@@ -365,7 +437,9 @@ def run_gate(sch: Dict, pcb: Dict,
 
     elapsed = time.monotonic() - t0
 
-    return {
+    trust = _compute_trust_posture(sch, pcb, thermal_data, emc_data)
+
+    result = {
         "gate_version": GATE_VERSION,
         "overall_status": overall,
         "summary": {
@@ -375,6 +449,9 @@ def run_gate(sch: Dict, pcb: Dict,
         "checks": all_checks,
         "elapsed_s": round(elapsed, 3),
     }
+    if trust:
+        result["trust_posture"] = trust
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +486,27 @@ def format_text_report(result: Dict) -> str:
     lines.append(f"  {summary['pass']} pass  {summary['warn']} warn  "
                  f"{summary['fail']} fail  {summary['skip']} skip")
     lines.append("")
+
+    trust = result.get("trust_posture")
+    if trust:
+        level = trust["trust_level"]
+        bc = trust["by_confidence"]
+        total = trust["total_findings"]
+        if total > 0:
+            det_pct = round(100 * bc["deterministic"] / total)
+            heu_pct = round(100 * bc["heuristic"] / total)
+        else:
+            det_pct = heu_pct = 0
+        lines.append(f"  Trust: {level.upper()} — "
+                     f"{det_pct}% deterministic, {heu_pct}% heuristic "
+                     f"({total} findings)")
+        prov = trust.get("provenance_coverage_pct", 0)
+        lines.append(f"  Provenance: {prov}% of findings carry detector provenance")
+        blockers = trust.get("evidence_blockers", [])
+        if blockers:
+            for b in blockers:
+                lines.append(f"  Evidence blocker: {b}")
+        lines.append("")
 
     # Group by category
     categories: Dict[str, List] = {}
