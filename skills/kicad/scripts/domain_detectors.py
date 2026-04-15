@@ -5480,6 +5480,7 @@ def audit_connector_ground_distribution(ctx: AnalysisContext) -> list[dict]:
                 "pins": [],
                 "recommendation": "Add ground pin(s) for EMI control.",
                 "report_context": {"section": "Connector Ground", "impact": "", "standard_ref": ""},
+                "provenance": make_provenance("cg_ground_audit", "deterministic", claimed_components=[ref]),
             })
         else:
             ratio = signal_count / max(gnd_count, 1)
@@ -5504,6 +5505,7 @@ def audit_connector_ground_distribution(ctx: AnalysisContext) -> list[dict]:
                     "pins": [],
                     "recommendation": "Add more ground pins (target \u22643 signal pins per ground).",
                     "report_context": {"section": "Connector Ground", "impact": "", "standard_ref": ""},
+                    "provenance": make_provenance("cg_ground_audit", "deterministic", claimed_components=[ref]),
                 })
     return results
 

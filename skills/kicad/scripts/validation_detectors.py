@@ -19,7 +19,7 @@ from detector_helpers import (
     match_ic_keywords,
 )
 from signal_detectors import _get_net_components
-from finding_schema import make_finding
+from finding_schema import make_finding, make_provenance
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +241,7 @@ def validate_pullups(ctx: AnalysisContext) -> list[dict]:
                         },
                         report_section='Signal Integrity',
                         impact='Pin may float or bus may not function without pull-up',
+                        provenance=make_provenance('pu_missing_pullup', 'deterministic'),
                     ))
                 else:
                     # Check pull-up value range
@@ -264,6 +265,7 @@ def validate_pullups(ctx: AnalysisContext) -> list[dict]:
                                     components=[ref, pu['ref']],
                                     nets=[net],
                                     recommendation=f'Consider increasing {pu["ref"]} to 4.7k-10k.',
+                                    provenance=make_provenance('pu_value_check', 'deterministic'),
                                 ))
                             elif pu['ohms'] > _PULLUP_MAX_OHMS:
                                 findings.append(make_finding(
@@ -283,6 +285,7 @@ def validate_pullups(ctx: AnalysisContext) -> list[dict]:
                                     components=[ref, pu['ref']],
                                     nets=[net],
                                     recommendation=f'Consider decreasing {pu["ref"]} to 4.7k-10k.',
+                                    provenance=make_provenance('pu_weak_pullup', 'deterministic'),
                                 ))
 
             if needs_pulldown:
@@ -313,6 +316,7 @@ def validate_pullups(ctx: AnalysisContext) -> list[dict]:
                         },
                         report_section='Signal Integrity',
                         impact='Pin floats at startup, undefined behavior',
+                        provenance=make_provenance('pu_missing_pullup', 'deterministic'),
                     ))
 
     return findings
@@ -454,6 +458,7 @@ def validate_voltage_levels(ctx: AnalysisContext, level_shifters: list[dict] | N
             },
             report_section='Signal Integrity',
             impact='Risk of damage or unreliable logic levels',
+            provenance=make_provenance('vm_rail_mismatch', 'deterministic'),
         ))
 
     return findings
@@ -545,6 +550,7 @@ def validate_i2c_bus(ctx: AnalysisContext) -> list[dict]:
                 recommendation='Add a 4.7k pull-up resistor from SDA to VDD.',
                 fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '4.7k', 'net_from': sda, 'net_to': '<VDD>'}], 'basis': 'I2C spec requires pull-ups on SDA'},
                 standard_ref='I2C specification UM10204 section 3.1.1', impact='I2C bus non-functional',
+                provenance=make_provenance('pr_i2c_spec', 'deterministic'),
             ))
 
         scl_pullups = _find_pullups_on_net(ctx, scl, resistor_nets, net_to_resistors)
@@ -558,6 +564,7 @@ def validate_i2c_bus(ctx: AnalysisContext) -> list[dict]:
                 recommendation='Add a 4.7k pull-up resistor from SCL to VDD.',
                 fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '4.7k', 'net_from': scl, 'net_to': '<VDD>'}], 'basis': 'I2C spec requires pull-ups on SCL'},
                 standard_ref='I2C specification UM10204 section 3.1.1', impact='I2C bus non-functional',
+                provenance=make_provenance('pr_i2c_spec', 'deterministic'),
             ))
 
         for net_label, pullups in [('SDA', sda_pullups), ('SCL', scl_pullups)]:
@@ -574,6 +581,7 @@ def validate_i2c_bus(ctx: AnalysisContext) -> list[dict]:
                             recommendation=f'Use a pull-up in the {low}-{high} ohm range.',
                             fix_params={'type': 'resistor_value_change', 'component': pu['ref'], 'current_value': pu['ohms'], 'target_range': [low, high], 'suggested_value': 4700},
                             standard_ref='I2C specification UM10204 Table 10',
+                            provenance=make_provenance('pr_i2c_spec', 'deterministic'),
                         ))
 
         # Address conflict: flag multiple same-IC-type on same bus
@@ -594,6 +602,7 @@ def validate_i2c_bus(ctx: AnalysisContext) -> list[dict]:
                         components=refs_with_val, nets=[bus['sda_net'], bus['scl_net']],
                         recommendation='Verify address pin configurations (A0/A1/A2) differ.',
                         impact='Address conflict causes bus corruption',
+                        provenance=make_provenance('pr_i2c_spec', 'deterministic'),
                     ))
 
     return findings
@@ -622,6 +631,7 @@ def validate_spi_bus(ctx: AnalysisContext) -> list[dict]:
                     recommendation=f'Add a 10k pull-up on {cs_net}.',
                     fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '10k', 'net_from': cs_net, 'net_to': '<VDD>'}], 'basis': 'SPI CS should be pulled high when not driven'},
                     impact='Device may be selected during reset causing bus contention',
+                    provenance=make_provenance('pr_spi_spec', 'deterministic'),
                 ))
     return findings
 
@@ -666,6 +676,7 @@ def validate_can_bus(ctx: AnalysisContext) -> list[dict]:
                 recommendation=f'Add a 120R resistor between {canh} and {canl} if at bus end.',
                 fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '120', 'net_from': canh, 'net_to': canl}], 'basis': 'ISO 11898 requires 120R termination'},
                 standard_ref='ISO 11898-2 section 7.3', impact='Bus reflections cause communication errors',
+                provenance=make_provenance('pr_can_spec', 'deterministic'),
             ))
     return findings
 
@@ -703,6 +714,7 @@ def validate_usb_bus(ctx: AnalysisContext) -> list[dict]:
                     recommendation=f'Add a 22R series resistor on {net_label} near the connector.',
                     fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '22', 'net_from': net, 'net_to': f'{net}_MCU'}], 'basis': 'USB 2.0 recommends 22R series termination'},
                     standard_ref='USB 2.0 specification section 7.1.2',
+                    provenance=make_provenance('pr_uart_spec', 'deterministic'),
                 ))
     return findings
 
@@ -789,6 +801,7 @@ def validate_power_sequencing(
                     components=list(set(cycle)),
                     recommendation='Break the cycle by connecting one enable pin to an always-on rail.',
                     impact='System fails to power on', report_section='Power Integrity',
+                    provenance=make_provenance('ps_sequence_check', 'heuristic'),
                 ))
 
     for reg in power_regulators:
@@ -816,6 +829,7 @@ def validate_power_sequencing(
                 components=[ref] + sensitive_loads[:3], nets=[output_rail],
                 recommendation=f'Connect {ref} PG output to downstream regulator enable pins.',
                 report_section='Power Integrity', impact='Downstream devices may latch up or boot incorrectly',
+                provenance=make_provenance('ps_sequence_check', 'heuristic'),
             ))
 
     return findings
@@ -902,6 +916,7 @@ def validate_led_resistors(ctx: AnalysisContext) -> list[dict]:
                     recommendation='Add a current-limiting resistor (typically 330R-1k for 3.3V).',
                     fix_params={'type': 'add_component', 'components': [{'type': 'resistor', 'value': '330', 'net_from': n1, 'net_to': n2}], 'basis': 'LED requires series current limiting'},
                     impact='LED overcurrent causes failure',
+                    provenance=make_provenance('lr_resistor_check', 'deterministic'),
                 ))
             continue
 
@@ -924,6 +939,7 @@ def validate_led_resistors(ctx: AnalysisContext) -> list[dict]:
                     recommendation=f'Increase {sr["ref"]} to {(rail_v - vf) / (_LED_IF_RECOMMENDED_MA / 1000):.0f}R for ~{_LED_IF_RECOMMENDED_MA}mA.',
                     fix_params={'type': 'resistor_value_change', 'component': sr['ref'], 'current_value': sr['ohms'], 'target_metric': 'led_current_mA', 'target_value': _LED_IF_RECOMMENDED_MA, 'actual_value': current_ma, 'formula': f'R = (Vrail - Vf) / Iled = ({rail_v} - {vf}) / {_LED_IF_RECOMMENDED_MA/1000}'},
                     impact='LED overcurrent reduces lifespan',
+                    provenance=make_provenance('lr_resistor_check', 'deterministic'),
                 ))
 
             power_w = (current_ma / 1000) ** 2 * sr['ohms']
@@ -935,6 +951,7 @@ def validate_led_resistors(ctx: AnalysisContext) -> list[dict]:
                     severity='info', confidence='heuristic', evidence_source='topology',
                     components=[sr['ref']],
                     recommendation='Use a larger package resistor or increase resistance.',
+                    provenance=make_provenance('lr_resistor_check', 'deterministic'),
                 ))
 
     return findings
@@ -987,6 +1004,7 @@ def validate_feedback_stability(
                 severity='info', confidence='heuristic', evidence_source='topology',
                 components=[ref, fb_div['r_top'].get('ref', ''), fb_div['r_bottom'].get('ref', '')],
                 recommendation=f'Increase divider resistors to achieve >{_FB_IMPEDANCE_MIN} ohm parallel impedance.',
+                provenance=make_provenance('fs_stability_check', 'heuristic'),
             ))
 
         if parallel_impedance > _FB_IMPEDANCE_MAX:
@@ -997,6 +1015,7 @@ def validate_feedback_stability(
                 severity='warning', confidence='heuristic', evidence_source='topology',
                 components=[ref, fb_div['r_top'].get('ref', ''), fb_div['r_bottom'].get('ref', '')],
                 recommendation=f'Decrease divider resistors to below {_FB_IMPEDANCE_MAX/1000:.0f}k parallel impedance.',
+                provenance=make_provenance('fs_stability_check', 'heuristic'),
             ))
 
         comp = ctx.comp_lookup.get(ref)
@@ -1017,6 +1036,7 @@ def validate_feedback_stability(
                         recommendation=f'Add a compensation network per {comp.get("value", "")} datasheet.',
                         fix_params={'type': 'add_component', 'components': [{'type': 'capacitor', 'value': '10n', 'net_from': check_net, 'net_to': 'GND'}], 'basis': f'{comp.get("value", "")} requires external compensation'},
                         impact='Regulator may oscillate or have poor transient response',
+                        provenance=make_provenance('fs_stability_check', 'heuristic'),
                     ))
 
     return findings
