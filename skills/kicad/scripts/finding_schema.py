@@ -67,6 +67,32 @@ def make_finding(
     return finding
 
 
+def make_provenance(evidence: str, confidence: str = 'heuristic',
+                    claimed_components: list | None = None) -> dict:
+    """Create a provenance dict for a detector output.
+
+    Attaches to detection dicts to record how a detection was made.
+    Part of the KH-263 detector provenance contract.
+
+    Args:
+        evidence: Detection method string. Convention: {detector_short}_{method}.
+        confidence: One of VALID_CONFIDENCES (deterministic, heuristic,
+            datasheet-backed).
+        claimed_components: Component references this detection owns.
+
+    Returns:
+        Provenance dict with fields: evidence, confidence,
+        claimed_components, excluded_by, suppressed_candidates.
+    """
+    return {
+        'evidence': evidence,
+        'confidence': confidence,
+        'claimed_components': claimed_components or [],
+        'excluded_by': [],
+        'suppressed_candidates': [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Detector name constants — avoids string typos across consumers
 # ---------------------------------------------------------------------------
