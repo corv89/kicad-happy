@@ -1,5 +1,10 @@
 # ⚡ kicad-happy
 
+[![CI](https://github.com/aklofas/kicad-happy/actions/workflows/ci.yml/badge.svg)](https://github.com/aklofas/kicad-happy/actions/workflows/ci.yml)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Mentioned in Awesome KiCad](https://awesome.re/mentioned-badge.svg)](https://github.com/joanbono/awesome-kicad)
+
 AI-powered design review for KiCad. Analyzes schematics, PCB layouts, and Gerbers. Catches real bugs before you order boards.
 
 Works with **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex](https://github.com/openai/codex)**, as a **GitHub Action** for automated PR reviews, or as standalone Python scripts you can run anywhere.
