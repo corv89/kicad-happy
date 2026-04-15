@@ -399,12 +399,10 @@ def main(argv: "list[str] | None" = None) -> int:  # noqa: C901 (intentionally l
                 "accepted: high/critical/error, warning/medium/warn, info/low"
             )
 
-    # Parse --rule-id into a list
     rule_ids: "list[str] | None" = None
     if args.rule_id:
         rule_ids = [r.strip() for r in args.rule_id.split(",") if r.strip()]
 
-    # Load and filter
     all_findings = load_findings(args.analysis_json)
     findings = filter_findings(all_findings, args.severity, rule_ids)
 
@@ -494,24 +492,32 @@ def main(argv: "list[str] | None" = None) -> int:  # noqa: C901 (intentionally l
     # -----------------------------------------------------------------------
     # --create mode
     # -----------------------------------------------------------------------
+
+    # Batch dedup: query once per unique rule_id, not once per finding
+    unique_rule_ids = {f.get("rule_id", "") for f in findings}
+    existing_by_rule = {
+        rid: find_existing_issues(args.repo, rid) for rid in unique_rule_ids if rid
+    }
+
     created = 0
     skipped = 0
     errors = 0
 
     for finding in findings:
         rule_id = finding.get("rule_id", "")
-        title = format_issue_title(finding)
-        body = format_issue_body(finding)
-        labels = issue_labels(finding, args.labels)
 
-        # Dedup check
-        existing = find_existing_issues(args.repo, rule_id)
+        # Dedup check (uses pre-fetched results)
+        existing = existing_by_rule.get(rule_id, [])
         if existing:
             nums = ", ".join(f"#{e['number']}" for e in existing)
-            print(f"SKIP  [{rule_id}] {title[:60]}  (already open: {nums})")
+            summary = (finding.get("summary") or "")[:60]
+            print(f"SKIP  [{rule_id}] {summary}  (already open: {nums})")
             skipped += 1
             continue
 
+        title = format_issue_title(finding)
+        body = format_issue_body(finding)
+        labels = issue_labels(finding, args.labels)
         url = create_issue(
             args.repo, title, body, labels, args.assignee, args.milestone
         )

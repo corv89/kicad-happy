@@ -889,7 +889,7 @@ def _scan_fixable(signal_analysis: dict) -> list:
         if not det_type:
             continue
         ref_reg = reg.get("ref", reg.get("reference", ""))
-        confidence = "high" if reg.get("vref_source") == "lookup" else "medium"
+        confidence = "deterministic" if reg.get("vref_source") == "lookup" else "heuristic"
         issues.append({
             "detection_type": det_type,
             "index": det_idx,

@@ -2982,7 +2982,7 @@ def parse_legacy_schematic(path: str) -> dict:
 
     # Resolve .lib files and parse pin data
     root_path = str(Path(path).resolve())
-    lib_symbols, _legacy_resolution = _resolve_legacy_libs(root_path, all_sch_lines)
+    lib_symbols, legacy_resolution = _resolve_legacy_libs(root_path, all_sch_lines)
 
     # Build a reverse lookup for cache lib names: bare_symbol -> full cache name.
     # Cache libs store "Library_Symbol" while schematics reference bare "Symbol"
@@ -3180,7 +3180,7 @@ def parse_legacy_schematic(path: str) -> dict:
         "annotation_issues": annotation_issues,
         "legacy_analysis_quality": {
             "is_legacy_schematic": True,
-            "library_resolution": _legacy_resolution,
+            "library_resolution": legacy_resolution,
             "pin_source_coverage": _pin_source_counts,
         },
     }

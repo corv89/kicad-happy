@@ -2059,7 +2059,7 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     "estimated_pdiss_W": round(dropout * estimated_iout_a, 3),
                     "_iout_provenance": {
                         "source": "output_cap_proxy",
-                        "confidence": "weak",
+                        "confidence": "heuristic",
                         "basis": f"total_cout_{total_cout*1e6:.0f}uF",
                     },
                 }
@@ -2112,12 +2112,12 @@ def detect_power_regulators(ctx: AnalysisContext, voltage_dividers: list[dict]) 
                     "sub_topology": sw_type,
                     "_iout_provenance": {
                         "source": "output_cap_proxy",
-                        "confidence": "weak",
+                        "confidence": "heuristic",
                         "basis": f"total_cout_{total_cout*1e6:.0f}uF",
                     },
                     "_pdiss_provenance": {
                         "source": "topology_default_efficiency",
-                        "confidence": "weak",
+                        "confidence": "heuristic",
                         "basis": f"efficiency_{efficiency:.0%}_assumed",
                     },
                 }
