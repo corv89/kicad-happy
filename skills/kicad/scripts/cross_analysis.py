@@ -923,7 +923,6 @@ def main():
         'analyzer_type': 'cross_analysis',
         'schema_version': '1.3.0',
         'elapsed_s': round(elapsed, 3),
-        'analysis_time_s': round(elapsed, 3),  # alias — removed in Phase 3
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,
         'trust_summary': compute_trust_summary(findings),

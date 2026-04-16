@@ -8764,29 +8764,6 @@ def analyze_schematic(path: str, project_root: str | None = None,
         if _named_ic_pin:
             _info["display_name"] = f"{_named_ic_pin[0]}.{_named_ic_pin[1]}"
 
-    # Confidence map for downstream consumers (format-report.py, top-risk)
-    confidence_map = {
-        # Deterministic — structural/netlist checks
-        "erc_warnings": "deterministic",
-        "annotation_issues": "deterministic",
-        "label_shape_warnings": "deterministic",
-        "pwr_flag_warnings": "deterministic",
-        "connectivity_issues": "deterministic",
-        "pin_coverage_warnings": "deterministic",
-        "instance_consistency_warnings": "deterministic",
-        "hierarchical_labels": "deterministic",
-        "hierarchy_context": "deterministic",
-        # Heuristic — value parsing, net name inference
-        "footprint_filter_warnings": "heuristic",
-        "generic_symbol_warnings": "heuristic",
-        "voltage_derating": "heuristic",
-        "sleep_current_audit": "heuristic",
-        "property_issues": "heuristic",
-        "wire_geometry": "heuristic",
-        # Datasheet-backed — when Vref comes from lookup table
-        "findings.power_regulators": "heuristic",  # mixed; per-item vref_source overrides
-    }
-
     # Load .kicad_pro for project metadata (KiCad 6+)
     pro = load_kicad_pro(str(path))
     project_settings = {}
@@ -8866,7 +8843,6 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "analyzer_type": "schematic",
         "schema_version": "1.3.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
-        "confidence_map": confidence_map,
         "trust_summary": compute_trust_summary(findings, bom=bom),
         "file": str(path),
         "kicad_version": generator_version,

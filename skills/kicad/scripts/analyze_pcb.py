@@ -6068,25 +6068,9 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         fp_summary["connected_nets"] = sorted(fp_nets)
         footprint_summary.append(fp_summary)
 
-    # Confidence map for downstream consumers
-    confidence_map = {
-        # Deterministic — measured geometry/structure
-        "dfm_analysis.violations": "deterministic",
-        "documentation_warnings": "deterministic",
-        "placement.courtyard_overlaps": "deterministic",
-        "placement.edge_clearance": "deterministic",
-        "tombstoning_risk": "deterministic",
-        "thermal_pad_vias": "deterministic",
-        "copper_balance": "deterministic",
-        "track_analysis": "deterministic",
-        "via_analysis": "deterministic",
-        "zone_analysis": "deterministic",
-    }
-
     result = {
         "analyzer_type": "pcb",
         "schema_version": "1.3.0",
-        "confidence_map": confidence_map,
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": version,

@@ -984,11 +984,18 @@ def main():
             "components_assessed": len(assessments),
             "active": len(findings) - suppressed_count,
             "suppressed": suppressed_count,
+            # Raw per-severity counts — deprecated, consumer migration in v1.4
             "critical": counts["CRITICAL"],
             "high": counts["HIGH"],
             "medium": counts["MEDIUM"],
             "low": counts["LOW"],
             "info": counts["INFO"],
+            # Standardized severity rollup
+            "by_severity": {
+                "error": counts["CRITICAL"] + counts["HIGH"],
+                "warning": counts["MEDIUM"] + counts["LOW"],
+                "info": counts["INFO"],
+            },
             "thermal_score": score,
             **board,
         },

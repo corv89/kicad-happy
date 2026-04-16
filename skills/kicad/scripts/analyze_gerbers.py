@@ -1356,9 +1356,11 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
         sev_counts[sev] = sev_counts.get(sev, 0) + 1
     result["summary"] = {
         "total_findings": len(findings),
-        "error": sev_counts.get("error", 0),
-        "warning": sev_counts.get("warning", 0),
-        "info": sev_counts.get("info", 0),
+        "by_severity": {
+            "error": sev_counts.get("error", 0),
+            "warning": sev_counts.get("warning", 0),
+            "info": sev_counts.get("info", 0),
+        },
     }
     from finding_schema import compute_trust_summary
     result["trust_summary"] = compute_trust_summary(findings)

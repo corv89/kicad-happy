@@ -485,15 +485,17 @@ def main():
             'categories_checked': len(category_summary),
             'active': len(findings) - suppressed_count,
             'suppressed': suppressed_count,
+            # Raw per-severity counts — deprecated, consumer migration in v1.4
             'critical': counts['CRITICAL'],
             'high': counts['HIGH'],
             'medium': counts['MEDIUM'],
             'low': counts['LOW'],
             'info': counts['INFO'],
+            # Standardized severity rollup (medium+low collapse to warning)
             'by_severity': {
                 'error': counts['CRITICAL'] + counts['HIGH'],
-                'warning': counts['MEDIUM'],
-                'info': counts['LOW'] + counts['INFO'],
+                'warning': counts['MEDIUM'] + counts['LOW'],
+                'info': counts['INFO'],
             },
             'emc_risk_score': risk_score,
         },
