@@ -84,11 +84,15 @@ echo "::group::Datasheets"
 if [ -n "$DS_DIR" ] && [ -d "$DS_DIR" ]; then
     PDF_COUNT=$(find "$DS_DIR" -name "*.pdf" -type f 2>/dev/null | wc -l)
     echo "Found datasheets directory: $DS_DIR ($PDF_COUNT PDFs)"
-    if [ -f "$DS_DIR/index.json" ]; then
-        echo "Datasheet manifest (index.json) present"
+    if [ -f "$DS_DIR/manifest.json" ]; then
+        echo "Datasheet manifest (manifest.json) present"
+    elif [ -f "$DS_DIR/index.json" ]; then
+        echo "Datasheet manifest (legacy index.json) present"
     fi
     if [ -d "$DS_DIR/extracted" ]; then
-        EXTRACT_COUNT=$(find "$DS_DIR/extracted" -name "*.json" -not -name "index.json" -type f 2>/dev/null | wc -l)
+        EXTRACT_COUNT=$(find "$DS_DIR/extracted" -name "*.json" \
+            -not -name "manifest.json" -not -name "index.json" \
+            -type f 2>/dev/null | wc -l)
         echo "Pre-extracted specs: $EXTRACT_COUNT components"
     fi
 else

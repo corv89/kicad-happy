@@ -5006,7 +5006,7 @@ def audit_datasheet_coverage(components: list[dict],
                 "Run datasheet sync via the digikey / mouser / lcsc / "
                 "element14 skill (which one depends on the user's "
                 "distributor access and API credentials). A ./datasheets/ "
-                "directory with PDFs and an index.json enables pin-level "
+                "directory with PDFs and a manifest.json enables pin-level "
                 "verification in the next analyzer run."),
             "report_context": {
                 "section": "Datasheet Coverage",
@@ -5185,16 +5185,20 @@ def check_generic_transistor_symbols(components: list[dict],
     Device-specific symbols (MMBT3904, AO3400A) encode the correct pinout for
     that particular part and are always safer.
 
-    If a datasheets/index.json exists next to the schematic, the check also notes
+    If a datasheets/manifest.json (or legacy index.json) exists next to the schematic, the check also notes
     whether a datasheet is available for manual pinout verification.
     """
     warnings = []
 
-    # Load datasheet index if available
+    # Load datasheet manifest if available (prefer new manifest.json, fall
+    # back to legacy index.json for projects that haven't been migrated).
     ds_index: dict[str, dict] = {}
     if schematic_path:
         sch_dir = Path(schematic_path).parent
-        idx_path = sch_dir / "datasheets" / "index.json"
+        ds_dir = sch_dir / "datasheets"
+        idx_path = ds_dir / "manifest.json"
+        if not idx_path.is_file():
+            idx_path = ds_dir / "index.json"
         if idx_path.is_file():
             try:
                 ds_index = json.loads(idx_path.read_text())
@@ -6441,14 +6445,18 @@ def analyze_voltage_derating(ctx: AnalysisContext, signal_analysis: dict,
         sanitized = re.sub(r'[^A-Za-z0-9_]', '_', mpn.strip())
         extract_path = Path(project_dir) / "datasheets" / "extracted" / f"{sanitized}.json"
         if not extract_path.exists():
-            idx_path = Path(project_dir) / "datasheets" / "extracted" / "index.json"
+            # Prefer manifest.json, fall back to legacy index.json
+            extracted_dir = Path(project_dir) / "datasheets" / "extracted"
+            idx_path = extracted_dir / "manifest.json"
+            if not idx_path.exists():
+                idx_path = extracted_dir / "index.json"
             if idx_path.exists():
                 try:
                     with open(idx_path) as f:
                         idx = json.load(f)
                     for k, v in idx.get("extractions", {}).items():
                         if k.upper() == sanitized.upper():
-                            extract_path = Path(project_dir) / "datasheets" / "extracted" / v.get("file", "")
+                            extract_path = extracted_dir / v.get("file", "")
                             break
                 except (json.JSONDecodeError, OSError):
                     pass

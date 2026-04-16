@@ -185,7 +185,7 @@ element14's farnell.com CDN serves datasheet PDFs directly — no bot protection
 
 ### Datasheet Directory Sync
 
-Use `sync_datasheets_element14.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `index.json` format as the DigiKey, Mouser, and LCSC skills.
+Use `sync_datasheets_element14.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `manifest.json` format as the DigiKey, Mouser, and LCSC skills.
 
 ```bash
 # Sync datasheets for a KiCad project
@@ -212,7 +212,7 @@ The script:
 - **Accepts any identifier** — MPN, Newark/Farnell PN, or other distributor PNs from KiCad symbol properties
 - **Prefers MPN search** (`manuPartNum:`) for exact match — falls back to keyword search
 - **Downloads from farnell.com CDN** — direct PDF URLs, no bot protection
-- **Writes `index.json` manifest** — same format as DigiKey/Mouser/LCSC skills
+- **Writes `manifest.json` manifest** — same format as DigiKey/Mouser/LCSC skills
 - **Verifies PDF content** — checks MPN, manufacturer, and description keywords
 - **Rate-limited** — 0.5s between API calls (configurable with `--delay`)
 - **Saves progress incrementally** — safe to interrupt

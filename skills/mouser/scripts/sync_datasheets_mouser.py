@@ -3,9 +3,9 @@
 
 Extracts components with MPNs from a KiCad schematic (or pre-computed
 analyzer JSON), searches Mouser for datasheet URLs, downloads missing
-PDFs, and maintains an index.json manifest.
+PDFs, and maintains a manifest.json file (legacy name index.json still read).
 
-The index.json format matches across distributor skills so they can
+The manifest.json format matches across distributor skills so they can
 contribute to the same datasheets directory. The source field
 distinguishes which distributor provided the datasheet.
 
@@ -123,11 +123,24 @@ def friendly_filename(mpn: str, description: str = "", manufacturer: str = "") -
 
 
 # ---------------------------------------------------------------------------
-# Manifest (index.json) management
+# Manifest management (manifest.json; legacy index.json read for backward compat)
 # ---------------------------------------------------------------------------
 
+MANIFEST_FILENAME = "manifest.json"
+LEGACY_MANIFEST_FILENAME = "index.json"
+
+
+def _manifest_path(out_dir: Path) -> Path:
+    new = out_dir / MANIFEST_FILENAME
+    old = out_dir / LEGACY_MANIFEST_FILENAME
+    if new.exists() or not old.exists():
+        return new
+    return old
+
+
 def load_index(path: Path) -> dict:
-    """Load existing index.json or return empty structure."""
+    """Load existing manifest.json (or legacy index.json) or return empty."""
+    path = _manifest_path(path.parent) if path.name in (MANIFEST_FILENAME, LEGACY_MANIFEST_FILENAME) else path
     if path.exists():
         try:
             with open(path, "r") as f:
@@ -138,12 +151,21 @@ def load_index(path: Path) -> dict:
 
 
 def save_index(path: Path, index: dict):
-    """Write index.json atomically."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    """Write manifest atomically. Always writes manifest.json; removes any
+    legacy index.json sibling after a successful write."""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    new_path = parent / MANIFEST_FILENAME
+    tmp = new_path.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(index, f, indent=2)
-    tmp.rename(path)
+    tmp.rename(new_path)
+    old_path = parent / LEGACY_MANIFEST_FILENAME
+    if old_path.exists() and old_path != new_path:
+        try:
+            old_path.unlink()
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +459,7 @@ def sync_datasheets(
         out_dir = input_path.parent / "datasheets"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    index_path = out_dir / "index.json"
+    index_path = out_dir / MANIFEST_FILENAME
     index = load_index(index_path)
 
     print(f"Analyzing {input_path.name}...", file=sys.stderr)

@@ -347,9 +347,9 @@ The extractor populates `source_pdf` and `extracted_from_pages`. The cache manag
 
 ---
 
-## Index File
+## Manifest File
 
-`datasheets/extracted/index.json` tracks all cached extractions. The cache manager reads and writes this file; extraction code does not need to update it directly.
+`datasheets/extracted/manifest.json` (legacy name: `index.json`) tracks all cached extractions. The cache manager reads and writes this file; extraction code does not need to update it directly.
 
 ```json
 {

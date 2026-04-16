@@ -127,7 +127,7 @@ LCSC's CDN serves datasheet PDFs directly — no bot protection, no special head
 
 ### Datasheet Directory Sync
 
-Use `sync_datasheets_lcsc.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `index.json` format as the DigiKey and Mouser skills. **No API key required.**
+Use `sync_datasheets_lcsc.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `manifest.json` format as the DigiKey and Mouser skills. **No API key required.**
 
 ```bash
 # Sync datasheets for a KiCad project
@@ -152,7 +152,7 @@ The script:
 - **Prefers LCSC code** for search (exact match) — falls back to MPN keyword search
 - **Falls back to wmsc.lcsc.com API** when jlcsearch has no results for an LCSC code (Cxxxxx)
 - **Downloads from LCSC CDN** — direct PDF URLs, no bot protection
-- **Writes `index.json` manifest** — same format as DigiKey/Mouser skills
+- **Writes `manifest.json` manifest** — same format as DigiKey/Mouser skills
 - **Verifies PDF content** — checks MPN, manufacturer, and description keywords
 - **Rate-limited** — 0.5s between API calls (configurable with `--delay`)
 - **Saves progress incrementally** — safe to interrupt

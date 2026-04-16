@@ -39,8 +39,11 @@ def _load_extraction(extract_dir: str, mpn: str) -> dict:
         except (json.JSONDecodeError, OSError):
             return {}
 
-    # Index-based lookup (case-insensitive)
-    idx_path = os.path.join(extract_dir, "index.json")
+    # Manifest-based lookup (case-insensitive); try manifest.json, fall back
+    # to legacy index.json.
+    idx_path = os.path.join(extract_dir, "manifest.json")
+    if not os.path.isfile(idx_path):
+        idx_path = os.path.join(extract_dir, "index.json")
     if os.path.isfile(idx_path):
         try:
             with open(idx_path) as f:

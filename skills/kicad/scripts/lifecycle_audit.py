@@ -389,7 +389,10 @@ def read_extraction_temperature(mpn: str, project_dir: str) -> dict | None:
 
     if not extract_path.exists():
         # Try index lookup
-        idx_path = Path(project_dir) / "datasheets" / "extracted" / "index.json"
+        extracted_dir = Path(project_dir) / "datasheets" / "extracted"
+        idx_path = extracted_dir / "manifest.json"
+        if not idx_path.exists():
+            idx_path = extracted_dir / "index.json"
         if idx_path.exists():
             try:
                 with open(idx_path) as f:

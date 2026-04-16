@@ -184,7 +184,7 @@ Note: Mouser's product pages return 403 for most automated requests, so strategy
 
 ### Datasheet Directory Sync
 
-Use `sync_datasheets_mouser.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `index.json` format as the DigiKey skill.
+Use `sync_datasheets_mouser.py` to maintain a `datasheets/` directory alongside a KiCad project. Same workflow and `manifest.json` format as the DigiKey skill.
 
 ```bash
 # Sync datasheets for a KiCad project

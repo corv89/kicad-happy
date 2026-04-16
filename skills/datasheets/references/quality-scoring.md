@@ -172,7 +172,7 @@ The `issues` list is the union of per-dimension issue strings (capped per dimens
 
 ## Cache Index Entry
 
-When an extraction is cached via `cache_extraction()`, the `index.json` records a summary:
+When an extraction is cached via `cache_extraction()`, the `manifest.json` records a summary:
 
 ```json
 {

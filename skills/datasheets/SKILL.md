@@ -31,7 +31,7 @@ This skill owns:
   datasheets/
     TPS61023DRLR.pdf        # downloaded by distributor skills
     extracted/
-      index.json            # extraction manifest
+      manifest.json         # extraction manifest (legacy name: index.json)
       TPS61023DRLR.json     # structured extraction (this skill's output)
 ```
 

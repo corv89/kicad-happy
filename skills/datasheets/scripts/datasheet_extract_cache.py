@@ -10,10 +10,10 @@ Directory structure:
     <project>/
       design.kicad_sch
       datasheets/
-        index.json           # existing — PDF manifest
+        manifest.json        # PDF manifest (legacy name: index.json)
         TPS61023DRLR.pdf
         extracted/
-          index.json         # extraction cache index
+          manifest.json      # extraction cache index (legacy name: index.json)
           TPS61023DRLR.json  # full structured extraction
           BSS138LT1G.json
 
@@ -156,22 +156,38 @@ def _sanitize_mpn(mpn):
 
 
 # ---------------------------------------------------------------------------
-# In-memory cache for index.json (avoids re-reading on every call)
+# In-memory cache for manifest.json (avoids re-reading on every call)
 # ---------------------------------------------------------------------------
+
+MANIFEST_FILENAME = "manifest.json"
+LEGACY_MANIFEST_FILENAME = "index.json"
 
 _index_cache = {}  # extract_dir_str → (mtime, parsed_index)
 
 
+def _manifest_path_for(extract_dir):
+    """Return the manifest path, preferring new manifest.json over legacy index.json."""
+    d = Path(extract_dir)
+    new = d / MANIFEST_FILENAME
+    old = d / LEGACY_MANIFEST_FILENAME
+    if new.exists() or not old.exists():
+        return new
+    return old
+
+
 def _load_index(extract_dir):
-    """Load the extraction index.json with mtime-based in-memory caching.
+    """Load the extraction manifest with mtime-based in-memory caching.
+
+    Reads manifest.json preferentially; falls back to legacy index.json on
+    projects that haven't been migrated yet.
 
     Args:
         extract_dir: Path to datasheets/extracted/
 
     Returns:
-        Parsed index dict, or empty structure if not found
+        Parsed manifest dict, or empty structure if not found
     """
-    index_path = Path(extract_dir) / "index.json"
+    index_path = _manifest_path_for(extract_dir)
     cache_key = str(extract_dir)
 
     try:
@@ -192,23 +208,31 @@ def _load_index(extract_dir):
 
 
 def _save_index(extract_dir, index):
-    """Write extraction index.json atomically.
+    """Write the extraction manifest atomically. Always writes manifest.json;
+    removes any legacy index.json after the new file is in place.
 
     Args:
         extract_dir: Path to datasheets/extracted/
-        index: Index dict to save
+        index: Manifest dict to save
     """
     extract_dir = Path(extract_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
 
-    index["last_updated"] = datetime.now(timezone.utc).isoformat()
+    index["last_updated"] = datetime.now().astimezone().isoformat(timespec='seconds')
     index["version"] = EXTRACTION_VERSION
 
-    index_path = extract_dir / "index.json"
-    tmp = index_path.with_suffix(".tmp")
+    new_path = extract_dir / MANIFEST_FILENAME
+    tmp = new_path.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(index, f, indent=2)
-    tmp.rename(index_path)
+    tmp.rename(new_path)
+
+    old_path = extract_dir / LEGACY_MANIFEST_FILENAME
+    if old_path.exists() and old_path != new_path:
+        try:
+            old_path.unlink()
+        except OSError:
+            pass
 
     # Invalidate in-memory cache
     _index_cache.pop(str(extract_dir), None)
@@ -418,19 +442,30 @@ def list_extractions(extract_dir):
 
 
 def update_datasheets_index(datasheets_dir, mpn, extraction):
-    """Add an extraction pointer to the main datasheets/index.json.
+    """Add an extraction pointer to the main datasheets/manifest.json.
 
     Adds an "extraction" field to the part's entry in the datasheets
-    manifest, so any code reading index.json can quickly check whether
-    a pre-extraction exists and its quality.
+    manifest, so any code reading it can quickly check whether a
+    pre-extraction exists and its quality.
+
+    Reads manifest.json preferentially, falling back to legacy index.json
+    for projects that haven't been migrated. Writes back to whichever file
+    was loaded (in-place update only — migration to manifest.json happens
+    when the distributor sync script re-runs).
 
     Args:
         datasheets_dir: Path to datasheets/
         mpn: Manufacturer part number
         extraction: The extraction dict (reads metadata from it)
     """
-    index_path = Path(datasheets_dir) / "index.json"
-    if not index_path.exists():
+    datasheets_dir = Path(datasheets_dir)
+    new_path = datasheets_dir / "manifest.json"
+    old_path = datasheets_dir / "index.json"
+    if new_path.exists():
+        index_path = new_path
+    elif old_path.exists():
+        index_path = old_path
+    else:
         return
 
     try:

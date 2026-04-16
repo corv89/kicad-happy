@@ -89,7 +89,7 @@ python3 <digikey-skill-path>/scripts/sync_datasheets.py <file.kicad_sch>
 ```
 
 **Check for existing datasheets:** Before downloading, look for:
-- `<project>/datasheets/` with `index.json` (from a previous sync)
+- `<project>/datasheets/` with `manifest.json` (legacy name `index.json`) from a previous sync
 - `<project>/docs/` or `<project>/documentation/`
 - PDF files in the project directory whose names contain MPNs
 - `Datasheet` property URLs embedded in the KiCad symbols (the digikey skill names them as `<MPN>_<Description>.pdf`)

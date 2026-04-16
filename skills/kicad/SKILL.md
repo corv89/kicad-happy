@@ -388,7 +388,7 @@ Default to thorough analysis unless the user asks for a quick review. The reason
 
 Datasheets are what separate a consistency check from a correctness check. Without them, you can confirm the design agrees with itself — but not that it matches the real-world parts. Obtain datasheets early in the workflow.
 
-**Automated sync (preferred):** Run datasheet sync scripts early in the workflow. They download datasheets for all components with MPNs into a shared `datasheets/` directory with an `index.json` manifest. Run the preferred source first; if some parts fail, try others — they share the same directory and skip already-downloaded files.
+**Automated sync (preferred):** Run datasheet sync scripts early in the workflow. They download datasheets for all components with MPNs into a shared `datasheets/` directory with an `manifest.json` manifest. Run the preferred source first; if some parts fail, try others — they share the same directory and skip already-downloaded files.
 
 ```bash
 python3 <digikey-skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch>
@@ -400,7 +400,7 @@ python3 <mouser-skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch>
 DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LCSC works for LCSC-only parts. Mouser is a last resort (often blocks downloads).
 
 **Check for existing datasheets:** Before downloading, look for:
-- `<project>/datasheets/` with `index.json` (from a previous sync)
+- `<project>/datasheets/` with `manifest.json` (from a previous sync)
 - `<project>/docs/` or `<project>/documentation/`
 - PDF files in the project directory whose names contain MPNs
 - `Datasheet` property URLs embedded in the KiCad symbols

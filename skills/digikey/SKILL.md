@@ -218,7 +218,7 @@ DigiKey's API provides **direct PDF URLs** for datasheets — this is the prefer
 
 ### Datasheet Directory Sync (Primary Workflow)
 
-Use `sync_datasheets_digikey.py` to maintain a `datasheets/` directory alongside a KiCad project. It extracts components from the schematic, searches DigiKey for datasheet URLs, downloads missing PDFs, and writes an `index.json` manifest. Subsequent runs are incremental — only new or changed parts are fetched.
+Use `sync_datasheets_digikey.py` to maintain a `datasheets/` directory alongside a KiCad project. It extracts components from the schematic, searches DigiKey for datasheet URLs, downloads missing PDFs, and writes an `manifest.json` manifest. Subsequent runs are incremental — only new or changed parts are fetched.
 
 ```bash
 # Sync datasheets for a KiCad project (creates datasheets/ next to the schematic)
@@ -244,12 +244,12 @@ The script:
 - **Runs the kicad schematic analyzer** automatically to extract components and MPNs
 - **Filters generic passives** — skips entries without real MPNs (e.g., "100nF", "10K")
 - **Tries schematic URLs first** — uses the datasheet URL embedded in the KiCad symbol before hitting the DigiKey API, saving API calls
-- **Writes `index.json` manifest** — maps each MPN to its PDF file, manufacturer, description, download status, and URL. The kicad skill reads this during design review to cross-reference datasheets with the schematic.
+- **Writes `manifest.json` manifest** — maps each MPN to its PDF file, manufacturer, description, download status, and URL. The kicad skill reads this during design review to cross-reference datasheets with the schematic.
 - **Tracks failures** — failed downloads are recorded with error details and not retried on subsequent runs unless `--force` is used
 - **Rate-limited** — 1 second between DigiKey API calls (configurable with `--delay`)
 - **Saves progress incrementally** — if interrupted, already-downloaded files are preserved
 
-The `index.json` manifest structure:
+The `manifest.json` manifest structure:
 ```json
 {
   "schematic": "/path/to/file.kicad_sch",

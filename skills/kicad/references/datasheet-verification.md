@@ -51,14 +51,14 @@ This step is interactive — it requires the agent to read PDF pages and produce
 
 ### Stage 3: Cache extractions
 
-Extraction JSON files are stored in `datasheets/extracted/` with filenames derived from the MPN (non-alphanumeric characters replaced with underscores). An optional `index.json` provides case-insensitive MPN-to-file mapping.
+Extraction JSON files are stored in `datasheets/extracted/` with filenames derived from the MPN (non-alphanumeric characters replaced with underscores). An optional `manifest.json` (legacy name `index.json`) provides case-insensitive MPN-to-file mapping.
 
 ```
 datasheets/extracted/
   TPS61023DRLR.json
   STM32F405RGT6.json
   USBLC6_2SC6.json
-  index.json          # optional
+  manifest.json       # optional (legacy name: index.json)
 ```
 
 ### Stage 4: Verification
