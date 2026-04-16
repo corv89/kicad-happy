@@ -1126,11 +1126,77 @@ def build_report(simulation_runs):
         status = run.get("status", "skip")
         counts[status] = counts.get(status, 0) + 1
 
+    # Synthesize finding-shaped entries for simulations that didn't pass —
+    # keeps the v1.3 envelope contract (findings[] + trust_summary)
+    # consistent across all analyzers. Pass/skip results stay
+    # informational and are reflected only in simulation_results and the
+    # status counts, not in findings[].
+    findings = []
+    for run in simulation_runs:
+        status = run.get("status", "skip")
+        if status not in ("fail", "warn"):
+            continue
+        severity = "error" if status == "fail" else "warning"
+        subtype = run.get("subcircuit_type", "simulation")
+        ref = run.get("reference", "")
+
+        # Build a description that surfaces the numeric delta so the
+        # finding is self-contained without chasing simulation_results.
+        _delta = run.get("delta") or {}
+        _exp = run.get("expected") or {}
+        _sim = run.get("simulated") or {}
+        _detail_parts = []
+        for metric, pct in _delta.items():
+            if pct is not None:
+                _detail_parts.append(f"{metric}: {pct:+.2f}%")
+        _delta_summary = "; ".join(_detail_parts) if _detail_parts else "no numeric delta"
+        _expected_keys = ", ".join(f"{k}={v}" for k, v in _exp.items()) if _exp else "—"
+        _simulated_keys = ", ".join(f"{k}={v}" for k, v in _sim.items()) if _sim else "—"
+        _description = (
+            f"SPICE simulation of {subtype} ({ref}) "
+            f"{'failed to converge' if status == 'fail' else 'converged with warnings'}. "
+            f"Expected: {_expected_keys}. "
+            f"Simulated: {_simulated_keys}. "
+            f"Delta: {_delta_summary}."
+        )
+
+        findings.append({
+            "detector": "simulate_subcircuits",
+            "rule_id": "SP-FAIL" if status == "fail" else "SP-WARN",
+            "severity": severity,
+            "confidence": "deterministic",
+            "evidence_source": "heuristic_rule",
+            "category": "simulation",
+            "summary": (
+                f"{subtype} {ref} — SPICE {'did not converge to expected values' if status == 'fail' else 'converged with warnings'}".strip()
+            ),
+            "description": _description,
+            "components": run.get("components", []) or [],
+            "nets": [],
+            "pins": [],
+            "recommendation": (
+                "Review the expected vs simulated values; confirm component "
+                "values match the datasheet reference design, and that parasitics "
+                "are modelled where they affect the result."
+            ),
+            "report_context": {
+                "section": "SPICE Simulation",
+                "impact": "Simulation did not match expected values" if status == "fail" else "Simulation results warrant review",
+                "standard_ref": "",
+            },
+            # Preserve the structured sim detail for consumers that want
+            # the numeric delta.
+            "expected": run.get("expected"),
+            "simulated": run.get("simulated"),
+            "delta": run.get("delta"),
+        })
+
     report = {
         "analyzer_type": "spice",
         "schema_version": "1.3.0",
         "summary": {
             "total": len(simulation_runs),
+            "total_findings": len(findings),
             **counts,
             # Map simulation status to the standard by_severity vocabulary so
             # release gates and summarize tools can aggregate uniformly.
@@ -1140,8 +1206,35 @@ def build_report(simulation_runs):
                 "info": counts["pass"] + counts["skip"],
             },
         },
+        "findings": findings,
         "simulation_results": simulation_runs,
     }
+
+    # Trust summary — populate through the shared helper so consumers get
+    # the same shape they expect from every other v1.3 analyzer.
+    try:
+        import os as _os, sys as _sys
+        _kicad_scripts = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            '..', '..', 'kicad', 'scripts')
+        if _os.path.isdir(_kicad_scripts):
+            _sys.path.insert(0, _os.path.abspath(_kicad_scripts))
+        from finding_schema import compute_trust_summary
+        report["trust_summary"] = compute_trust_summary(findings)
+    except (ImportError, Exception):
+        # Fall back to a minimal hand-rolled trust_summary so the envelope
+        # is still complete even when the helper isn't importable.
+        report["trust_summary"] = {
+            "total_findings": len(findings),
+            "trust_level": "high" if not findings else "mixed",
+            "by_confidence": {
+                "deterministic": len(findings),
+                "heuristic": 0,
+                "datasheet-backed": 0,
+            },
+            "by_evidence_source": {},
+            "provenance_coverage_pct": 0.0,
+        }
 
     # Monte Carlo summary if any results have tolerance_analysis
     mc_runs = [r for r in simulation_runs if "tolerance_analysis" in r]

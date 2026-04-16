@@ -4953,7 +4953,7 @@ def audit_datasheet_coverage(components: list[dict],
         findings.append({
             "detector": "audit_datasheet_coverage",
             "rule_id": "DS-001",
-            "severity": "high",
+            "severity": "error",
             "confidence": "deterministic",
             "evidence_source": "bom",
             "category": "verification",
@@ -5111,7 +5111,7 @@ def audit_sourcing_gate(components: list[dict]) -> list[dict]:
     if pct >= 100.0:
         return findings
     if pct < 50.0:
-        rid, sev = "SS-001", "high"
+        rid, sev = "SS-001", "error"
         headline = ("Sourcing blocker: BOM has <50% MPN coverage "
                     f"({covered}/{total} unique parts). Board is not pre-fab ready.")
     elif pct < 80.0:
@@ -9227,6 +9227,30 @@ def main():
 
     from output_filters import apply_output_filters
     apply_output_filters(result, args.stage, args.audience)
+
+    # Recompute summary + trust_summary from the final findings list — post-
+    # filters (CERT-001 hobby gating, power_rails config, lifecycle audit,
+    # datasheet verification, output_filters stage filter) can mutate
+    # findings[] after the initial summary was built. Keep the envelope
+    # consistent with what actually ships in findings[].
+    _final_findings = result.get('findings', []) if isinstance(result.get('findings'), list) else []
+    _sev_counts = {"error": 0, "warning": 0, "info": 0}
+    for _f in _final_findings:
+        if not isinstance(_f, dict):
+            continue
+        _s = str(_f.get('severity', 'info')).lower()
+        if _s in _sev_counts:
+            _sev_counts[_s] += 1
+        else:
+            _sev_counts['info'] += 1
+    if isinstance(result.get('summary'), dict):
+        result['summary']['total_findings'] = len(_final_findings)
+        result['summary']['by_severity'] = _sev_counts
+    try:
+        from finding_schema import compute_trust_summary
+        result['trust_summary'] = compute_trust_summary(_final_findings, bom=result.get('bom'))
+    except (ImportError, Exception):
+        pass
 
     if args.text:
         from output_filters import format_text

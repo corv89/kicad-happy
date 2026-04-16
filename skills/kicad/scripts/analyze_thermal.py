@@ -35,7 +35,7 @@ DEFAULT_RTHETA_JA = 150.0  # Conservative fallback °C/W
 MIN_PDISS_W = 0.01  # 10mW threshold — below this, thermal is negligible
 
 SEVERITY_WEIGHTS = {
-    'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0,
+    'error': 15, 'warning': 3, 'info': 0,
 }
 MAX_FINDINGS_PER_RULE = 5
 
@@ -483,7 +483,7 @@ def _generate_findings(assessments: list) -> list:
         if tj > tj_max:
             findings.append({
                 "category": "thermal_safety",
-                "severity": "CRITICAL",
+                "severity": "error",
                 "rule_id": "TS-001",
                 "confidence": confidence,
                 "title": f"{label} estimated Tj {tj:.0f}°C exceeds abs max {tj_max:.0f}°C",
@@ -508,7 +508,7 @@ def _generate_findings(assessments: list) -> list:
         elif margin < 15:
             findings.append({
                 "category": "thermal_safety",
-                "severity": "HIGH",
+                "severity": "error",
                 "rule_id": "TS-002",
                 "confidence": confidence,
                 "title": f"{label} estimated Tj {tj:.0f}°C — only {margin:.0f}°C margin to abs max",
@@ -534,7 +534,7 @@ def _generate_findings(assessments: list) -> list:
         elif tj > 85:
             findings.append({
                 "category": "thermal_safety",
-                "severity": "MEDIUM",
+                "severity": "warning",
                 "rule_id": "TS-003",
                 "confidence": confidence,
                 "title": f"{label} estimated Tj {tj:.0f}°C may affect nearby components",
@@ -560,7 +560,7 @@ def _generate_findings(assessments: list) -> list:
         elif pdiss > 0.1:
             findings.append({
                 "category": "thermal_safety",
-                "severity": "INFO",
+                "severity": "info",
                 "rule_id": "TS-005",
                 "confidence": confidence,
                 "title": f"{label} Tj {tj:.0f}°C, margin {margin:.0f}°C",
@@ -586,7 +586,7 @@ def _generate_findings(assessments: list) -> list:
             label = f"{ref} ({val})" if val else ref
             findings.append({
                 "category": "thermal_safety",
-                "severity": "MEDIUM",
+                "severity": "warning",
                 "rule_id": "TS-004",
                 "confidence": "deterministic",
                 "title": f"{label} dissipates {a['pdiss_w']:.2f}W with no thermal vias",
@@ -658,7 +658,7 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
             if cap["is_electrolytic"]:
                 findings.append({
                     "category": "thermal_proximity",
-                    "severity": "MEDIUM",
+                    "severity": "warning",
                     "rule_id": "TP-002",
                     "confidence": "deterministic",
                     "title": (f"Electrolytic {cap['ref']} ({cap['value']}) "
@@ -686,7 +686,7 @@ def _check_thermal_proximity(assessments: list, pcb: dict) -> list:
             else:
                 findings.append({
                     "category": "thermal_proximity",
-                    "severity": "LOW",
+                    "severity": "info",
                     "rule_id": "TP-001",
                     "confidence": "deterministic",
                     "title": (f"MLCC {cap['ref']} is {dist:.1f}mm from "
@@ -726,11 +726,11 @@ def compute_thermal_score(findings: list) -> int:
         by_rule.setdefault(rule, []).append(f)
 
     penalty = 0
-    sev_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'INFO': 4}
+    sev_order = {'error': 0, 'warning': 1, 'info': 2}
     for rule, rule_findings in by_rule.items():
-        rule_findings.sort(key=lambda f: sev_order.get(f.get('severity', 'INFO'), 4))
+        rule_findings.sort(key=lambda f: sev_order.get(f.get('severity', 'info'), 3))
         for f in rule_findings[:MAX_FINDINGS_PER_RULE]:
-            penalty += SEVERITY_WEIGHTS.get(f.get('severity', 'INFO'), 0)
+            penalty += SEVERITY_WEIGHTS.get(f.get('severity', 'info'), 0)
 
     return max(0, min(100, 100 - penalty))
 
@@ -987,12 +987,18 @@ def main():
     score = compute_thermal_score(
         [f for f in findings if not f.get("suppressed")])
 
-    # Severity counts
-    counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
+    # Severity counts over the rule findings (thermal_assessments are
+    # merged into findings[] further down and contribute info-level
+    # entries — a final recompute below keeps summary in sync with the
+    # merged list).
+    counts = {"error": 0, "warning": 0, "info": 0}
     suppressed_count = 0
     for f in findings:
-        sev = f.get("severity", "INFO")
-        counts[sev] = counts.get(sev, 0) + 1
+        sev = str(f.get("severity", "info")).lower()
+        if sev in counts:
+            counts[sev] += 1
+        else:
+            counts["info"] += 1
         if f.get("suppressed"):
             suppressed_count += 1
 
@@ -1020,18 +1026,9 @@ def main():
             "components_assessed": len(assessments),
             "active": len(findings) - suppressed_count,
             "suppressed": suppressed_count,
-            # Raw per-severity counts — deprecated, consumer migration in v1.4
-            "critical": counts["CRITICAL"],
-            "high": counts["HIGH"],
-            "medium": counts["MEDIUM"],
-            "low": counts["LOW"],
-            "info": counts["INFO"],
-            # Standardized severity rollup
-            "by_severity": {
-                "error": counts["CRITICAL"] + counts["HIGH"],
-                "warning": counts["MEDIUM"] + counts["LOW"],
-                "info": counts["INFO"],
-            },
+            # Standardized severity rollup (single source — raw
+            # per-severity aliases were removed in v1.3 Batch 20).
+            "by_severity": dict(counts),
             "thermal_score": score,
             **board,
         },
@@ -1044,6 +1041,27 @@ def main():
 
     # Merge thermal_assessments into findings (TH-DET entries)
     result["findings"] = result.get("findings", []) + result.pop("thermal_assessments", [])
+
+    # Recompute summary from the merged findings list — the earlier
+    # `counts` block only saw rule findings, not the TH-DET assessments
+    # we just appended. Keep the envelope consistent with findings[].
+    _merged = result.get("findings", [])
+    _merged_counts = {"error": 0, "warning": 0, "info": 0}
+    _merged_suppressed = 0
+    for _f in _merged:
+        if not isinstance(_f, dict):
+            continue
+        _s = str(_f.get("severity", "info")).lower()
+        if _s in _merged_counts:
+            _merged_counts[_s] += 1
+        else:
+            _merged_counts["info"] += 1
+        if _f.get("suppressed"):
+            _merged_suppressed += 1
+    result["summary"]["total_findings"] = len(_merged)
+    result["summary"]["by_severity"] = _merged_counts
+    result["summary"]["active"] = len(_merged) - _merged_suppressed
+    result["summary"]["suppressed"] = _merged_suppressed
 
     from finding_schema import compute_trust_summary
     result["trust_summary"] = compute_trust_summary(result["findings"])

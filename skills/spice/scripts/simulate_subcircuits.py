@@ -333,7 +333,8 @@ def simulate_subcircuits(analysis_json, workdir=None, timeout=5, types=None,
     report = build_report(results)
     report["workdir"] = workdir
     report["total_elapsed_s"] = round(total_time, 3)
-    report["ngspice"] = find_ngspice()
+    report["simulator"] = find_ngspice() or None
+    report["ngspice"] = report["simulator"]  # backward compat alias
 
     return report
 

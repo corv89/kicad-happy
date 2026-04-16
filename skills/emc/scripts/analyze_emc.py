@@ -31,8 +31,11 @@ from emc_rules import run_all_checks, generate_test_plan, analyze_regulatory_cov
 from emc_formulas import STANDARDS, MARKET_STANDARDS
 from finding_schema import compute_trust_summary
 
-# Shared severity weights — used by both risk score and per-net scoring
-SEVERITY_WEIGHTS = {'CRITICAL': 15, 'HIGH': 8, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
+# Shared severity weights — used by both risk score and per-net scoring.
+# Keyed on the v1.3 envelope vocabulary (error/warning/info); legacy
+# EMC rule severities are normalized before reaching this map via
+# _make_finding's _normalize_severity().
+SEVERITY_WEIGHTS = {'error': 12, 'warning': 3, 'info': 0}
 
 # Confidence discount — heuristic findings carry less weight because the
 # underlying data is sampled or averaged, not exhaustively computed.
@@ -68,12 +71,12 @@ def compute_risk_score(findings: list) -> int:
 
     # For each rule, take the worst N findings
     penalty = 0
-    sev_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'INFO': 4}
+    sev_order = {'error': 0, 'warning': 1, 'info': 2}
     for rule, rule_findings in by_rule.items():
         # Sort by severity (worst first)
-        rule_findings.sort(key=lambda f: sev_order.get(f.get('severity', 'INFO'), 4))
+        rule_findings.sort(key=lambda f: sev_order.get(f.get('severity', 'info'), 3))
         for f in rule_findings[:MAX_FINDINGS_PER_RULE]:
-            w = SEVERITY_WEIGHTS.get(f.get('severity', 'INFO'), 0)
+            w = SEVERITY_WEIGHTS.get(f.get('severity', 'info'), 0)
             w *= CONFIDENCE_WEIGHTS.get(f.get('confidence', 'deterministic'), 1.0)
             penalty += w
 
@@ -182,11 +185,10 @@ def format_text_report(result: dict) -> str:
 
     lines.append(f'Total findings:     {summary.get("total_findings", 0)}')
     lines.append(f'Categories checked: {summary.get("categories_checked", 0)}')
-    lines.append(f'  CRITICAL:    {summary.get("critical", 0)}')
-    lines.append(f'  HIGH:        {summary.get("high", 0)}')
-    lines.append(f'  MEDIUM:      {summary.get("medium", 0)}')
-    lines.append(f'  LOW:         {summary.get("low", 0)}')
-    lines.append(f'  INFO:        {summary.get("info", 0)}')
+    by_sev = summary.get('by_severity', {}) or {}
+    lines.append(f'  error:       {by_sev.get("error", 0)}')
+    lines.append(f'  warning:     {by_sev.get("warning", 0)}')
+    lines.append(f'  info:        {by_sev.get("info", 0)}')
     lines.append('')
 
     if not findings:
@@ -445,17 +447,22 @@ def main():
     # Apply suppressions
     apply_suppressions(findings, config.get('suppressions', []))
 
-    # Build summary
-    counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'INFO': 0}
-    active_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'INFO': 0}
+    # Build summary over the standard v1.3 severity vocabulary.  EMC
+    # findings go through _make_finding which normalizes legacy
+    # CRITICAL/HIGH/MEDIUM/LOW/INFO to error/warning/info — we count the
+    # normalized buckets directly.
+    counts = {'error': 0, 'warning': 0, 'info': 0}
+    active_counts = {'error': 0, 'warning': 0, 'info': 0}
     suppressed_count = 0
     for f in findings:
-        sev = f.get('severity', 'INFO')
-        counts[sev] = counts.get(sev, 0) + 1
+        sev = str(f.get('severity', 'info')).lower()
+        if sev not in counts:
+            sev = 'info'
+        counts[sev] += 1
         if f.get('suppressed'):
             suppressed_count += 1
         else:
-            active_counts[sev] = active_counts.get(sev, 0) + 1
+            active_counts[sev] += 1
 
     # Use only active (non-suppressed) findings for derived metrics
     active_findings = [f for f in findings if not f.get('suppressed')]
@@ -470,21 +477,23 @@ def main():
                                             active_findings)
 
     # Pre-rollup by category for downstream consumers
-    _sev_order = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
+    _sev_order = {"error": 3, "warning": 2, "info": 1}
     category_summary = {}
     for f in findings:
         cat = f.get("category", "other")
         if cat not in category_summary:
             category_summary[cat] = {
                 "count": 0,
-                "max_severity": "INFO",
-                "severities": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0},
+                "max_severity": "info",
+                "severities": {"error": 0, "warning": 0, "info": 0},
                 "suppressed_count": 0,
             }
         cs = category_summary[cat]
         cs["count"] += 1
-        sev = f.get("severity", "INFO")
-        cs["severities"][sev] = cs["severities"].get(sev, 0) + 1
+        sev = str(f.get("severity", "info")).lower()
+        if sev not in cs["severities"]:
+            sev = "info"
+        cs["severities"][sev] += 1
         if f.get("suppressed"):
             cs["suppressed_count"] += 1
         if _sev_order.get(sev, 0) > _sev_order.get(cs["max_severity"], 0):
@@ -498,18 +507,8 @@ def main():
             'categories_checked': len(category_summary),
             'active': len(findings) - suppressed_count,
             'suppressed': suppressed_count,
-            # Raw per-severity counts — deprecated, consumer migration in v1.4
-            'critical': counts['CRITICAL'],
-            'high': counts['HIGH'],
-            'medium': counts['MEDIUM'],
-            'low': counts['LOW'],
-            'info': counts['INFO'],
-            # Standardized severity rollup (medium+low collapse to warning)
-            'by_severity': {
-                'error': counts['CRITICAL'] + counts['HIGH'],
-                'warning': counts['MEDIUM'] + counts['LOW'],
-                'info': counts['INFO'],
-            },
+            # Standardized severity rollup — single source of truth.
+            'by_severity': dict(counts),
             'emc_risk_score': risk_score,
         },
         'target_standard': args.standard,
@@ -522,17 +521,32 @@ def main():
         'elapsed_s': round(elapsed, 3),
     }
 
-    # --compact is presentation-only: strip INFO findings from output
+    # --compact is presentation-only: strip info findings from output
     if args.compact:
         result['findings'] = [f for f in result['findings']
-                              if f.get('severity', 'INFO') != 'INFO']
+                              if str(f.get('severity', 'info')).lower() != 'info']
 
     from output_filters import apply_output_filters
     apply_output_filters(result, args.stage, args.audience)
 
-    # Compute trust_summary post-filter so it matches the final findings[]
-    # emitted to consumers (KH-311).
-    result['trust_summary'] = compute_trust_summary(result['findings'])
+    # Rebuild summary + trust_summary post-filter so the envelope matches
+    # the final findings[] emitted to consumers. --compact and
+    # apply_output_filters can both mutate findings after the initial
+    # summary was built (KH-311 for trust_summary; same idea here for
+    # total_findings + by_severity).
+    _final = result.get('findings', []) if isinstance(result.get('findings'), list) else []
+    _final_counts = {'error': 0, 'warning': 0, 'info': 0}
+    for _f in _final:
+        if not isinstance(_f, dict):
+            continue
+        _s = str(_f.get('severity', 'info')).lower()
+        if _s not in _final_counts:
+            _s = 'info'
+        _final_counts[_s] += 1
+    if isinstance(result.get('summary'), dict):
+        result['summary']['total_findings'] = len(_final)
+        result['summary']['by_severity'] = _final_counts
+    result['trust_summary'] = compute_trust_summary(_final)
 
     # Analysis cache integration
     if args.analysis_dir:

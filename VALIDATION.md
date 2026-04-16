@@ -2,7 +2,7 @@
 
 This document describes how kicad-happy is tested and validated. Every change to the analysis engine is verified against a corpus of real-world KiCad projects before release.
 
-*Auto-generated on 2026-04-09 by `generate_validation_md.py`.*
+*Auto-generated on 2026-04-16 by `generate_validation_md.py`.*
 
 ## Why this matters
 
@@ -65,11 +65,11 @@ Every analysis script runs against every applicable file in the corpus. Nothing 
 
 | Analyzer | Files tested | Success rate |
 |----------|-------------|--------------|
-| Schematic (`analyze_schematic.py`) | 36,545 | 100% |
-| PCB (`analyze_pcb.py`) | 18,726 | 100% |
-| Gerber (`analyze_gerbers.py`) | 5,447 | 100% |
-| EMC (`analyze_emc.py`) | 36,529 | 100% |
-| SPICE (`simulate_subcircuits.py`) | 36,547 | 100% |
+| Schematic (`analyze_schematic.py`) | 36,577 | 100% |
+| PCB (`analyze_pcb.py`) | 18,745 | 100% |
+| Gerber (`analyze_gerbers.py`) | 5,506 | 100% |
+| EMC (`analyze_emc.py`) | 36,658 | 100% |
+| SPICE (`simulate_subcircuits.py`) | 36,552 | 100% |
 
 A single unhandled exception across any analyzer on any file in the corpus is treated as a release blocker.
 
@@ -159,7 +159,7 @@ The harness requires Python 3.8+ and a checkout of the corpus repos. ngspice is 
 
 All analyzer bugs found during validation are tracked with sequential IDs:
 
-- `KH-001` through `KH-228`: analyzer issues (208 filed, 208 closed, 0 open)
+- `KH-001` through `KH-322`: analyzer issues (275 filed, 275 closed, 0 open)
 - `TH-001` through `TH-008`: harness infrastructure issues
 
 Each closed issue has a corresponding bugfix regression guard assertion that prevents the bug from returning.
@@ -169,15 +169,15 @@ Each closed issue has a corresponding bugfix regression guard assertion that pre
 | Metric | Value |
 |--------|-------|
 | Repos in corpus | 5,856 |
-| Schematic files | 36,545 |
-| PCB files | 18,726 |
-| Gerber directories | 5,447 |
-| EMC analyses | 36,529 |
-| SPICE simulations | 36,547 |
+| Schematic files | 36,577 |
+| PCB files | 18,745 |
+| Gerber directories | 5,506 |
+| EMC analyses | 36,658 |
+| SPICE simulations | 36,552 |
 | Components parsed | 1,305,219 |
 | Nets traced | 2,093,210 |
 | Regression assertions | 2,042,829 at 100% |
-| Bugfix guards | 67 (100% — no regressions) |
-| Closed issues | 208 analyzer + 8 harness |
+| Bugfix guards | 76 (100% — no regressions) |
+| Closed issues | 275 analyzer + 8 harness |
 | Open issues | 0 |
 | Schematic detectors | 42 |
