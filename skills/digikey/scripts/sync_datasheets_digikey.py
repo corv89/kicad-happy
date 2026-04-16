@@ -726,6 +726,13 @@ def sync_datasheets(
             print(f"\n  Tip: Try LCSC or element14 sync to fill gaps — they share"
                   f" the same datasheets/ directory and skip already-downloaded parts.",
                   file=sys.stderr)
+        if downloaded or already_present:
+            print(f"\n  Next: extract structured specs for IC-aware analyzer checks",
+                  file=sys.stderr)
+            print(f"        (VM-001, PS-001, PR-004, DP-002). The `datasheets` skill",
+                  file=sys.stderr)
+            print(f"        reads PDFs and writes {out_dir}/extracted/<MPN>.json.",
+                  file=sys.stderr)
 
     return summary
 

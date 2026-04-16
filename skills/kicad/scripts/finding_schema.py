@@ -199,7 +199,9 @@ def compute_trust_summary(findings, bom=None):
         'trust_level': trust_level,
         'by_confidence': by_confidence,
         'by_evidence_source': by_evidence,
-        'provenance_coverage_pct': round(100 * has_provenance / total, 1) if total else 100.0,
+        # None when no findings — avoids "100% coverage of nothing"
+        # misleading aggregates in downstream consumers.
+        'provenance_coverage_pct': round(100 * has_provenance / total, 1) if total else None,
     }
     if unknown_confidence:
         result['unknown_confidence'] = unknown_confidence

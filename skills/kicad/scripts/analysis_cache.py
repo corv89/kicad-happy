@@ -213,7 +213,7 @@ def generate_run_id(analysis_dir: Optional[str] = None) -> str:
     If analysis_dir is provided and a folder with that name already exists,
     appends a suffix: 2026-04-08_1919-2, 2026-04-08_1919-3, etc.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()
     base_id = now.strftime('%Y-%m-%d_%H%M')
 
     if analysis_dir is None or not os.path.isdir(analysis_dir):
@@ -318,8 +318,7 @@ def create_run(analysis_dir: str,
         'source_hashes': source_hashes,
         'outputs': merged_outputs,
         'scripts': scripts,
-        'generated': datetime.now(timezone.utc).isoformat(
-            timespec='seconds').replace('+00:00', 'Z'),
+        'generated': datetime.now().astimezone().isoformat(timespec='seconds'),
         'pinned': False,
     }
     save_manifest(analysis_dir, manifest)
@@ -368,8 +367,7 @@ def overwrite_current(analysis_dir: str,
         existing = run_entry.get('source_hashes', {}) or {}
         existing.update(source_hashes)
         run_entry['source_hashes'] = existing
-    run_entry['generated'] = datetime.now(timezone.utc).isoformat(
-        timespec='seconds').replace('+00:00', 'Z')
+    run_entry['generated'] = datetime.now().astimezone().isoformat(timespec='seconds')
 
     # Update outputs map for any new output types written
     outputs = run_entry.setdefault('outputs', {})

@@ -8,10 +8,16 @@ structured report.
 
 Usage:
     python3 simulate_subcircuits.py analysis.json
-    python3 simulate_subcircuits.py analysis.json --output sim_report.json
+    python3 simulate_subcircuits.py --schematic analysis.json --output sim_report.json
+    python3 simulate_subcircuits.py --analysis-dir analysis/
     python3 simulate_subcircuits.py analysis.json --workdir /tmp/spice_runs
     python3 simulate_subcircuits.py analysis.json --timeout 10
     python3 simulate_subcircuits.py analysis.json --types rc_filters,voltage_dividers
+
+When --analysis-dir is given, the schematic is auto-resolved from the current
+run (analysis/<run>/schematic.json), the output is written to spice.json in
+the same run and registered in the manifest, and simulation artifacts (.cir,
+.log) are written to analysis/<run>/spice_work/ instead of /tmp/.
 
 Requires: ngspice (install: apt install ngspice / brew install ngspice)
 """
@@ -413,7 +419,17 @@ def main():
     )
     parser.add_argument(
         "input",
+        nargs="?",
         help="Path to analyzer JSON output (from analyze_schematic.py --output)",
+    )
+    parser.add_argument(
+        "--schematic", "-s",
+        help="Path to schematic analyzer JSON (alias for positional input)",
+    )
+    parser.add_argument(
+        "--analysis-dir",
+        help="Analysis cache directory. When set, auto-resolves schematic "
+             "from current run and writes spice.json into the run folder.",
     )
     parser.add_argument(
         "--output", "-o",
@@ -421,7 +437,8 @@ def main():
     )
     parser.add_argument(
         "--workdir", "-w",
-        help="Directory for simulation files (default: temp dir)",
+        help="Directory for simulation files (default: <run>/spice_work/ "
+             "when --analysis-dir is set, else a temp dir)",
     )
     parser.add_argument(
         "--timeout", "-t",
@@ -475,6 +492,32 @@ def main():
 
     args = parser.parse_args()
 
+    # Resolve input: --schematic, positional, or --analysis-dir auto-resolve
+    input_path = args.schematic or args.input
+    workdir = args.workdir
+    if args.analysis_dir:
+        # analysis_cache lives in skills/kicad/scripts/
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', '..', 'kicad', 'scripts'))
+        from analysis_cache import load_manifest, MANIFEST_FILENAME
+        analysis_dir = os.path.abspath(args.analysis_dir)
+        manifest = load_manifest(analysis_dir)
+        current = manifest.get('current') if manifest else None
+        if not current:
+            print(f"Error: no 'current' run in {analysis_dir}/{MANIFEST_FILENAME}. "
+                  f"Run analyze_schematic.py --analysis-dir first.",
+                  file=sys.stderr)
+            sys.exit(1)
+        run_dir = os.path.join(analysis_dir, current)
+        if not input_path:
+            input_path = os.path.join(run_dir, 'schematic.json')
+        if not workdir:
+            workdir = os.path.join(run_dir, 'spice_work')
+
+    if not input_path:
+        parser.error("one of --schematic / positional input / --analysis-dir is required")
+
     # Detect simulator
     from spice_simulator import detect_simulator
     simulator_backend = detect_simulator(args.simulator)
@@ -488,10 +531,10 @@ def main():
 
     # Read analysis JSON
     try:
-        with open(args.input, "r") as f:
+        with open(input_path, "r") as f:
             analysis = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        print(f"Error reading {args.input}: {e}", file=sys.stderr)
+        print(f"Error reading {input_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Parse types filter
@@ -520,7 +563,7 @@ def main():
     # Run simulations
     report = simulate_subcircuits(
         analysis,
-        workdir=args.workdir,
+        workdir=workdir,
         timeout=args.timeout,
         types=types,
         parasitics=parasitics_data,
@@ -537,6 +580,47 @@ def main():
             r.pop("log_file", None)
         report.pop("workdir", None)
 
+    # Analysis cache integration — write spice.json into the current run folder
+    # and update the manifest so downstream tools pick it up.
+    if args.analysis_dir:
+        import tempfile
+        from analysis_cache import (hash_source_file, should_create_new_run,
+                                    create_run, overwrite_current,
+                                    CANONICAL_OUTPUTS, MANIFEST_FILENAME,
+                                    save_manifest, _empty_manifest,
+                                    GITIGNORE_CONTENT)
+        os.makedirs(analysis_dir, exist_ok=True)
+        manifest_path = os.path.join(analysis_dir, MANIFEST_FILENAME)
+        if not os.path.isfile(manifest_path):
+            save_manifest(analysis_dir, _empty_manifest())
+        gitignore_path = os.path.join(analysis_dir, '.gitignore')
+        if not os.path.isfile(gitignore_path):
+            with open(gitignore_path, 'w') as f:
+                f.write(GITIGNORE_CONTENT)
+
+        source_hashes = {}
+        h = hash_source_file(os.path.abspath(input_path))
+        if h:
+            source_hashes[os.path.basename(input_path)] = h
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            canonical = CANONICAL_OUTPUTS.get('spice', 'spice.json')
+            tmp_out = os.path.join(tmpdir, canonical)
+            with open(tmp_out, 'w') as f:
+                json.dump(report, f, indent=2)
+
+            if should_create_new_run(analysis_dir, tmpdir):
+                run_id = create_run(analysis_dir, tmpdir,
+                                    source_hashes=source_hashes,
+                                    scripts={'spice': 'simulate_subcircuits.py'})
+                print(f'SPICE simulation cached: new run {run_id}',
+                      file=sys.stderr)
+            else:
+                overwrite_current(analysis_dir, tmpdir,
+                                  source_hashes=source_hashes)
+                print('SPICE simulation cached: updated current run',
+                      file=sys.stderr)
+
     # Output
     output_json = json.dumps(report, indent=2)
     if args.output:
@@ -550,7 +634,7 @@ def main():
             f"{s['skip']} skip ({report['total_elapsed_s']:.1f}s)",
             file=sys.stderr,
         )
-    else:
+    elif not args.analysis_dir:
         print(output_json)
 
 
