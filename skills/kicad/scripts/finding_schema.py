@@ -273,6 +273,8 @@ class Det:
     LED_AUDIT = 'audit_led_circuits'
     CONNECTOR_GROUND_AUDIT = 'audit_connector_ground_distribution'
     RAIL_SOURCE_AUDIT = 'audit_rail_sources'
+    SOURCING_GATE = 'audit_sourcing_gate'
+    DATASHEET_COVERAGE = 'audit_datasheet_coverage'
     # Connectivity detectors
     CONNECTIVITY_SINGLE_PIN = 'analyze_connectivity'
     # Validation detectors
