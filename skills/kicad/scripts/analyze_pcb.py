@@ -914,7 +914,21 @@ def extract_vias(root: list) -> dict:
         drill = get_value(via, "drill")
         net = get_value(via, "net")
         layers_node = find_first(via, "layers")
-        via_type = get_value(via, "type")  # blind, micro, etc.
+
+        # Via type is a bare token between 'via' and the first sub-list,
+        # not a (type X) sublist. KiCad writers emit:
+        #   Through: (via (at ...) ...)                — no token
+        #   Blind:   (via blind (at ...) ...)
+        #   Buried:  (via buried (at ...) ...)         — new in 10.0
+        #   Micro:   (via micro (at ...) ...)
+        via_type = "through"
+        for child in via[1:]:
+            if isinstance(child, str) and child in ("blind", "buried", "micro"):
+                via_type = child
+                break
+            if isinstance(child, list):
+                # First sub-list ends the bare-token region
+                break
 
         via_info = {
             "x": at[0] if at else 0,
@@ -922,13 +936,12 @@ def extract_vias(root: list) -> dict:
             "size": float(size) if size else 0,
             "drill": float(drill) if drill else 0,
             "net": _net_id(net),
+            "type": via_type,  # always emit; downstream defaults no longer needed
         }
         if net and not net.lstrip("-").isdigit():
             via_info["_net_name"] = net
         if layers_node and len(layers_node) > 1:
             via_info["layers"] = [l for l in layers_node[1:] if isinstance(l, str)]
-        if via_type:
-            via_info["type"] = via_type
         # Free (unanchored) vias — typically stitching or thermal
         if get_value(via, "free") == "yes":
             via_info["free"] = True
@@ -6391,7 +6404,7 @@ def _get_schema():
         "vias": {
             "count": "int", "size_distribution": "{size_str: count}",
             "_analysis": "via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}, via_current: [warning]",
-            "_with_full_flag": "vias: [{x, y: float, layers: [string], size, drill: float, net: int|null}]",
+            "_with_full_flag": "vias: [{x, y: float, layers: [string], size, drill: float, net: int|null, type: 'through|blind|buried|micro'}]",
         },
         "zones": "[{net: int (net ID), net_name: string (net name), priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool, is_keepout: bool (opt), keepout: {tracks, vias, pads, copperpour, footprints} (opt)}]",
         "keepout_zones": "[{name, layers: [string], restrictions: {tracks, vias, pads, copperpour, footprints}, bounding_box: [min_x, min_y, max_x, max_y], area_mm2: float, nearby_components: [string]}]",
