@@ -2,7 +2,7 @@
 
 Canonical schema for structured datasheet extraction JSON files stored in `datasheets/extracted/`. The extraction itself is performed by the LLM reading selected PDF pages; this document defines what fields the LLM must produce and how the cache manager and verifier interpret them.
 
-Current `EXTRACTION_VERSION`: **1** (in `datasheet_extract_cache.py`). Bump this constant when the schema changes to trigger re-extraction of all cached files.
+Current `EXTRACTION_VERSION`: **2** (in `datasheet_extract_cache.py`). Bump this constant when the schema changes to trigger re-extraction of all cached files.
 
 ---
 
@@ -15,7 +15,10 @@ Current `EXTRACTION_VERSION`: **1** (in `datasheet_extract_cache.py`). Bump this
   "category": "switching_regulator",
   "package": "SOT-23-6 (6-pin)",
   "description": "1A, 5V, 1.2MHz boost converter with 0.5V input",
+  "topology": "boost",
   "pins": [...],
+  "features": {...},
+  "peripherals": {...},
   "absolute_maximum_ratings": {...},
   "recommended_operating_conditions": {...},
   "electrical_characteristics": {...},
@@ -27,20 +30,23 @@ Current `EXTRACTION_VERSION`: **1** (in `datasheet_extract_cache.py`). Bump this
 
 ### Top-Level Fields
 
-| Field | Type | Nullable | Description |
-|-------|------|----------|-------------|
-| `mpn` | string | no | Manufacturer part number, exact including suffix |
-| `manufacturer` | string | no | Manufacturer name |
-| `category` | string | no | Component category (see category list below) |
-| `package` | string | yes | Package name and pin count, e.g. `"SOT-23-6 (6-pin)"` |
-| `description` | string | yes | One-line description from datasheet |
-| `pins` | array | no | Per-pin specifications (may be empty if pin table not found) |
-| `absolute_maximum_ratings` | object | yes | Absolute limits; null if section not found |
-| `recommended_operating_conditions` | object | yes | Operating ranges; null if section not found |
-| `electrical_characteristics` | object | yes | Category-dependent key specs |
-| `application_circuit` | object | yes | Reference design and component recommendations |
-| `spice_specs` | object | yes | SPICE behavioral model parameters |
-| `extraction_metadata` | object | no | Cache bookkeeping (source PDF, score, version) |
+| Field | Type | Nullable | Description | Added in v2 |
+|-------|------|----------|-------------|-------------|
+| `mpn` | string | no | Manufacturer part number, exact including suffix | — |
+| `manufacturer` | string | no | Manufacturer name | — |
+| `category` | string | no | Component category (see category list below) | — |
+| `package` | string | yes | Package name and pin count, e.g. `"SOT-23-6 (6-pin)"` | — |
+| `description` | string | yes | One-line description from datasheet | — |
+| `topology` | string | yes | Circuit topology: `'boost'`, `'buck'`, `'ldo'`, `'mcu'`, `'sensor'`, `'adc'`, `'mosfet'`, `'bjt'`, `'other'` | yes |
+| `pins` | array | no | Per-pin specifications (may be empty if pin table not found) | — |
+| `features` | object | yes | Device-specific feature flags (has_pg, has_soft_start, etc.) | yes |
+| `peripherals` | object | yes | Peripheral specifications for MCUs (usb, etc.) | yes |
+| `absolute_maximum_ratings` | object | yes | Absolute limits; null if section not found | — |
+| `recommended_operating_conditions` | object | yes | Operating ranges; null if section not found | — |
+| `electrical_characteristics` | object | yes | Category-dependent key specs | — |
+| `application_circuit` | object | yes | Reference design and component recommendations | — |
+| `spice_specs` | object | yes | SPICE behavioral model parameters | — |
+| `extraction_metadata` | object | no | Cache bookkeeping (source PDF, score, version) | — |
 
 ---
 
@@ -77,23 +83,43 @@ Array of pin entries. The schematic verifier joins on `pin.number` (string) to t
 
 ### Pin Entry Fields
 
-| Field | Type | Unit | Nullable | Example | Description |
-|-------|------|------|----------|---------|-------------|
-| `number` | string | — | no | `"1"`, `"A3"`, `"EP"` | Pin number as shown on datasheet |
-| `name` | string | — | no | `"SW"` | Pin name from datasheet |
-| `type` | string | — | no | `"power"` | Functional type (see values below) |
-| `direction` | string | — | yes | `"bidirectional"` | Signal direction (see values below) |
-| `description` | string | — | yes | `"Inductor switch node"` | Brief functional description |
-| `voltage_abs_max` | float | V | yes | `6.0` | Absolute maximum voltage on this pin |
-| `voltage_operating_min` | float | V | yes | `0.5` | Minimum recommended operating voltage |
-| `voltage_operating_max` | float | V | yes | `5.5` | Maximum recommended operating voltage |
-| `current_max_ma` | float | mA | yes | `3600` | Maximum current through this pin |
-| `internal_connection` | string | — | yes | `"Power FET drain"` | What this pin connects to internally |
-| `required_external` | string | — | yes | `"0.47-2.2uH inductor"` | What must be connected — primary field for pin audit |
-| `threshold_high_v` | float | V | yes | `1.2` | Logic high threshold (digital input pins) |
-| `threshold_low_v` | float | V | yes | `0.4` | Logic low threshold (digital input pins) |
-| `has_internal_pullup` | bool | — | yes | `true` | Pin has internal pull-up resistor |
-| `has_internal_pulldown` | bool | — | yes | `false` | Pin has internal pull-down resistor |
+| Field | Type | Unit | Nullable | Example | Description | Added in v2 |
+|-------|------|------|----------|---------|-------------|-------------|
+| `number` | string | — | no | `"1"`, `"A3"`, `"EP"` | Pin number as shown on datasheet | — |
+| `name` | string | — | no | `"SW"` | Pin name from datasheet | — |
+| `function` | string | — | yes | `"EN"` | Functional category; see values below | yes |
+| `type` | string | — | no | `"power"` | Functional type (see values below) | — |
+| `direction` | string | — | yes | `"bidirectional"` | Signal direction (see values below) | — |
+| `description` | string | — | yes | `"Inductor switch node"` | Brief functional description | — |
+| `voltage_abs_max` | float | V | yes | `6.0` | Absolute maximum voltage on this pin | — |
+| `voltage_operating_min` | float | V | yes | `0.5` | Minimum recommended operating voltage | — |
+| `voltage_operating_max` | float | V | yes | `5.5` | Maximum recommended operating voltage | — |
+| `current_max_ma` | float | mA | yes | `3600` | Maximum current through this pin | — |
+| `internal_connection` | string | — | yes | `"Power FET drain"` | What this pin connects to internally | — |
+| `required_external` | string | — | yes | `"0.47-2.2uH inductor"` | What must be connected — primary field for pin audit | — |
+| `threshold_high_v` | float | V | yes | `1.2` | Logic high threshold (digital input pins) | — |
+| `threshold_low_v` | float | V | yes | `0.4` | Logic low threshold (digital input pins) | — |
+| `has_internal_pullup` | bool | — | yes | `true` | Pin has internal pull-up resistor | — |
+| `has_internal_pulldown` | bool | — | yes | `false` | Pin has internal pull-down resistor | — |
+
+### `function` Values (v2)
+
+Canonical pin functional categories, used by `get_pin_function()` in `datasheet_features.py`.
+
+| Value | Description |
+|-------|-------------|
+| `'VIN'` | Input power supply pin |
+| `'VOUT'` | Output voltage or regulated output |
+| `'EN'` | Enable control input |
+| `'PG'` | Power-good indicator output |
+| `'SW'` | Switching node (regulators) |
+| `'FB'` | Feedback input (regulators) |
+| `'GND'` | Ground pin |
+| `'IO'` | General-purpose I/O |
+| `'CLK'` | Clock signal |
+| `'RESET'` | Reset control |
+| `'OTHER'` | Other function not in above list |
+| `None` | Function not specified or unknown |
 
 ### `type` Values
 
@@ -125,6 +151,34 @@ This field is the primary driver for the missing-external-component check. Use t
 - `"Resistor divider from VOUT, Vout = 0.595 * (1 + R1/R2)"`
 - `"Do not connect"` (NC pins)
 - `"Connect to VIN for always-on, or logic control. Do not float."`
+
+---
+
+## `features` (v2)
+
+Device-specific feature flags. This object is null if not applicable to the device category.
+
+| Key | Type | Nullable | Description |
+|-----|------|----------|-------------|
+| `has_pg` | bool | yes | Part has a power-good output pin |
+| `has_soft_start` | bool | yes | Device has integrated soft-start circuit |
+| `iss_time_us` | float | yes | Soft-start time constant in microseconds |
+
+---
+
+## `peripherals` (v2)
+
+Peripheral specifications for MCUs and similar devices. This object is null if not applicable.
+
+### `peripherals.usb`
+
+USB interface specifications. Null if device does not have USB.
+
+| Key | Type | Nullable | Description |
+|-----|------|----------|-------------|
+| `speed` | string | yes | USB speed: `'FS'` (full-speed), `'HS'` (high-speed), `'SS'` (super-speed), or `None` |
+| `native_phy` | bool | yes | Device has native USB PHY (vs external PHY required) |
+| `series_r_required` | bool | yes | Series termination resistors required on D+/D- |
 
 ---
 
@@ -323,9 +377,11 @@ Index keys are MPN strings sanitized by `_sanitize_mpn()`: non-alphanumeric char
 
 ## Schema Versioning
 
-`EXTRACTION_VERSION` is an integer in `datasheet_extract_cache.py`. When the schema changes in a backward-incompatible way, bump this constant. The staleness check in `is_extraction_stale()` compares the stored `extraction_version` against the current constant; any extraction with an older version is treated as stale and queued for re-extraction.
+`EXTRACTION_VERSION` is an integer in `datasheet_extract_cache.py`. When the schema changes in a backward-incompatible way, bump this constant. Helper functions in `datasheet_features.py` check the stored `extraction_version` against the current constant; any extraction with an older version is treated as unavailable.
 
-The staleness check also triggers re-extraction when:
-- The source PDF hash has changed
-- The score is below `MIN_SCORE` (6.0) and retry budget (`MAX_RETRIES = 3`) is not exhausted
-- The extraction is older than `DEFAULT_MAX_AGE_DAYS` (90 days)
+### Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2 | 2026-04-15 | Added `topology` (top-level), `features` object (has_pg, has_soft_start, iss_time_us), `peripherals.usb` object (speed, native_phy, series_r_required), `pins[].function` (canonical pin category) |
+| 1 | (original) | Base schema with pins, electrical_characteristics, application_circuit, spice_specs, etc. |

@@ -21,6 +21,26 @@ The extraction resolution during review:
     1. Check cache (datasheets/extracted/) — instant if fresh
     2. If stale or missing → the agent reads PDF pages and extracts
     3. Score extraction → cache if sufficient (score >= 6.0)
+
+Schema v2 (EXTRACTION_VERSION=2, 2026-04-15):
+  pins[].function: canonical pin category, one of:
+    'VIN' | 'VOUT' | 'EN' | 'PG' | 'SW' | 'FB' | 'GND' | 'IO' |
+    'CLK' | 'RESET' | 'OTHER' | None
+  features.has_pg: bool | None — part has a power-good output pin
+  features.has_soft_start: bool | None — integrated soft-start
+  features.iss_time_us: float | None — soft-start time (microseconds)
+  peripherals.usb: {speed, native_phy, series_r_required} | None (MCUs only)
+    speed: 'FS' | 'HS' | 'SS' | None
+    native_phy: bool | None
+    series_r_required: bool | None
+  topology: 'boost' | 'buck' | 'ldo' | 'mcu' | 'sensor' | 'adc' |
+            'mosfet' | 'bjt' | 'other' | None
+
+Per-pin V_IH/V_IL thresholds already live in pins[].threshold_high_v
+and pins[].threshold_low_v (v1 schema, no change needed).
+
+All v2 fields are nullable. None means 'datasheet didn't specify or
+extraction couldn't verify', distinct from explicit False.
 """
 
 import hashlib
@@ -443,3 +463,44 @@ def update_datasheets_index(datasheets_dir, mpn, extraction):
     with open(tmp, "w") as f:
         json.dump(index, f, indent=2)
     tmp.rename(index_path)
+
+
+# ---------------------------------------------------------------------------
+# v2 schema validation
+# ---------------------------------------------------------------------------
+
+_V2_STRUCTURE = {
+    'topology': ('boost', 'buck', 'ldo', 'mcu', 'sensor', 'adc',
+                 'mosfet', 'bjt', 'other', None),
+    'pin_function': ('VIN', 'VOUT', 'EN', 'PG', 'SW', 'FB', 'GND',
+                     'IO', 'CLK', 'RESET', 'OTHER', None),
+    'usb_speed': ('FS', 'HS', 'SS', None),
+}
+
+
+def validate_v2_extraction(extraction):
+    """Check that a v2 extraction has well-formed optional fields.
+
+    Returns a list of issues (strings). Empty list = valid. Does not
+    complain about missing fields (all are nullable) — only about
+    wrong types or out-of-range values.
+    """
+    issues = []
+    topo = extraction.get('topology')
+    if topo is not None and topo not in _V2_STRUCTURE['topology']:
+        issues.append(f"topology: unexpected value {topo!r}")
+    for pin in extraction.get('pins', []) or []:
+        fn = pin.get('function')
+        if fn is not None and fn not in _V2_STRUCTURE['pin_function']:
+            issues.append(
+                f"pins[{pin.get('number')}].function: unexpected {fn!r}"
+            )
+    peripherals = extraction.get('peripherals') or {}
+    usb = peripherals.get('usb')
+    if isinstance(usb, dict):
+        speed = usb.get('speed')
+        if speed is not None and speed not in _V2_STRUCTURE['usb_speed']:
+            issues.append(
+                f"peripherals.usb.speed: unexpected {speed!r}"
+            )
+    return issues

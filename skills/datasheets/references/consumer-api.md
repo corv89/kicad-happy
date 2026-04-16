@@ -1,89 +1,139 @@
 # Consumer API Reference
 
-How to consume structured datasheet extractions in analyzer code. Covers the `datasheet_features.py` helper (Task 1.2), the raw cache access functions from `datasheet_extract_cache.py`, and the skip-with-INFO pattern for detectors that require extraction data.
+How to consume structured datasheet extractions in analyzer code. Covers the `datasheet_features.py` helper, the raw cache access functions from `datasheet_extract_cache.py`, and the skip-with-INFO pattern for detectors that require extraction data.
 
 ---
 
-## datasheet_features.py (Task 1.2)
+## datasheet_features.py
 
-This module provides typed accessors that abstract cache lookup, null safety, and field path traversal. The functions are forward-referenced here; they are implemented in Task 1.2.
+This module provides typed accessors that abstract cache lookup, null safety, and field path traversal.
 
-### `get_regulator_features(mpn, extract_dir=None) -> dict | None`
+### `get_regulator_features(mpn, *, extract_dir=None, analysis_json=None, project_dir=None) -> dict | None`
 
 Returns a dict of regulator-relevant fields from the extraction, or `None` if no extraction is available.
+
+Returns `None` when:
+- No extraction is cached for the MPN
+- Extraction is stale (below `EXTRACTION_VERSION`)
+- Extraction score is below `MIN_SCORE` (6.0)
+- Extraction topology is not one of: `'boost'`, `'buck'`, `'ldo'`
 
 ```python
 from datasheet_features import get_regulator_features
 
-feat = get_regulator_features('TPS61023DRLR', extract_dir)
+feat = get_regulator_features('TPS61023DRLR')
 # Returns:
 # {
 #     'topology': 'boost',
 #     'has_pg': False,           # None if unknown
-#     'vref_v': 0.595,
+#     'has_soft_start': True,    # None if unknown
+#     'iss_time_us': 12.5,       # None if unknown
 #     'en_v_ih_max': 0.96,       # None if not in extraction
 #     'en_v_il_min': 0.4,        # None if not in extraction
-#     'iss_time_us': None,
-#     'switching_frequency_khz': 1200,
+#     'vin_pin': '2',            # Pin number (str) or None
+#     'vout_pin': '3',           # Pin number (str) or None
+#     'en_pin': '1',             # Pin number (str) or None
+#     'pg_pin': None,            # Pin number (str) or None
 # }
 # or None if no extraction exists for this MPN
 ```
 
-Fields returned: `topology` (from `application_circuit.topology`), `has_pg` (derived from pin names or features), `vref_v` (from `electrical_characteristics.vref_v`), `en_v_ih_max` / `en_v_il_min` (from EN pin `threshold_high_v` / `threshold_low_v`), `iss_time_us` (soft-start time, if present), `switching_frequency_khz`.
+Returned dict fields:
 
-### `get_mcu_features(mpn, extract_dir=None) -> dict | None`
+| Field | Type | Description |
+|-------|------|-------------|
+| `topology` | `'boost' \| 'buck' \| 'ldo'` | Circuit topology |
+| `has_pg` | `bool \| None` | Part has a power-good output pin |
+| `has_soft_start` | `bool \| None` | Integrated soft-start circuit |
+| `iss_time_us` | `float \| None` | Soft-start time in microseconds |
+| `en_v_ih_max` | `float \| None` | EN pin logic-high threshold (V) |
+| `en_v_il_min` | `float \| None` | EN pin logic-low threshold (V) |
+| `vin_pin` | `str \| None` | Pin number of VIN pin |
+| `vout_pin` | `str \| None` | Pin number of VOUT pin |
+| `en_pin` | `str \| None` | Pin number of EN pin |
+| `pg_pin` | `str \| None` | Pin number of PG pin |
+
+### `get_mcu_features(mpn, *, extract_dir=None, analysis_json=None, project_dir=None) -> dict | None`
 
 Returns MCU-relevant fields, or `None` if no extraction is available.
+
+Returns `None` when:
+- No extraction is cached for the MPN
+- Extraction is stale or below `MIN_SCORE`
+- Extraction topology is not `'mcu'`
 
 ```python
 from datasheet_features import get_mcu_features
 
-mcu = get_mcu_features('ESP32-S3', extract_dir)
+mcu = get_mcu_features('ESP32-S3')
 # Returns:
 # {
-#     'usb_speed': 'FS',          # 'FS' | 'HS' | None
+#     'usb_speed': 'FS',          # 'FS' | 'HS' | 'SS' | None
 #     'has_native_usb_phy': True, # None if unknown
 #     'usb_series_r_required': True,
 # }
 # or None if no extraction exists
 ```
 
-Fields returned: `usb_speed` (from `peripherals.usb.speed`), `has_native_usb_phy` (from `peripherals.usb.native_phy`), `usb_series_r_required` (from `peripherals.usb.series_r_required`).
+Returned dict fields:
 
-### `get_pin_function(mpn, pin_name, extract_dir=None) -> str | None`
+| Field | Type | Description |
+|-------|------|-------------|
+| `usb_speed` | `'FS' \| 'HS' \| 'SS' \| None` | USB device speed |
+| `has_native_usb_phy` | `bool \| None` | Native USB PHY present |
+| `usb_series_r_required` | `bool \| None` | Series termination resistors required |
 
-Returns the `type` field from the pin entry matching `pin_name`, or `None` if not found.
+### `get_pin_function(mpn, pin_identifier, *, extract_dir=None, analysis_json=None, project_dir=None) -> str | None`
+
+Returns the functional category of a pin, or `None` if not found or extraction unavailable.
+
+`pin_identifier` matches against `pins[].number` (exact match, string) or `pins[].name` (case-insensitive).
 
 ```python
 from datasheet_features import get_pin_function
 
-fn = get_pin_function('TPS61023DRLR', 'EN', extract_dir)
-# Returns: 'digital' (the pin's type field)
+fn = get_pin_function('TPS61023DRLR', 'EN')
+# Returns: 'EN' (the pin's function field)
 # or None if extraction missing or pin not found
+```
+
+Possible return values: `'VIN'`, `'VOUT'`, `'EN'`, `'PG'`, `'SW'`, `'FB'`, `'GND'`, `'IO'`, `'CLK'`, `'RESET'`, `'OTHER'`, or `None`.
+
+### `is_extraction_available(mpn, *, extract_dir=None, analysis_json=None, project_dir=None) -> bool`
+
+Returns `True` iff a v2+, sufficiently-scored extraction exists for the MPN.
+
+```python
+from datasheet_features import is_extraction_available
+
+if is_extraction_available('TPS61023DRLR'):
+    # Safe to call get_regulator_features()
+    pass
 ```
 
 ---
 
-## None Means "Unknown — Don't Fire"
+## None Contract
 
-The contract for all helper functions: `None` means the extraction data is unavailable, not that the feature is absent. Detectors must treat `None` as "skip" rather than "feature not present".
+The contract for all helper functions: individual fields within a returned dict may be `None`, distinct from `False` or `0`.
 
-| Return value | Meaning | Detector action |
-|-------------|---------|----------------|
-| `None` | No extraction, or field not in extraction | Skip the check; emit INFO |
-| `False` | Extraction present; field explicitly false | Fire the relevant check |
-| `0` / `0.0` | Extraction present; field is zero | Treat as numeric zero |
+| Value | Meaning | Detector action |
+|-------|---------|----------------|
+| `None` (whole return) | No extraction cached, stale, or low score | Skip the check; emit INFO |
+| `None` (field within dict) | Datasheet didn't specify this field | Treat as unknown; do not fire checks based on this field |
+| `False` | Datasheet explicitly says feature is absent | Fire relevant checks if configured |
+| `0` / `0.0` | Datasheet specifies zero | Treat as numeric zero |
 
-This distinction matters for boolean fields like `has_pg` and `has_native_usb_phy`. A `None` return means you cannot determine whether the feature exists. A `False` return means the extraction was found and says the feature is absent.
+Detectors must distinguish `None` (unknown) from `False` (explicitly no). Example: `has_pg=None` means unknown; `has_pg=False` means confirmed absent.
 
 ---
 
 ## Skip Pattern for Detectors
 
-When a detector needs extraction data and none is available, emit an INFO-level finding and return — do not fire the rule.
+When a detector needs extraction data and the helper function returns `None` (whole function return), emit an INFO-level finding and return — do not fire the rule.
 
 ```python
-feat = get_regulator_features(mpn, extract_dir)
+feat = get_regulator_features(mpn)
 if feat is None:
     findings.append({
         "severity": "INFO",
@@ -95,6 +145,14 @@ if feat is None:
         "detector": "audit_soft_start",
     })
     return findings
+
+# Now safe to use feat['has_soft_start'], etc.
+if feat['has_soft_start'] is None:
+    # Field not in extraction; skip this particular sub-check
+    pass
+elif feat['has_soft_start']:
+    # Feature present; run the check
+    pass
 ```
 
 Format for the skip message:
@@ -137,23 +195,6 @@ Resolves the `datasheets/extracted/` directory for a project:
 extract_dir = resolve_extract_dir(project_dir="/path/to/project")
 ```
 
-### `get_extraction_for_review(mpn, extract_dir, datasheets_dir=None) -> (dict | None, str)`
-
-High-level function that checks freshness. Returns `(extraction_dict, status)` where status is one of:
-- `"cached"` — fresh, use it
-- `"stale:<reason>"` — exists but stale; extraction is returned but may need refresh
-- `"missing"` — no data for this MPN
-
-```python
-extraction, status = get_extraction_for_review(mpn, extract_dir, datasheets_dir)
-if status == "missing":
-    # skip
-elif status.startswith("stale"):
-    # use extraction but note it may be outdated
-else:
-    # "cached" — use normally
-```
-
 ---
 
 ## Resolving extract_dir in Detectors
@@ -175,32 +216,25 @@ If `extract_dir` does not exist, skip silently (no INFO finding) — this is the
 
 ---
 
-## Schema Field Paths
+## Quality Gate
 
-Reference for navigating the extraction JSON to specific fields used by detectors:
+The helper functions (`get_regulator_features()`, `get_mcu_features()`, etc.) apply a quality gate transparently:
+- Extractions with `extraction_metadata.extraction_score < MIN_SCORE` (6.0) are treated as unavailable.
+- Extractions with `extraction_metadata.extraction_version < EXTRACTION_VERSION` are stale and treated as unavailable.
 
-| Detector intent | Extraction path |
-|----------------|----------------|
-| EN pin threshold high | `pins[name=="EN"].threshold_high_v` |
-| EN pin threshold low | `pins[name=="EN"].threshold_low_v` |
-| Soft-start time | `electrical_characteristics.iss_time_us` or similar |
-| Topology | `application_circuit.topology` |
-| Reference voltage | `electrical_characteristics.vref_v` |
-| Switching frequency | `electrical_characteristics.switching_frequency_khz` |
-| Input cap recommendation | `application_circuit.input_cap_recommended` |
-| Output cap recommendation | `application_circuit.output_cap_recommended` |
-| Decoupling recommendation | `application_circuit.decoupling_cap` |
-| USB speed | `peripherals.usb.speed` |
-| USB native PHY | `peripherals.usb.native_phy` |
-| USB series R | `peripherals.usb.series_r_required` |
-| Power-good pin present | Look for pin name matching "PG", "PGOOD", "POWER_GOOD" |
+This means a `None` return from a helper does not require the detector to check the score separately. For direct cache access, apply the same gate:
 
-Note: `peripherals.usb.*` fields are schema v2 additions and will be null in extractions produced under `EXTRACTION_VERSION = 1`. When `EXTRACTION_VERSION` is bumped to 2, these fields trigger re-extraction.
+```python
+from datasheet_extract_cache import get_cached_extraction, EXTRACTION_VERSION, MIN_SCORE
 
----
+ext = get_cached_extraction(extract_dir, mpn)
+if not ext:
+    return []  # skip
 
-## Trust Gate in datasheet_verify.py
+meta = ext.get('extraction_metadata') or {}
+if (meta.get('extraction_version') or 0) < EXTRACTION_VERSION:
+    return []  # stale, skip
 
-The verification bridge (`datasheet_verify.py`) applies an extraction quality gate before using any extraction: if `extraction_metadata.extraction_score < 6.0`, the extraction is discarded and the component is skipped. This avoids false positives from low-quality extractions.
-
-Detectors that use `get_regulator_features()` or `get_mcu_features()` should apply the same gate internally, or rely on the helper functions to apply it transparently. Do not use an extraction whose score is below `MIN_SCORE` (6.0) to drive HIGH or CRITICAL findings.
+if (meta.get('extraction_score') or 0) < MIN_SCORE:
+    return []  # low quality, skip
+```
