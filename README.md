@@ -433,23 +433,28 @@ Or just set up the GitHub Action and get automated reviews on every PR.
 | KiCad 6  | Full                          | Full | Full   |
 | KiCad 5  | Full (legacy `.sch` + `.lib`) | Full | Full   |
 
-## 🎯 v1.3 — Harmonized Analysis (Prerelease)
+## 🎯 v1.3 — Harmonized Analysis
 
-v1.2 made findings trustworthy. v1.3 makes them uniform. **Every analyzer** — schematic, PCB, Gerber, thermal, lifecycle — now produces the same flat `findings[]` format with rich envelopes (`detector`, `rule_id`, `severity`, `confidence`, `recommendation`, `report_context`). One schema to query, filter, and export. The `signal_analysis` wrapper is gone; subcircuit detections sit alongside validation checks in a single stream you can slice by stage or audience.
+v1.2 made findings trustworthy. v1.3 makes them uniform and traceable. **Every analyzer** — schematic, PCB, Gerber, thermal, EMC, cross-analysis, SPICE, lifecycle — now produces the same flat `findings[]` format with rich envelopes (`detector`, `rule_id`, `severity`, `confidence`, `evidence_source`, `recommendation`, `report_context`). Every finding carries its own provenance. One schema to query, filter, export, and audit.
 
-52 commits. 16 new detectors. PCB intelligence (union-find connectivity, 6 cross-domain checks). Stage/audience filtering. Output harmonization across 25 consumer files. Full harness regression at 1.76M assertions, 99.98% pass.
+168 commits. 22 new detectors. Trust infrastructure (confidence + evidence taxonomies, trust_summary, per-finding provenance). PCB intelligence (union-find connectivity, 6 cross-domain checks, 7 DFM/assembly checks). Stage/audience filtering. Datasheet pipeline promoted to its own skill. KiCad 10 format compatibility. Full harness regression at 2M+ assertions, 99.98% pass.
 
 **Highlights:**
 
 | Category | Capabilities |
 | --- | --- |
-| **Harmonized output** | All 7 analyzers produce `{analyzer_type, summary, findings[]}`. Flat finding envelope with detector/rule_id/severity/confidence/recommendation/report_context. `signal_analysis` wrapper removed. |
-| **16 new detectors** | Wireless modules, transformer SMPS feedback, I2C address conflicts, energy harvesting, PWM LED dimming, headphone jacks, plus 10 validation detectors (pull-ups, voltage levels, protocol buses, feedback stability). |
+| **Harmonized output** | All 8 analyzers produce `{analyzer_type, schema_version, summary, findings[], trust_summary}`. Flat finding envelope with detector/rule_id/severity/confidence/evidence_source/recommendation/report_context. `signal_analysis` wrapper removed. |
+| **Trust infrastructure** | Confidence taxonomy (`deterministic`, `heuristic`, `datasheet-backed`). Evidence source taxonomy. `make_provenance()` on all 61 detectors. `trust_summary` rollup on every output. Risk scores weight heuristic findings 0.5x. |
+| **22 new detectors** | 7 validation (pull-ups, voltage mismatch, protocol buses, power sequencing, LED resistor, feedback stability) + 6 domain (wireless, transformer SMPS, I2C conflicts, supercaps, PWM LEDs, headphone jacks) + 9 audit (SS-001/002 sourcing, DS-001/002/003 datasheet coverage, RS-001/002 rail sources, LB-001 label aliases, PP-001 power pin DC paths). |
 | **PCB intelligence** | Union-find copper connectivity graph. 6 new cross-domain checks: critical net routing, return path continuity, trace width vs current, power island detection, voltage plane splits, differential pair return paths. |
 | **PCB DFM/assembly** | 7 new checks: fiducial presence, test point coverage, orientation consistency, silkscreen-pad overlap, via-in-pad tenting, board-edge via clearance, keepout violations. |
-| **Stage/audience filtering** | `--stage schematic\|layout\|pre_fab\|bring_up` and `--audience designer\|reviewer\|manager` flags on all analyzers. Filter findings to what matters for each review phase. |
-| **Rich format migration** | All detectors (75+) migrated to rich finding format. Centralized `Det` constants, `get_findings()`, `group_findings()` helpers in `finding_schema.py`. |
-| **Test corpus** | 5,829 repos, 1.76M regression assertions, 350K structural assertions, 802 unit tests, zero crashes. |
+| **Stage/audience filtering** | `--stage schematic\|layout\|pre_fab\|bring_up` and `--audience designer\|reviewer\|manager` flags on all analyzers. |
+| **Datasheet pipeline** | Promoted to its own top-level skill. Structured per-MPN extraction cache, heuristic page selection, five-dimension quality scoring, consumer helper API with trust gates. |
+| **Cross-analysis** | `cross_analysis.py` consumes schematic + PCB JSON. 6 cross-domain checks: connector current, ESD gaps, decoupling adequacy, 3-way schematic/PCB cross-validation. |
+| **KiCad 10 compat** | KH-318 via type detection (blind/buried/micro now correctly classified, buried split out in KiCad 10). KH-319 `(hide yes)` boolean form handled. |
+| **Schema hardening** | `schema_version: "1.3.0"` on every output. `--schema` synced to real emitted JSON on all analyzers. Deterministic `findings[]` ordering. Stable `detection_id`. |
+| **Tools** | `summarize_findings.py` (cross-run rollup), `export_issues.py` (GitHub Issues), `--mpn-list` batch mode on all 4 distributor sync scripts. |
+| **Test corpus** | 5,829 repos, 2M+ regression assertions at 99.98% pass, 972 unit tests, schema drift regression across all 8 analyzers. |
 
 See the full [CHANGELOG](CHANGELOG.md) for details.
 

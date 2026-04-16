@@ -6,6 +6,167 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ---
 
+## v1.3.0 — 2026-04-16
+
+**Theme: Harmonized Analysis + Trust Infrastructure** — 168 commits making every analyzer speak the same format, every finding carry its own provenance, and the whole pipeline uniformly queryable, filterable, and auditable.
+
+### Harmonized output across all analyzers
+
+Every analyzer — schematic, PCB, Gerber, thermal, EMC, cross-analysis, SPICE, lifecycle — now produces the same top-level envelope:
+
+```json
+{
+  "analyzer_type": "schematic",
+  "schema_version": "1.3.0",
+  "summary": { "by_severity": {...}, ... },
+  "findings": [ {detector, rule_id, category, severity, confidence, ...} ],
+  "trust_summary": { "total_findings": N, "by_confidence": {...}, ... }
+}
+```
+
+The `signal_analysis` wrapper is gone. Subcircuit detections live in the same flat `findings[]` stream as validation checks, DFM rules, and audits. One schema to query, filter, and export.
+
+- `finding_schema.py` — `make_finding()` factory, `Det` constants for all 60+ detectors, `get_findings()` / `group_findings()` consumer helpers
+- All 75+ existing detectors migrated to the rich finding format
+- 25 consumer files updated for the new layout
+- `signal_analysis` wrapper removed from schematic output
+- `confidence_map` removed — per-finding `confidence` is now canonical
+
+### Trust infrastructure
+
+Every finding carries its own trust metadata:
+
+- **Confidence taxonomy** — `deterministic`, `heuristic`, `datasheet-backed`. Risk scores weight heuristic findings at 0.5x.
+- **Evidence source taxonomy** — `parsed_schematic`, `parsed_pcb`, `datasheet_extraction`, `inference`, `heuristic_matching`, etc.
+- **Provenance annotations** — `make_provenance()` calls on all 61 detectors (KH-263 Phase 1). Records which field was used, which datasheet was consulted, which inference chain led to the claim.
+- **trust_summary** — rollup on every analyzer output: finding counts by confidence, by evidence source, datasheet coverage percentage.
+
+Consumers (reports, what-if, release gate) now surface trust posture alongside findings.
+
+### New detectors (22 total, across validation, domain, and audit families)
+
+**Validation detectors** (`validation_detectors.py`):
+- PU-001 pull-up/pull-down resistor presence
+- VM-001 cross-domain voltage mismatch
+- PR-001..004 protocol electrical validation (I2C, SPI, CAN, USB)
+- PS-001 power sequencing dependency graph
+- LR-001 LED resistor sizing
+- FS-001 feedback network stability pre-check
+
+**Domain detectors** (`domain_detectors.py`):
+- WL-001 wireless modules (WiFi/BLE, LoRa, cellular, GPS)
+- TF-001 transformer SMPS feedback (optocoupler + TL431)
+- IA-001 I2C address conflicts
+- SC-001 supercapacitor / energy harvesting
+- PL-001 PWM LED dimming topology
+- AH-001 audio headphone jack switch
+
+**Audit detectors** (new pattern — banner-level findings that aggregate evidence across many components):
+- SS-001 / SS-002 sourcing-gate audits (MPN coverage, BOM-line coverage)
+- DS-001 / DS-002 / DS-003 datasheet-coverage audits
+- RS-001 / RS-002 rail-source audit (jumper-aware trace from rails to regulators/sources)
+- LB-001 label-alias audit (multi-label nets)
+- PP-001 power-pin DC-path audit (IC power pin DC continuity to a rail)
+- NT-001 unnamed-net annotation
+
+### PCB intelligence
+
+New `pcb_connectivity.py` — union-find copper connectivity graph built from pads, tracks, vias, and zone fills. Produces per-net island map with gap locations, disconnected pad pairs, and a full component graph (`--full` mode).
+
+Six new cross-domain PCB checks consuming the connectivity graph:
+- NR-001 critical net routing near board edges
+- RP-002 return path continuity (plane gaps under classified signals)
+- TW-001 trace width validation vs current (IPC-2152)
+- PS-002 power supply island detection
+- VS-002 voltage plane split detection (with signal-crossing analysis)
+- DP-005 differential pair routing quality (via/layer/length asymmetry)
+
+Seven new assembly/DFM checks:
+- FD-001 fiducial presence
+- TE-001 test point coverage
+- OR-001 orientation consistency
+- SK-001 silkscreen-on-pad overlap
+- VP-001 via-in-pad tenting (`--full` only)
+- BV-001 board-edge via clearance (`--full` only)
+- KO-001 keepout violations
+
+### Stage and audience filtering
+
+All analyzers accept `--stage {schematic|layout|pre_fab|bring_up}` and `--audience {designer|reviewer|manager}` flags. Filter findings to what matters for each review phase. Stage readiness (`pass` / `needs_review` / `needs_work`) reported per phase.
+
+### Datasheet pipeline
+
+The datasheet workflow got its own top-level skill (`skills/datasheets/`), promoted from `skills/kicad/scripts/`:
+
+- Structured per-MPN extraction cache in `datasheets/extracted/<MPN>.json`
+- Heuristic page selection with TOC detection and keyword scoring
+- Five-dimension quality scoring rubric
+- Consumer helper API (`datasheet_features.py`) — returns None on cache miss / stale / low-score
+- Cross-check extraction vs schematic usage (consistency verification)
+- Trust gates on all consumers (thermal, SPICE, verifier) — extractions below score 6.0 are ignored
+
+### Cross-analysis
+
+`cross_analysis.py` — consumes schematic + PCB JSON, runs six cross-domain checks:
+- CC-001 connector current capacity vs trace width
+- EG-001 ESD coverage gap analysis
+- DA-001 decoupling strategy adequacy
+- XV-001 / XV-002 / XV-003 schematic/PCB cross-validation
+
+### KiCad 10 format compatibility
+
+- KH-318 PCB via type detection — fixed decade-old bug where `via["type"]` was always None. Now correctly classifies blind/buried/micro (buried added in KiCad 10 file version 20250926).
+- KH-319 `(hide yes)` boolean handling — hidden pins on schematics saved by KiCad 9.0+ now correctly detected.
+
+### Schema hardening (Batch 20)
+
+- `schema_version: "1.3.0"` on every analyzer output
+- Severity normalization (removed raw `critical/high/medium/low/info` aliases in favor of canonical severities)
+- `confidence_map` field removed (replaced by per-finding `confidence`)
+- Legacy `group_findings_legacy()` / `DETECTOR_TO_LEGACY_KEY` removed from first-party code
+- `--schema` output synced to match real emitted JSON on all 8 analyzer types
+- Deterministic `findings[]` ordering + stable `detection_id` (KH-316)
+
+### Tools
+
+- `summarize_findings.py` — cross-run finding summary. Reads the current analysis run, groups findings by rule_id, prints a severity × count table. `--top`, `--severity`, `--json` flags.
+- `export_issues.py` — finding-to-GitHub-Issues export. Structured body, label-based dedup, severity/rule-id filters, dry-run by default.
+- `--mpn-list FILE` on all four distributor sync scripts (KH-312) — batch datasheet sync without a KiCad project. Filters via `is_real_mpn()`, de-duplicates, skips blank lines and `#` comments.
+- `analyze_thermal.py --schema` — rounds out the `--schema` coverage on all analyzers.
+
+### Bugfixes (33+ KH-* issues closed)
+
+Highlights:
+
+- KH-311, KH-313 — EMC detector crashes on edge-case input
+- KH-314 — thermal `--schema` support
+- KH-315 — hierarchy_context schema drift
+- KH-316 — deterministic findings[] ordering
+- KH-317 — XT-001 diff-pair suppression path (session-10 regression)
+- KH-318 / KH-319 — KiCad 10 format-compat (above)
+- KH-312 — `--mpn-list` batch mode (above)
+- KH-283, KH-284, KH-285, KH-286 — PCB analyzer crashes (crystal, netclass, pad position, rich-format migration)
+- KH-263 Phase 1 — provenance annotation rollout
+
+See the issue tracker (harness ISSUES.md / FIXED.md) for the complete list with root causes.
+
+### Test corpus
+
+- 5,829 repos, 2M+ regression assertions at 99.98% pass
+- 972 unit tests, 0 failures
+- Smoke cross-section (27 repos, 16,434 runs) green after KH-318/KH-319
+- quick_200 cross-section (275 repos, 411,198 assertions) green
+- Schema drift regression test covers all 8 analyzers (permanent since session 10)
+
+### Known limitations shipped with v1.3
+
+- `group_findings_legacy()` removed from first-party code but internal consumers (`what_if.py`, `diff_analysis.py`) still use a compat shim pending v1.4 Priority 0 modernization
+- EMC and thermal `summary` retain raw `critical/high/medium/low/info` counts alongside `by_severity` for consumer migration
+- Schematic and PCB outputs have deterministic top-level `findings[]` ordering, but nested-list ordering inside findings (e.g., `load_caps` under DO-DET) is not yet fully deterministic — v1.4 item
+- `fab_release_gate.py` aggregates 4 analyzers (schematic, PCB, thermal, EMC), not cross_analysis — v1.4 enhancement
+
+---
+
 ## v1.2.0 — 2026-04-09
 
 **Theme: Trust + Reach** — 102 commits making the engine trustworthy to teams and reachable from both platforms.
