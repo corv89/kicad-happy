@@ -8997,6 +8997,17 @@ def analyze_schematic(path: str, project_root: str | None = None,
 def _get_schema():
     """Return JSON output schema description for --schema flag."""
     return {
+        "analyzer_type": "string — always 'schematic'",
+        "schema_version": "string — semver (currently '1.3.0')",
+        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
+        "trust_summary": {
+            "total_findings": "int",
+            "trust_level": "string — 'high' | 'mixed' | 'low'",
+            "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
+            "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
+            "provenance_coverage_pct": "float — % of findings with provenance metadata",
+            "bom_coverage": "{mpn_pct: float, datasheet_pct: float} — MPN/datasheet coverage excluding power symbols",
+        },
         "file": "string — input file path",
         "kicad_version": "string — generator version",
         "file_version": "string",
@@ -9008,13 +9019,12 @@ def _get_schema():
             "component_types": "{type_name: count}", "power_rails": "[string]",
             "missing_mpn": "[reference_string]", "missing_footprint": "[reference_string]",
         },
+        "findings": "[{detector, rule_id, severity, confidence, evidence_source, summary, category, components, nets, pins, recommendation, ...detection-specific fields}] — flat list of all findings",
         "bom": "[{value, footprint, mpn, manufacturer, digikey, mouser, lcsc, element14, datasheet, description, references: [string], quantity: int, dnp: bool, type}]",
         "components": "[{reference, value, lib_id, footprint, datasheet, description, mpn, manufacturer, digikey, mouser, lcsc, element14, x: float, y: float, angle: float, mirror_x: bool, mirror_y: bool, unit: int|null, uuid, in_bom: bool, dnp: bool, on_board: bool, type, keywords, pins: [{number, name, type}], parsed_value: {value: float, unit: string}}]",
         "nets": "{net_name: {name, pins: [{component, pin_number, pin_name, pin_type}], point_count: int}}",
         "subcircuits": "[{reference, path, sheet_name, sheet_file, instances: int}]",
-        "ic_pin_analysis": "{ic_ref: {reference, value, pin_summary: {pin_number: {name, type, connected: bool, net}}, function, notes: [string]}}",
-        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
-        "findings": "[{rule_id, severity, summary, category, ...detection-specific fields}] — flat list of ALL signal analysis findings",
+        "ic_pin_analysis": "[{reference, value, pin_summary: {pin_number: {name, type, connected: bool, net}}, function, notes: [string]}]",
         "rail_voltages": "{net_name: voltage_float} — promoted from signal_analysis",
         "net_classifications": "{net_name: {type, ...}} — promoted from signal_analysis",
         "design_analysis": {
@@ -9024,7 +9034,7 @@ def _get_schema():
             "erc_warnings": "[string]",
         },
         "connectivity_issues": {"single_pin_nets": "[net_name]", "multi_driver_nets": "[net_name]", "floating_nets": "[net_name]"},
-        "_optional_sections": "power_budget, power_sequencing, pdn_impedance, sleep_current_audit, usb_compliance, inrush_analysis, bom_optimization, test_coverage, assembly_complexity, sheets (multi-sheet only)",
+        "_optional_sections": "power_budget, power_sequencing, pdn_impedance, sleep_current_audit, usb_compliance, inrush_analysis, bom_optimization, test_coverage, assembly_complexity, sheets (multi-sheet only), missing_info, bom_lock",
         "hierarchy_context": {
             "root_schematic": "string — root .kicad_sch filename",
             "target_sheet": "string — this sub-sheet filename",

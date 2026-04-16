@@ -7,9 +7,10 @@ Quick reference for the JSON output of the three analysis scripts. Use `--schema
 | Key | Type | Description |
 |-----|------|-------------|
 | `analyzer_type` | string | Always `"schematic"` |
+| `schema_version` | string | Semver (currently `"1.3.0"`) |
 | `summary` | object | `{total_findings: int, by_severity: {error, warning, info}}` |
+| `trust_summary` | object | Trust posture (see below) |
 | `findings` | array | All findings — subcircuit detections, validation checks, design observations (see below) |
-| `confidence_map` | object | Per-detector confidence levels |
 | `file` | string | Input file path |
 | `kicad_version` | string | Generator version |
 | `file_version` | string | KiCad file format version |
@@ -19,11 +20,24 @@ Quick reference for the JSON output of the three analysis scripts. Use `--schema
 | `components` | array | Every component with full properties |
 | `nets` | object | Net connectivity map keyed by net name |
 | `subcircuits` | array | Hierarchical sub-sheets |
-| `ic_pin_analysis` | object | Per-IC pin mapping keyed by reference |
+| `ic_pin_analysis` | array | Per-IC pin mapping (list of IC records) |
 | `rail_voltages` | object | `{net_name: voltage_float}` — auto-detected from regulator outputs and power symbol names |
 | `net_classifications` | object | Per-net class (power/data/analog/output_drive/etc.) |
 | `design_analysis` | object | Buses, power domains, ERC warnings |
 | `connectivity_issues` | object | Single-pin nets, multi-driver nets, floating nets |
+
+### trust_summary
+
+```
+total_findings: int,
+trust_level: "high" | "mixed" | "low",
+by_confidence: {deterministic: int, heuristic: int, "datasheet-backed": int},
+by_evidence_source: {datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int},
+provenance_coverage_pct: float,
+bom_coverage: {mpn_pct: float, datasheet_pct: float}  // schematic only
+```
+
+Emitted by all 6 analyzers (schematic, PCB, gerber, thermal, EMC, cross_analysis).
 
 ### statistics
 
@@ -69,7 +83,7 @@ All subcircuit detections, validation checks, and design observations are in the
  evidence_source, fix_params, report_context, ...detector-specific fields}
 ```
 
-Use `detector` to filter by type. The `finding_schema.py` module provides `get_findings(data, detector)` and `group_findings(data)` helpers, plus `Det` constants for all detector names. For legacy compatibility, `group_findings_legacy(data)` reconstructs the old dict-of-lists layout.
+Use `detector` to filter by type. The `finding_schema.py` module provides `get_findings(data, detector)` and `group_findings(data)` helpers, plus `Det` constants for all detector names. `group_findings_legacy(data)` reconstructs the old dict-of-lists layout — it remains for backward compatibility but is scheduled for removal in v1.4 alongside the consumer rewrite of `what_if.py` and `diff_analysis.py`.
 
 **Detector types and their key fields:**
 
@@ -131,7 +145,9 @@ erc_warnings: [string]
 | Key | Type | Description |
 |-----|------|-------------|
 | `analyzer_type` | string | Always `"pcb"` |
+| `schema_version` | string | Semver (currently `"1.3.0"`) |
 | `summary` | object | `{total_findings: int, by_severity: {error, warning, info}}` |
+| `trust_summary` | object | Trust posture (see schematic section) |
 | `findings` | array | All PCB findings — DFM, thermal, placement, assembly checks |
 | `file` | string | Input file path |
 | `kicad_version` | string | Generator version |
@@ -139,7 +155,8 @@ erc_warnings: [string]
 | `statistics` | object | Board-level counts and metrics |
 | `layers` | array | `[{name, type, index}]` |
 | `setup` | object | Design rules, clearances |
-| `nets` | object | `{net_name: net_index}` |
+| `nets` | object | `{str(net_id): net_name}` (net-ID-keyed; use `net_name_to_id` for reverse) |
+| `net_name_to_id` | object | `{net_name: int}` — reverse of `nets` |
 | `board_outline` | object | Bounding box, outline type, edge segments |
 | `component_groups` | object | `{prefix: {count, type, examples}}` |
 | `footprints` | array | Component placements with pad-net mapping |
@@ -194,7 +211,9 @@ via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}
 | Key | Type | Description |
 |-----|------|-------------|
 | `analyzer_type` | string | Always `"gerber"` |
+| `schema_version` | string | Semver (currently `"1.3.0"`) |
 | `summary` | object | `{total_findings: int, by_severity: {error, warning, info}}` |
+| `trust_summary` | object | Trust posture (see schematic section) |
 | `findings` | array | All Gerber findings — missing layers, alignment, drill, paste, board outline |
 | `directory` | string | Scan directory path |
 | `generator` | string | KiCad/other/unknown |
@@ -260,8 +279,8 @@ for f in data['footprints']:
 print(json.dumps(data['statistics'], indent=2))
 
 # All ICs with their pin counts
-for ref, info in data['ic_pin_analysis'].items():
-    print(f"{ref} ({info['value']}): {len(info['pin_summary'])} pins — {info['function']}")
+for ic in data['ic_pin_analysis']:
+    print(f"{ic['reference']} ({ic['value']}): {len(ic['pin_summary'])} pins — {ic['function']}")
 ```
 
 **Formatting tip**: Use f-strings or `json.dumps()` for output — never `%s` or `format()` with lists or dicts, as these raise `TypeError`.

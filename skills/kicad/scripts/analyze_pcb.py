@@ -6321,6 +6321,17 @@ def analyze_pcb(path: str, *, proximity: bool = False,
 def _get_schema():
     """Return JSON output schema description for --schema flag."""
     return {
+        "analyzer_type": "string — always 'pcb'",
+        "schema_version": "string — semver (currently '1.3.0')",
+        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
+        "trust_summary": {
+            "total_findings": "int",
+            "trust_level": "string — 'high' | 'mixed' | 'low'",
+            "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
+            "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
+            "provenance_coverage_pct": "float",
+        },
+        "findings": "[{detector, rule_id, severity, confidence, evidence_source, summary, category, components, nets, pins, recommendation, ...}] — flat list of all findings",
         "file": "string — input file path",
         "kicad_version": "string", "file_version": "string",
         "statistics": {
