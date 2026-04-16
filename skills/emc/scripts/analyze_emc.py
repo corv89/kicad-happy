@@ -339,6 +339,7 @@ def main():
     if args.schema:
         schema = {
             "analyzer_type": "string — always 'emc'",
+            "schema_version": "string — semver (currently '1.3.0')",
             "target_standard": "string — target EMC standard (e.g. 'fcc-class-b')",
             "elapsed_s": "float — analysis wall-clock time",
             "summary": {
@@ -346,16 +347,28 @@ def main():
                 "categories_checked": "int",
                 "active": "int — non-suppressed findings",
                 "suppressed": "int — suppressed findings count",
-                "critical": "int", "high": "int", "medium": "int", "low": "int", "info": "int",
+                "critical": "int — deprecated, retained for consumer compat",
+                "high": "int — deprecated, retained for consumer compat",
+                "medium": "int — deprecated, retained for consumer compat",
+                "low": "int — deprecated, retained for consumer compat",
+                "info": "int — deprecated, retained for consumer compat",
                 "by_severity": "{error: int, warning: int, info: int}",
                 "emc_risk_score": "float (0-100)",
             },
-            "findings": "[{rule_id, category, severity, summary, description, components: [string], nets: [string], recommendation, confidence, evidence_source, report_context}]",
+            "findings": "[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components: [string], nets: [string], pins, recommendation, report_context}]",
+            "trust_summary": {
+                "total_findings": "int — post-filter (KH-311)",
+                "trust_level": "'high' | 'mixed' | 'low'",
+                "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
+                "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
+                "provenance_coverage_pct": "float",
+            },
             "test_plan": "[{test: string, standard_clause, equipment, procedure, expected_result}]",
             "regulatory_coverage": "{standard: {applicable_clauses: int, covered: int, coverage_pct: float}}",
             "category_summary": "{category: {count: int, max_severity, severities: {}, suppressed_count: int}}",
             "per_net_scores": "{net_name: {score: float, findings: int}}",
             "board_info": "{layers: int, components: int, nets: int, switching_regulators: int, ...}",
+            "audience_summary": "{designer: {...}, reviewer: {...}, manager: {...}} — optional, present when --audience is set",
         }
         print(json.dumps(schema, indent=2))
         sys.exit(0)

@@ -1538,6 +1538,17 @@ def _build_gerber_findings(completeness, alignment, drill_classification,
 def _get_schema():
     """Return JSON output schema description for --schema flag."""
     return {
+        "analyzer_type": "string — always 'gerber'",
+        "schema_version": "string — semver (currently '1.3.0')",
+        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
+        "findings": "[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components, nets, pins, recommendation, report_context}] — GR-001..005 (missing layers, alignment, drill, paste apertures, outline closure)",
+        "trust_summary": {
+            "total_findings": "int",
+            "trust_level": "'high' | 'mixed' | 'low'",
+            "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
+            "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
+            "provenance_coverage_pct": "float",
+        },
         "directory": "string — scan directory path",
         "generator": "string (KiCad|other|unknown)",
         "layer_count": "int",

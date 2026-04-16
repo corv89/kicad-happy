@@ -883,10 +883,18 @@ def main():
 
     if args.schema:
         schema = {
-            'analyzer_type': 'cross_analysis',
-            'analysis_time_s': 'float',
-            'summary': {'total_findings': 'int', 'by_severity': '{error, warning, info}'},
-            'findings': '[{detector, rule_id, category, severity, confidence, summary, description, components, nets, recommendation, fix_params, report_context}]',
+            'analyzer_type': "string — always 'cross_analysis'",
+            'schema_version': "string — semver (currently '1.3.0')",
+            'elapsed_s': 'float — analysis wall-clock time',
+            'summary': {'total_findings': 'int', 'by_severity': {'error': 'int', 'warning': 'int', 'info': 'int'}},
+            'findings': '[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components, nets, pins, recommendation, fix_params, report_context}]',
+            'trust_summary': {
+                'total_findings': 'int',
+                'trust_level': "'high' | 'mixed' | 'low'",
+                'by_confidence': '{deterministic: int, heuristic: int, datasheet-backed: int}',
+                'by_evidence_source': '{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}',
+                'provenance_coverage_pct': 'float',
+            },
         }
         print(json.dumps(schema, indent=2))
         sys.exit(0)
