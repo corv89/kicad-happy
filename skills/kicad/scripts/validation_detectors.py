@@ -14,6 +14,20 @@ import re
 
 from kicad_types import AnalysisContext
 from kicad_utils import parse_value, parse_voltage_from_net_name
+
+try:
+    import os as _os, sys as _sys
+    _ds_scripts = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                '..', '..', 'datasheets', 'scripts')
+    if _os.path.isdir(_ds_scripts):
+        _sys.path.insert(0, _os.path.abspath(_ds_scripts))
+    from datasheet_features import get_regulator_features, get_mcu_features
+    _HAS_DS = True
+except ImportError:
+    _HAS_DS = False
+    def get_regulator_features(mpn, **kw): return None
+    def get_mcu_features(mpn, **kw): return None
+
 from detector_helpers import (
     get_components_by_type, get_unique_ics, index_two_pin_components,
     match_ic_keywords,
@@ -335,6 +349,19 @@ _VOLTAGE_THRESHOLDS = {
 
 
 def _estimate_rail_voltage_for_ic(ctx: AnalysisContext, ref: str) -> float | None:
+    """Estimate IC supply rail voltage. Regulators use VIN pin; others use first power net."""
+    comp = ctx.comp_lookup.get(ref, {})
+    mpn = comp.get('mpn') or comp.get('value', '')
+    feat = get_regulator_features(mpn) if mpn else None
+    if feat and feat.get('vin_pin'):
+        vin_pin = str(feat['vin_pin'])
+        pins = ctx.ref_pins.get(ref, {})
+        for pnum, (net, _) in pins.items():
+            if str(pnum) == vin_pin and net and ctx.is_power_net(net) and not ctx.is_ground(net):
+                v = parse_voltage_from_net_name(net)
+                if v is not None:
+                    return v
+
     pins = ctx.ref_pins.get(ref, {})
     for pnum, (net, _) in pins.items():
         if net and ctx.is_power_net(net) and not ctx.is_ground(net):
@@ -404,6 +431,40 @@ def validate_voltage_levels(ctx: AnalysisContext, level_shifters: list[dict] | N
         checked_nets.add(net_name)
         v_max = max(voltages)
         v_min = min(voltages)
+
+        # Check if this is a regulator EN pin — skip if threshold is compatible
+        _EN_PIN_PATTERNS = ('EN', 'ENABLE', 'CE', 'SHDN', 'nSHDN', 'ON', 'ON_OFF', 'RUN')
+        skip_en = False
+        for p in ic_pins_on_net:
+            comp = ctx.comp_lookup.get(p['ref'], {})
+            p_mpn = comp.get('mpn') or comp.get('value', '')
+            # Datasheet-backed path: check EN pin threshold
+            ds_feat = get_regulator_features(p_mpn) if p_mpn else None
+            if ds_feat and ds_feat.get('en_pin'):
+                pin_names = ctx.ref_pins.get(p['ref'], {})
+                for pnum, (net, pname) in pin_names.items():
+                    if net == net_name and str(pnum) == str(ds_feat['en_pin']):
+                        en_ih = ds_feat.get('en_v_ih_max')
+                        if en_ih is not None and v_min >= 2 * en_ih:
+                            skip_en = True
+                            break
+                if skip_en:
+                    break
+            # Heuristic fallback: pin name matches EN pattern on a regulator-family part
+            if not ds_feat:
+                val_mpn = ((comp.get('mpn') or '') + ' ' + (comp.get('value') or '')).upper()
+                is_regulator_like = any(pfx in val_mpn for pfx in (
+                    'TPS6', 'TPS5', 'LM25', 'LM33', 'LM317', 'AP21', 'AMS11',
+                    'MP23', 'MP15', 'XL40', 'RT8', 'SY8', 'MIC29', 'NCP',
+                    'LDO', 'BOOST', 'BUCK', 'REG',
+                ))
+                if is_regulator_like or comp.get('type') == 'power_regulator':
+                    pin_name = (p.get('pin') or '').upper().strip()
+                    if pin_name in _EN_PIN_PATTERNS:
+                        skip_en = True
+                        break
+        if skip_en:
+            continue
 
         low_thresh = _closest_threshold(v_min)
         if low_thresh is None:
@@ -704,6 +765,18 @@ def validate_usb_bus(ctx: AnalysisContext) -> list[dict]:
                 continue
             series_r = [rref for rref in net_to_resistors.get(net, [])
                         if ctx.parsed_values.get(rref) is not None and 15 <= ctx.parsed_values[rref] <= 33]
+            # Check if MCU endpoint has native USB PHY
+            mcu_on_net = None
+            for p in ctx.nets.get(net, {}).get('pins', []):
+                c = ctx.comp_lookup.get(p['component'], {})
+                if c.get('type') not in ('connector',) and match_ic_keywords(c, ('esp32', 'stm32', 'rp2040', 'rp2350', 'nrf52', 'samd', 'lpc', 'atm')):
+                    mcu_mpn = c.get('mpn') or c.get('value', '')
+                    mcu_feat = get_mcu_features(mcu_mpn) if mcu_mpn else None
+                    if mcu_feat and mcu_feat.get('has_native_usb_phy') is True and mcu_feat.get('usb_series_r_required') is False:
+                        mcu_on_net = p['component']
+                        break
+            if mcu_on_net:
+                continue
             if not series_r and 'usb_c' not in val_lib and 'usb3' not in val_lib:
                 findings.append(make_finding(
                     detector='validate_usb_bus', rule_id='PR-004', category='protocol_integrity',
@@ -819,8 +892,25 @@ def validate_power_sequencing(
                     sensitive_loads.append(p['component'])
         if not sensitive_loads:
             continue
+        comp = ctx.comp_lookup.get(ref, {})
+        mpn = comp.get('mpn') or comp.get('value', '')
+        ds_feat = get_regulator_features(mpn) if mpn else None
+        if ds_feat and ds_feat.get('has_pg') is False:
+            continue
         pg_net = _get_pin_net(ctx, ref, _PG_PIN_NAMES)
         if not pg_net:
+            if ds_feat is None and mpn:
+                findings.append(make_finding(
+                    detector='validate_power_sequencing', rule_id='PS-001', category='power_integrity',
+                    summary=f'Regulator {ref}: PG status unknown for {mpn} (no datasheet extraction)',
+                    description=f'Regulator {ref} ({mpn}) supplies {output_rail} to {", ".join(sensitive_loads[:3])} but PG status is unknown. Run sync_datasheets to verify.',
+                    severity='info', confidence='heuristic', evidence_source='topology',
+                    components=[ref] + sensitive_loads[:3], nets=[output_rail],
+                    recommendation=f'Run sync_datasheets to verify whether {mpn} has a PG pin.',
+                    report_section='Power Integrity', impact='Downstream devices may latch up or boot incorrectly',
+                    provenance=make_provenance('ps_sequence_check', 'heuristic'),
+                ))
+                continue
             findings.append(make_finding(
                 detector='validate_power_sequencing', rule_id='PS-001', category='power_integrity',
                 summary=f'Regulator {ref}: no power-good feedback, feeds {", ".join(sensitive_loads[:3])}',

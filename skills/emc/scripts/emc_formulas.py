@@ -781,7 +781,9 @@ def estimate_esr(package: str) -> float:
 #   PCIe: PCI Express Base Spec §4.3.3
 #   CAN: ISO 11898-2
 DIFF_PAIR_PROTOCOLS = {
-    'USB':      {'max_skew_ps': 25,  'v_diff': 0.4,  'rise_time_ns': 0.5,  'z_ohm': 90},
+    'USB':      {'max_skew_ps': 25,  'v_diff': 0.4,  'rise_time_ns': 0.5,  'z_ohm': 90},  # HS params (legacy key)
+    'USB-HS':   {'max_skew_ps': 25,  'v_diff': 0.4,  'rise_time_ns': 0.5,  'z_ohm': 90},
+    'USB-FS':   {'max_skew_ps': 10000, 'v_diff': 0.4, 'rise_time_ns': 15.0, 'z_ohm': 90},
     'USB3':     {'max_skew_ps': 5,   'v_diff': 0.4,  'rise_time_ns': 0.1,  'z_ohm': 90},
     'Ethernet': {'max_skew_ps': 50,  'v_diff': 1.0,  'rise_time_ns': 4.0,  'z_ohm': 100},
     'HDMI':     {'max_skew_ps': 20,  'v_diff': 0.4,  'rise_time_ns': 0.2,  'z_ohm': 100},

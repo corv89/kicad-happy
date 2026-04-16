@@ -36,6 +36,16 @@ from emc_formulas import (
 from kicad_utils import lookup_switching_freq as _estimate_switching_freq, build_net_id_map
 from finding_schema import Det, get_findings
 
+try:
+    import os as _os, sys as _sys
+    _ds_scripts = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                '..', '..', 'datasheets', 'scripts')
+    if _os.path.isdir(_ds_scripts):
+        _sys.path.insert(0, _os.path.abspath(_ds_scripts))
+    from datasheet_features import get_mcu_features as _get_mcu_features
+except ImportError:
+    def _get_mcu_features(mpn, **kw): return None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1909,7 +1919,27 @@ def check_diff_pair_cm_radiation(pcb: Optional[Dict],
         pos_net = pair.get('positive', '')
         neg_net = pair.get('negative', '')
         protocol = pair.get('type', 'unknown')
-        proto_info = DIFF_PAIR_PROTOCOLS.get(protocol)
+
+        # Classify USB speed from MCU endpoint extraction
+        usb_speed_resolved = None
+        if protocol == 'USB':
+            for ic_ref in pair.get('shared_ics', []):
+                comp = next((c for c in (schematic or {}).get('components', [])
+                             if c.get('reference') == ic_ref), None)
+                if comp and comp.get('type') not in ('connector',):
+                    mcu_mpn = comp.get('mpn') or comp.get('value', '')
+                    mcu_feat = _get_mcu_features(mcu_mpn) if mcu_mpn else None
+                    if mcu_feat:
+                        usb_speed_resolved = mcu_feat.get('usb_speed')
+                        break
+            if usb_speed_resolved == 'HS':
+                proto_info = DIFF_PAIR_PROTOCOLS.get('USB-HS')
+            elif usb_speed_resolved == 'SS':
+                proto_info = DIFF_PAIR_PROTOCOLS.get('USB3')
+            else:
+                proto_info = DIFF_PAIR_PROTOCOLS.get('USB-FS')
+        else:
+            proto_info = DIFF_PAIR_PROTOCOLS.get(protocol)
         if not proto_info:
             continue
 
@@ -1951,10 +1981,14 @@ def check_diff_pair_cm_radiation(pcb: Optional[Dict],
         margin = limit_dbuv - e_dbuv
 
         if margin < 6:
-            severity = 'HIGH' if margin < 0 else 'MEDIUM'
+            if protocol == 'USB' and usb_speed_resolved not in ('HS', 'SS'):
+                severity = 'INFO'
+            else:
+                severity = 'HIGH' if margin < 0 else 'MEDIUM'
+            proto_label = f'USB-{usb_speed_resolved}' if protocol == 'USB' and usb_speed_resolved else protocol
             findings.append(_make_finding(
                 'diff_pair', severity, 'DP-002',
-                title=f'{protocol} skew-induced CM radiation risk',
+                title=f'{proto_label} skew-induced CM radiation risk',
                 description=(
                     f'{pos_net}/{neg_net}: {skew:.1f}ps skew generates '
                     f'{v_cm*1000:.1f}mV CM voltage → estimated '
