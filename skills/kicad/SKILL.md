@@ -665,6 +665,29 @@ Most routine PCB analysis (via types, annular ring, placement, connectivity, the
 
 For interpreting auto-detected design intent and calibrating review severity by product class and target market (hobby vs consumer vs industrial vs medical vs automotive vs aerospace), read `references/design-intent.md`. Check the `design_intent` object in analysis output to understand the design context.
 
+### Probing Analyzer JSON
+
+During a review you will often run one-off `python3 -c "import json; ..."` probes to inspect analyzer output (pin-nets, rail voltages, specific finding contents, etc.). Two practices that materially improve the user's ability to follow along:
+
+**Announce what you're checking before each probe.** One concise sentence before the script — not after, not in a comment inside the script. The user should be able to read only the narrative and understand the review flow without opening every tool call.
+
+- Bad: `[Bash] python3 -c "import json; d = json.load(open('analysis/.../schematic.json')); print([...])"` with no surrounding prose.
+- Good: "Checking whether U3's EN pin is tied to +BATT directly or through a divider." then the probe.
+- Good: "Verifying the detected TPS61023 topology matches the datasheet (buck-boost expected)." then the probe.
+
+The narrative matters most for probes that investigate *why* something looks wrong — those are the moments a user loses context fastest.
+
+**Defensive patterns for JSON-shape uncertainty.** Analyzer output has heterogeneous shapes (lists of dicts, dicts keyed by ref, optional sections, nested paths). Scripts that assume the wrong shape crash mid-probe.
+
+- Before slicing, check type: `x[:3]` on a dict raises `KeyError: slice(None, 3, None)`. Use `list(x.values())[:3]` or `list(x.items())[:3]` for dicts.
+- Before `min()` / `max()`, check non-empty: `min([])` raises `ValueError: min() iterable argument is empty`. Use `min(items, default=None)` or guard with `if items:`.
+- Use `.get("key", default)` not `["key"]` when a section may be absent (many sections are optional based on what the analyzer found).
+- `isinstance(x, list)` vs `isinstance(x, dict)` — `components` is a list of dicts, `nets` is a dict keyed by net name. Check the schema reference before iterating.
+- When a finding field can be a list of strings OR a list of dicts (rare but happens in legacy-shape sections), handle both: `r = c if isinstance(c, str) else c.get("reference", "")`.
+- Pads/components with missing data: `pad.get("abs_x")` can be `None`; guard before arithmetic.
+
+Small investment, much lower friction.
+
 ### Quick Review Checklists
 
 **Schematic** — verify: decoupling caps on every IC VCC/GND pair, I2C pull-ups, reset pin circuits, unconnected pins have no-connect markers, consistent net naming across sheets, ESD protection on external connectors, power sequencing (EN/PG), adequate bulk capacitance.
