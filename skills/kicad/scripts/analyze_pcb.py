@@ -166,6 +166,95 @@ class ZoneFills:
                 if z.get("net_name")]
 
 
+def _dist_point_to_segment(px, py, x1, y1, x2, y2):
+    """Distance from point (px, py) to line segment (x1,y1)-(x2,y2)."""
+    dx, dy = x2 - x1, y2 - y1
+    if dx == 0 and dy == 0:
+        return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+    proj_x, proj_y = x1 + t * dx, y1 + t * dy
+    return math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+
+
+class CopperPresence:
+    """Unified copper presence check across zones, tracks, and pads.
+
+    Given a point (x, y) on a given layer, returns True if any copper
+    object is within radius_mm.  Credits zone fills, track segments, and
+    pads equally -- all provide valid return-current paths.
+
+    Replaces bare ``ZoneFills.has_copper_at`` point-in-polygon checks
+    that hit false negatives in KiCad zone fills (clearance channels
+    carved around every track/pad make the filled polygon "swiss cheese";
+    a sample point landing inside a clearance channel reports "no copper"
+    even when GND fill is < 1 mm away).
+    """
+
+    def __init__(self, zone_fills, tracks_segments, footprints):
+        self.zone_fills = zone_fills
+
+        # Index track segments by layer for fast lookup
+        self._tracks_by_layer = {}
+        for seg in tracks_segments or []:
+            layer = seg.get('layer')
+            if layer:
+                self._tracks_by_layer.setdefault(layer, []).append(seg)
+
+        # Index pads by layer -- use absolute position (abs_x, abs_y)
+        # and size (width, height) from extract_footprints() output
+        self._pads_by_layer = {}
+        for fp in footprints or []:
+            for pad in fp.get('pads') or []:
+                layers = pad.get('layers') or []
+                px = pad.get('abs_x')
+                py_val = pad.get('abs_y')
+                if px is None or py_val is None:
+                    continue
+                pw = pad.get('width', 0)
+                ph = pad.get('height', 0)
+                for lyr in layers:
+                    self._pads_by_layer.setdefault(lyr, []).append(
+                        (px, py_val, pw, ph))
+
+    def has_coverage_near(self, x, y, layer, *, radius_mm=0.5):
+        """True if any copper on *layer* is within *radius_mm* of (x, y).
+
+        Checks zone fills (center + 8-point perimeter), tracks, and pads.
+        """
+        zf = self.zone_fills
+        if zf is not None and zf.has_data:
+            # Center point -- fast path
+            if zf.has_copper_at(x, y, layer):
+                return True
+            # 8-point perimeter at radius_mm
+            for i in range(8):
+                ang = i * math.pi / 4.0
+                px = x + radius_mm * math.cos(ang)
+                py = y + radius_mm * math.sin(ang)
+                if zf.has_copper_at(px, py, layer):
+                    return True
+
+        # Track segments on this layer within radius
+        for seg in self._tracks_by_layer.get(layer, []):
+            half_w = seg.get('width', 0) / 2.0
+            d = _dist_point_to_segment(
+                x, y,
+                seg.get('x1', 0), seg.get('y1', 0),
+                seg.get('x2', 0), seg.get('y2', 0),
+            )
+            if d <= radius_mm + half_w:
+                return True
+
+        # Pads on this layer within radius
+        for (pad_x, pad_y, pw, ph) in self._pads_by_layer.get(layer, []):
+            half_diag = math.sqrt((pw / 2) ** 2 + (ph / 2) ** 2) if pw and ph else 0
+            d = math.sqrt((x - pad_x) ** 2 + (y - pad_y) ** 2)
+            if d <= radius_mm + half_diag:
+                return True
+
+        return False
+
+
 def copper_connected(p1: tuple[float, float],
                      p2: tuple[float, float],
                      net: str,
@@ -1561,7 +1650,9 @@ def analyze_pad_to_pad_distances(footprints, tracks, vias, net_names):
 
 
 def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
-                                    signal_nets=None, ref_layer_map=None):
+                                    signal_nets=None, ref_layer_map=None,
+                                    footprints=None, radius_mm=0.5,
+                                    debug_samples=None):
     """Check ground/power plane continuity under signal traces.
 
     For each signal net's trace segments, samples points along the trace
@@ -1569,12 +1660,21 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
     Flags gaps in the reference plane that could cause return path
     discontinuities and EMI issues.
 
+    Uses :class:`CopperPresence` for radius-based copper detection that
+    credits zone fills, tracks, and pads — avoids false negatives from
+    KiCad zone-fill clearance channels ("swiss cheese" polygons).
+
     Args:
         tracks: Track data dict with segments
         net_names: Net number → name mapping
         zones: Zone list (for zone metadata)
         zone_fills: ZoneFills spatial index
         signal_nets: Optional set of net names to check (default: all non-power)
+        ref_layer_map: Layer → opposite reference layer mapping
+        footprints: Footprint list (for pad copper credit)
+        radius_mm: Radius (mm) for copper-presence search (default 0.5)
+        debug_samples: If a list is passed, per-sample dicts are appended
+            with keys {net, x, y, layer, hit} for GP-001 diagnostics.
 
     Returns:
         List of gap findings: [{net, layer, gap_start_mm, gap_length_mm, ...}]
@@ -1582,6 +1682,8 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
     # EQ-053: d = √(Δx²+Δy²) (trace-to-plane gap detection)
     if not zone_fills.has_data:
         return []
+
+    cp = CopperPresence(zone_fills, tracks.get('segments', []), footprints)
 
     from kicad_utils import is_power_net_name, is_ground_name
 
@@ -1631,9 +1733,17 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
                 py = y1 + t * dy
                 total_samples += 1
 
-                # Check for ANY zone (ground or power) on opposite layer
-                if not zone_fills.has_copper_at(px, py, opp_layer):
+                # Check for ANY copper (zone, track, pad) on opposite layer
+                hit = cp.has_coverage_near(px, py, opp_layer,
+                                           radius_mm=radius_mm)
+                if not hit:
                     gap_samples += 1
+                if debug_samples is not None:
+                    debug_samples.append({
+                        'net': net_name, 'x': round(px, 2),
+                        'y': round(py, 2), 'layer': opp_layer,
+                        'hit': hit,
+                    })
 
         if total_samples > 0 and gap_samples > 0:
             coverage_pct = round((1 - gap_samples / total_samples) * 100, 1)
@@ -5753,7 +5863,9 @@ def analyze_keepout_violations(footprints: list[dict], vias: dict,
 
 def analyze_pcb(path: str, *, proximity: bool = False,
                 include_trace_segments: bool = False,
-                schematic_data: dict = None) -> dict:
+                schematic_data: dict = None,
+                return_path_radius_mm: float = 0.5,
+                gp001_debug: bool = False) -> dict:
     """Main analysis function.
 
     Args:
@@ -5761,6 +5873,10 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         proximity: If True, run trace proximity analysis (spatial grid scan
             for signal nets running close together — useful for crosstalk
             assessment but adds computation time).
+        return_path_radius_mm: Radius (mm) for copper-presence search in
+            return-path analysis (default 0.5).
+        gp001_debug: If True, emit per-sample diagnostic JSON to the
+            analysis output directory.
     """
     root = parse_file(path)
 
@@ -5919,10 +6035,14 @@ def analyze_pcb(path: str, *, proximity: bool = False,
 
     # Return path continuity (only with --full, expensive)
     return_path = None
+    gp001_samples = [] if gp001_debug else None
     if include_trace_segments and zone_fills.has_data:
         return_path = analyze_return_path_continuity(
             tracks, net_names, zones, zone_fills,
-            ref_layer_map=ref_layer_map)
+            ref_layer_map=ref_layer_map,
+            footprints=footprints,
+            radius_mm=return_path_radius_mm,
+            debug_samples=gp001_samples)
 
     # Compact footprint output — include pad-to-net mapping but omit pad geometry
     footprint_summary = []
@@ -6067,6 +6187,8 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         result["copper_presence"] = copper_presence
     if return_path:
         result["return_path_continuity"] = return_path
+    if gp001_samples is not None:
+        result["_gp001_debug_samples"] = gp001_samples
 
     # New assembly/DFM checks
     fiducial_check = analyze_fiducials(footprints)
@@ -6281,6 +6403,10 @@ def main():
     parser.add_argument('--audience', default=None,
                         choices=['designer', 'reviewer', 'manager'],
                         help='Audience level for summaries and --text output')
+    parser.add_argument('--return-path-radius-mm', type=float, default=0.5,
+                        help='Radius (mm) for copper-presence in return-path analysis (default: 0.5)')
+    parser.add_argument('--gp001-debug', action='store_true',
+                        help='Emit per-sample diagnostic JSON to analysis dir')
     args = parser.parse_args()
 
     if args.schema:
@@ -6329,7 +6455,30 @@ def main():
 
     result = analyze_pcb(args.pcb, proximity=args.proximity,
                          include_trace_segments=args.full,
-                         schematic_data=schematic_data)
+                         schematic_data=schematic_data,
+                         return_path_radius_mm=args.return_path_radius_mm,
+                         gp001_debug=args.gp001_debug)
+
+    # GP-001 debug: write per-sample diagnostics to disk and strip from output
+    gp001_debug_data = result.pop("_gp001_debug_samples", None)
+    if gp001_debug_data is not None:
+        debug_dir = args.analysis_dir or str(Path(args.pcb).parent)
+        debug_path = os.path.join(debug_dir, "gp001_debug.json")
+        try:
+            os.makedirs(debug_dir, exist_ok=True)
+            with open(debug_path, "w") as f:
+                json.dump({
+                    "description": "GP-001 return-path per-sample diagnostics",
+                    "radius_mm": args.return_path_radius_mm,
+                    "total_samples": len(gp001_debug_data),
+                    "hits": sum(1 for s in gp001_debug_data if s["hit"]),
+                    "misses": sum(1 for s in gp001_debug_data if not s["hit"]),
+                    "samples": gp001_debug_data,
+                }, f, indent=2)
+            print(f"GP-001 debug: {len(gp001_debug_data)} samples written to {debug_path}",
+                  file=sys.stderr)
+        except OSError as e:
+            print(f"GP-001 debug write failed: {e}", file=sys.stderr)
 
     # Attach project config summary to output for downstream consumers
     project = config.get("project", {})
