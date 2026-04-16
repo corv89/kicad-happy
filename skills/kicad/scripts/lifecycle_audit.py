@@ -429,7 +429,12 @@ def audit_component(mpn: str, sources: list[str], project_dir: str | None = None
                     delay: float = 1.0) -> dict:
     """Query all available sources for one component's lifecycle + temperature."""
     result = {"mpn": mpn, "sources": {}}
+    # Worst-case status across sources (drives the default finding severity).
     best_status = "unknown"
+    # Track every source's normalized status so callers can detect disagreement
+    # (e.g., DigiKey=active, Mouser=obsolete — severity should be WARNING, not
+    # ERROR, because the part is still orderable from one distributor).
+    per_source_status: dict[str, str] = {}
     temp_data = None
 
     # Try extraction cache first (no network, no delay)
@@ -458,6 +463,7 @@ def audit_component(mpn: str, sources: list[str], project_dir: str | None = None
                 raw_status = data.get("status")
                 if raw_status:
                     normalized = _normalize_status(raw_status)
+                    per_source_status[source_name] = normalized
                     if normalized != "unknown":
                         best_status = normalized
                 # Update temperature if not already from extraction
@@ -472,6 +478,14 @@ def audit_component(mpn: str, sources: list[str], project_dir: str | None = None
             continue
 
     result["status"] = best_status
+    # Consensus: True when distributors disagree and at least one says active.
+    # A part reported obsolete by one distributor but active by another is
+    # still orderable, so the finding should be warning rather than error.
+    _non_active = {"obsolete", "discontinued", "last_time_buy", "nrnd"}
+    has_active = any(s == "active" for s in per_source_status.values())
+    has_non_active = any(s in _non_active for s in per_source_status.values())
+    result["consensus_split"] = has_active and has_non_active
+    result["per_source_status"] = per_source_status
     if temp_data:
         result["temperature"] = temp_data
     return result
@@ -670,18 +684,40 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
         rule_info = _LIFECYCLE_STATUS_RULES.get(status)
         if rule_info:
             rule_id, severity = rule_info
+            consensus_split = data.get('consensus_split', False)
+            per_source = data.get('per_source_status', {})
+            # Demote ERROR → WARNING when distributors disagree. The part is
+            # still orderable from at least one active source, so "obsolete"
+            # overstates the supply risk.
+            split_note = ''
+            if consensus_split and severity == 'error':
+                severity = 'warning'
+                active_srcs = sorted(s for s, st in per_source.items() if st == 'active')
+                eol_srcs = sorted(s for s, st in per_source.items() if st != 'active')
+                split_note = (f" Distributor disagreement: {', '.join(active_srcs)} "
+                              f"list it as active while {', '.join(eol_srcs)} "
+                              f"flag EOL. Part is orderable today.")
             finding['detector'] = 'audit_bom'
             finding['rule_id'] = rule_id
             finding['category'] = 'lifecycle'
             finding['severity'] = severity
             finding['confidence'] = 'deterministic'
-            finding['evidence_source'] = 'datasheet'
+            finding['evidence_source'] = 'api_lookup'
             finding['summary'] = f"{mpn}: {status} ({len(refs)} ref(s))"
-            finding['description'] = finding.get('alert', f'Component {mpn} is {status}.')
+            if per_source:
+                finding['per_source_status'] = per_source
+            if consensus_split:
+                finding['consensus_split'] = True
+            finding['description'] = (finding.get('alert', f'Component {mpn} is {status}.')
+                                      + split_note)
             finding['components'] = sorted(refs)
             finding['nets'] = []
             finding['pins'] = []
-            finding['recommendation'] = f"Replace {mpn} — part is {status}."
+            finding['recommendation'] = (
+                f"Replace {mpn} — part is {status}." if not consensus_split
+                else f"Verify current availability before committing to {mpn}; "
+                     f"consider locking to the active distributor or finding an "
+                     f"alternate.")
             finding['report_context'] = {'section': 'Lifecycle', 'impact': 'Supply chain risk', 'standard_ref': ''}
         else:
             finding['detector'] = 'audit_bom'

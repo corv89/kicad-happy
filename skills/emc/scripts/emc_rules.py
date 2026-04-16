@@ -2455,6 +2455,27 @@ def check_crosstalk_3h_rule(pcb: Dict,
     grid_size = tp.get('grid_size_mm', 0.5)
     threshold_3h = 3 * h_default  # 3H rule
 
+    # Build the set of known differential pairs so we don't flag nets that
+    # are *supposed* to be close-coupled (USB D+/D-, LVDS, Ethernet, CAN, etc.).
+    diff_pair_keys: set[tuple[str, str]] = set()
+    if schematic:
+        # Differential pairs live under design_analysis.buses.differential_pairs
+        # after the signal_analysis flatten, and also at top-level differential_pairs
+        # on some output flows. Check both.
+        _buses = (schematic.get('design_analysis', {}) or {}).get('buses', {}) or {}
+        _dp_sources = [
+            _buses.get('differential_pairs') or [],
+            schematic.get('differential_pairs') or [],
+        ]
+        for _dps in _dp_sources:
+            for _dp in _dps:
+                if not isinstance(_dp, dict):
+                    continue
+                _pos = _dp.get('positive')
+                _neg = _dp.get('negative')
+                if _pos and _neg:
+                    diff_pair_keys.add(tuple(sorted([_pos, _neg])))
+
     # Classify nets for aggressor/victim pairing
     flagged = set()
 
@@ -2483,6 +2504,10 @@ def check_crosstalk_3h_rule(pcb: Dict,
         if pair_key in flagged:
             continue
         flagged.add(pair_key)
+
+        # Suppress: known differential pairs are supposed to run close-coupled.
+        if pair_key in diff_pair_keys:
+            continue
 
         # Check if aggressor-victim pair (clock/switching near analog/sensitive)
         a_is_aggressor = _is_clock_net(net_a) or _is_high_speed_net(net_a)
