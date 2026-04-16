@@ -288,13 +288,40 @@ Pre-compliance test plan:
 
 > "What's the EN-pin threshold on the LDO I'm using?"
 
+> "Extract specs for the TPS54302 and check them against the schematic"
+
 Datasheets flow through kicad-happy in two stages:
 
-**Sync (download).** Pulls PDFs for every component with an MPN from DigiKey, LCSC, element14, or Mouser into a local `datasheets/` directory. 96% success rate across 240+ manufacturers. Each PDF is verified against the expected part number.
+**Sync (download).** Pulls PDFs for every component with an MPN from DigiKey, LCSC, element14, or Mouser into a local `datasheets/` directory. 96% success rate across 240+ manufacturers. Each PDF is verified against the expected part number. Supports batch mode (`--mpn-list mpns.txt`) for seeding a datasheet library without a KiCad project.
 
-**Extract (parse).** The **datasheets** skill turns those PDFs into structured JSON — pinouts, voltage ratings, electrical characteristics, peripherals, topology, SPICE model coefficients. Extractions are cached per-MPN under `<project>/datasheets/extracted/` and scored on a five-dimension quality rubric. Analyzer skills (`kicad`, `emc`, `spice`, `thermal`, `kidoc`) consume the cache through a shared helper API with trust gates — so a schematic finding tagged `confidence: datasheet-backed` means a scored extraction produced the underlying fact, not a keyword match on the part number.
+```bash
+# Sync from a KiCad project
+python3 skills/digikey/scripts/sync_datasheets_digikey.py design.kicad_sch
 
-For the full pipeline — page selection, the quality rubric, the consumer API, and what it deliberately doesn't do — see **[Datasheet Extraction Guide](datasheet-extraction.md)**.
+# Batch mode — plain MPN list, no project needed
+python3 skills/digikey/scripts/sync_datasheets_digikey.py --mpn-list mpns.txt --output ./datasheets
+```
+
+**Extract (parse).** The **datasheets** skill turns those PDFs into structured JSON per MPN — pinouts, voltage ratings, electrical characteristics, peripherals, topology, SPICE model coefficients. The extraction pipeline:
+
+1. **Page selection** — heuristic page selector identifies the 8-15 most relevant pages (pin tables, absolute max ratings, e-chars, application circuits) using a TOC-first, keyword-density-fallback cascade
+2. **Structured extraction** — the agent reads selected pages and fills in the canonical JSON schema (identity, pins, voltage ratings, electrical characteristics, peripherals, features, application circuits, thermal, SPICE specs)
+3. **Quality scoring** — five-dimension weighted rubric (pin coverage 35%, voltage ratings 25%, application info 20%, e-chars 10%, SPICE specs 10%). Score 0-10; below 6.0 → rejected, above 6.0 → cached
+4. **Per-project caching** — extractions live in `<project>/datasheets/extracted/<MPN>.json` with staleness detection (PDF hash change, version upgrade, age > 90 days)
+
+Analyzer skills consume the cache through a shared helper API (`get_regulator_features(mpn)`, `get_mcu_features(mpn)`, `get_pin_function(mpn, pin)`) with trust gates that return `None` on cache miss, stale, or low-quality extractions. When a finding says `confidence: datasheet-backed`, it means a scored extraction produced the underlying fact — not a keyword match on the part number.
+
+```
+<project>/
+  design.kicad_sch
+  datasheets/
+    TPS61023DRLR.pdf          ← downloaded by distributor skills
+    extracted/
+      manifest.json           ← extraction manifest
+      TPS61023DRLR.json       ← structured extraction (this skill's output)
+```
+
+For the full pipeline — page selection strategies, the quality rubric in detail, the consumer API, trust gates, verification checks, and what it deliberately doesn't do — see **[Datasheet Extraction Guide](datasheet-extraction.md)**.
 
 ## 📋 BOM management — from schematic to order
 
@@ -400,19 +427,17 @@ For the full guide — all 8 document types, 12 figure generators, output format
 
 ## 🗺️ Workflow
 
-1. **Design** your board in KiCad
-2. **Sync datasheets** — builds a local library the agent uses for validation
-3. **Analyze** schematic and PCB
-4. **Simulate** detected subcircuits (ngspice/LTspice/Xyce)
-5. **EMC pre-compliance** — ground plane, decoupling, I/O filtering, switching harmonics, PDN impedance
-6. **Thermal analysis** — junction temperatures, hotspot identification, proximity warnings
-7. **Review** — agent cross-references analysis + simulation + EMC + thermal + datasheets
-8. **Document** — generate HDD, CE file, design review, or other engineering documents
-9. **Source** components from DigiKey/Mouser (prototype) or LCSC (production)
-10. **Export** BOM + per-supplier order files for your assembler
-11. **Order** from JLCPCB or PCBWay
+1. **Design** your schematic and lay out the PCB in KiCad
+2. **Fill zones** and run DRC/ERC in KiCad before exporting
+3. **Sync datasheets** — the agent downloads PDFs and extracts structured specs for every MPN
+4. **Design review** — the agent runs schematic, PCB, cross-analysis, EMC, SPICE, and thermal analyzers, cross-references against datasheets, and writes a structured report with findings ranked by severity
+5. **Iterate** — fix issues, re-run the review, compare against the previous run with built-in diff analysis
+6. **Source** components from DigiKey/Mouser (prototype) or LCSC (production)
+7. **Export** BOM + per-supplier order files for your assembler
+8. **Generate documentation** — HDD, CE technical file, design review package, or manufacturing transfer via the kidoc skill
+9. **Order** from JLCPCB or PCBWay with generated BOM/CPL files
 
-Or just set up the GitHub Action and get automated reviews on every PR.
+Or set up the [GitHub Action](github-action.md) and get automated analysis on every PR.
 
 ## Optional setup
 

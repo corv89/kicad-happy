@@ -4990,7 +4990,7 @@ def audit_datasheet_coverage(components: list[dict],
         findings.append({
             "detector": "audit_datasheet_coverage",
             "rule_id": "DS-002",
-            "severity": "medium",
+            "severity": "warning",
             "confidence": "deterministic",
             "evidence_source": "bom",
             "category": "verification",

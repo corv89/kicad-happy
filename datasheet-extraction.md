@@ -26,6 +26,61 @@ Analyzer skills consume:
 
 Each extraction is cached per-project, not globally — two projects with the same MPN can hold different extractions if they pin different datasheet revisions. There is no shared cross-project library.
 
+## When to Extract
+
+Run the extraction pipeline **before** your first design review on a project, and re-run when:
+
+- `datasheets/extracted/` is missing or empty
+- A new IC appears in the design without a cached extraction
+- The cache manager reports a stale entry (PDF hash changed, extraction version outdated, age > 90 days)
+- An analyzer reports `confidence: heuristic` on a claim you expected to be `datasheet-backed` — the extraction may be missing or below the quality threshold
+
+For small designs (< 8 ICs), extract all ICs. For large designs, prioritize ICs that appear in power regulators, opamp circuits, MCU pin analysis, and high-speed interfaces — these are where datasheet-backed confidence has the highest value.
+
+## Example Extraction Output
+
+A per-MPN JSON file looks like this (simplified):
+
+```json
+{
+  "mpn": "TPS61023DRLR",
+  "manufacturer": "Texas Instruments",
+  "description": "1A, 5V, 1.2MHz boost converter with 0.5V input",
+  "extraction_version": 2,
+  "pins": [
+    {"number": "1", "name": "SW", "function": "Switch node", "type": "power", "direction": "output"},
+    {"number": "2", "name": "GND", "function": "Ground", "type": "ground", "direction": "input"},
+    {"number": "3", "name": "FB", "function": "Feedback", "type": "analog", "direction": "input",
+     "voltage_operating_max": 6.0, "voltage_abs_max": 7.0},
+    {"number": "4", "name": "EN", "function": "Enable", "type": "digital", "direction": "input",
+     "required_external": null}
+  ],
+  "voltage_ratings": {
+    "vin_min": 0.5, "vin_max": 5.5, "vin_abs_max": 6.0,
+    "vout_max": 5.5
+  },
+  "features": {
+    "topology": "boost",
+    "switching_freq_hz": 1200000,
+    "en_threshold_v": 0.4,
+    "soft_start": true,
+    "pg_present": false,
+    "internal_compensation": false
+  },
+  "application_circuits": {
+    "input_cap_recommended": "10uF ceramic, X5R or X7R",
+    "output_cap_recommended": "22uF ceramic",
+    "inductor_recommended": "2.2uH, 1.5A sat current"
+  },
+  "thermal": {
+    "rtheta_ja_cw": 175.0,
+    "tj_max_c": 150
+  }
+}
+```
+
+Fields the datasheet doesn't specify are `null`. Downstream analyzers gate on "known vs unknown," not "present vs missing."
+
 ## Cache Layout
 
 ```
