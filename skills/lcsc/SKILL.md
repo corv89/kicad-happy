@@ -1,6 +1,6 @@
 ---
 name: lcsc
-description: Search LCSC Electronics for electronic components — find parts by LCSC number (Cxxxxx) or MPN, check stock/pricing, download datasheets, analyze specifications. Sister company to JLCPCB, same parts library. Sync and maintain a local datasheets directory for a KiCad project. No API key needed — uses the free jlcsearch community API. Use this skill when the user mentions LCSC, JLCPCB parts library, JLCPCB assembly parts, production sourcing, Cxxxxx part numbers, needs to find LCSC equivalents for parts, is preparing a BOM for JLCPCB assembly, or wants to download datasheets and LCSC is available. For package cross-reference tables and BOM workflow, see the `bom` skill.
+description: Search LCSC Electronics for electronic components — find parts by LCSC number (Cxxxxx) or MPN, check stock/pricing, download datasheets, analyze specifications. Sister company to JLCPCB, same parts library. Sync and maintain a local datasheets directory for a KiCad project, or use batch MPN-list seeding (`--mpn-list`) for bulk workflows without a project. No API key needed — uses the free jlcsearch community API. Use this skill when the user mentions LCSC, JLCPCB parts library, JLCPCB assembly parts, production sourcing, Cxxxxx part numbers, needs to find LCSC equivalents for parts, is preparing a BOM for JLCPCB assembly, or wants to download datasheets and LCSC is available. For package cross-reference tables and BOM workflow, see the `bom` skill.
 ---
 
 # LCSC Electronics — Component Search, Datasheets & Ordering
@@ -144,7 +144,16 @@ python3 <skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch> -o ./my-da
 
 # Parallel downloads (3 workers)
 python3 <skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch> --parallel 3
+
+# Batch mode — sync from a plain MPN list (no KiCad project required)
+python3 <skill-path>/scripts/sync_datasheets_lcsc.py --mpn-list mpns.txt --output ./datasheets
 ```
+
+**MPN-list batch mode** (KH-312) — when you have a list of MPNs but no
+KiCad project to point at. One MPN per line; blank lines and `#`
+comments (full-line and inline) are skipped; generic values are filtered
+via `is_real_mpn()` and de-duplicated. Output defaults to `./datasheets/`
+in the current working directory when `--output` is omitted.
 
 The script:
 - **Runs the kicad schematic analyzer** to extract components, MPNs, and LCSC codes

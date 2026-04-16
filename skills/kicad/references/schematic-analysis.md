@@ -193,7 +193,7 @@ Trace nets outward from each IC. The IC plus everything directly connected to it
 
 ## Using Pre-Extracted Datasheet Specs
 
-When `datasheets/extracted/<MPN>.json` files are available (see `references/datasheet-extraction.md`), use them to accelerate pin-by-pin verification:
+When `datasheets/extracted/<MPN>.json` files are available (produced by the `datasheets` skill — see its `references/extraction-schema.md` for the canonical field layout), use them to accelerate pin-by-pin verification:
 
 1. **Load the extraction** for each IC alongside the analyzer's `ic_pin_analysis` output
 2. **Join on pin number** — the extraction's `pins[].number` matches the analyzer's `pins[].pin_number`

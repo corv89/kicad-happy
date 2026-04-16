@@ -6,7 +6,8 @@ description: >-
   datasheets. Find parts by keyword or MPN, check pricing/stock, download
   datasheets via API, analyze specifications. Sync and maintain a local
   datasheets directory — extract components from schematics, download missing
-  datasheets, keep them up to date. Use when the user asks about electronic
+  datasheets, keep them up to date. Also supports batch MPN-list seeding
+  (`--mpn-list`) for bulk workflows without a KiCad project. Use when the user asks about electronic
   components, part specs, datasheets, pricing, stock, footprints, or needs to
   download a datasheet — even without mentioning "DigiKey". Also for "sync
   datasheets", "download datasheets for my board/project", or mentions a
@@ -238,7 +239,18 @@ python3 <skill-path>/scripts/sync_datasheets_digikey.py analyzer_output.json
 
 # Parallel downloads (3 workers)
 python3 <skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch> --parallel 3
+
+# Batch mode — sync from a plain MPN list (no KiCad project required)
+python3 <skill-path>/scripts/sync_datasheets_digikey.py --mpn-list mpns.txt --output ./datasheets
 ```
+
+**MPN-list batch mode** (KH-312) — when you have a list of MPNs but no KiCad
+project to point at (harness datasheet seeding, bulk seeding a new part
+library). The file format is one MPN per line. Blank lines and `#`
+comments (full-line and inline) are skipped. Non-MPN strings (generic
+values like `100nF` or `DNP`) are filtered via `is_real_mpn()` and
+de-duplicated. Output defaults to `./datasheets/` in the current working
+directory when `--output` is omitted.
 
 The script:
 - **Runs the kicad schematic analyzer** automatically to extract components and MPNs

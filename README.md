@@ -174,7 +174,8 @@ See the **[GitHub Action setup guide](github-action.md)** for workflow examples,
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **kicad**     | ⚡ Parse and analyze KiCad schematics, PCB layouts, Gerbers, and PDF reference designs. Automated subcircuit detection, design review, DFM.                                               |
 | **spice**     | 🔬 SPICE simulation — generates testbenches for detected subcircuits, validates filter frequencies, opamp gains, divider ratios. Monte Carlo tolerance analysis. ngspice, LTspice, Xyce. |
-| **emc**       | 📡 EMC pre-compliance — 42 rule checks for radiated emission risks, PDN impedance, diff pair skew, ESD paths. FCC/CISPR/automotive/military.                                             |
+| **emc**       | 📡 EMC pre-compliance — 44 rule checks for radiated emission risks, PDN impedance, diff pair skew, ESD paths. FCC/CISPR/automotive/military.                                             |
+| **datasheets**| 📄 Extract structured specs from datasheet PDFs — pinouts, electrical characteristics, peripherals, topology. Per-MPN caching with quality scoring. Consumed by kicad/emc/spice/thermal/kidoc. |
 | **kidoc**     | 📄 **(beta)** Engineering documentation — HDD, CE technical file, ICD, design review, manufacturing, and more. Auto-generated figures, PDF/DOCX/ODT/HTML output.                         |
 | **bom**       | 📋 Full BOM lifecycle — analyze, source, price, export tracking CSVs, generate per-supplier order files.                                                                                 |
 | **digikey**   | 🔎 Search DigiKey for components and download datasheets via API.                                                                                                                        |
@@ -279,15 +280,21 @@ Pre-compliance test plan:
   Probe points: L1 (45.2, 32.1)mm, Y1 (62.0, 18.5)mm
 ```
 
-42 rule checks across power integrity, signal integrity, and radiation. Includes full-board PDN impedance with power tree analysis — traces impedance from regulator output through PCB traces to IC load points, and detects cross-rail coupling when a downstream switching regulator injects transients onto the upstream rail. Supports FCC, CISPR, automotive (CISPR 25), and military (MIL-STD-461G) standards. Generates a pre-compliance test plan with frequency band priorities, interface risk rankings, and near-field probe points. For the full methodology — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
+44 rule checks across power integrity, signal integrity, and radiation. Includes full-board PDN impedance with power tree analysis — traces impedance from regulator output through PCB traces to IC load points, and detects cross-rail coupling when a downstream switching regulator injects transients onto the upstream rail. Supports FCC, CISPR, automotive (CISPR 25), and military (MIL-STD-461G) standards. Generates a pre-compliance test plan with frequency band priorities, interface risk rankings, and near-field probe points. For the full methodology — see **[EMC Pre-Compliance Guide](emc-precompliance.md)**.
 
-## 📄 Datasheet sync
+## 📄 Datasheets — sync and extract
 
 > "Sync datasheets for my board at `hardware/rev2/`"
 
-Downloads PDFs for every component with an MPN from DigiKey, LCSC, element14, or Mouser into a local `datasheets/` directory. 96% success rate across 240+ manufacturers. Each PDF is verified against the expected part number. The agent reads these during review to validate component values against manufacturer recommendations.
+> "What's the EN-pin threshold on the LDO I'm using?"
 
-Pre-extracted datasheet specs can be cached as structured JSON for faster repeated reviews on large designs. See the [datasheet extraction reference](skills/kicad/references/datasheet-extraction.md).
+Datasheets flow through kicad-happy in two stages:
+
+**Sync (download).** Pulls PDFs for every component with an MPN from DigiKey, LCSC, element14, or Mouser into a local `datasheets/` directory. 96% success rate across 240+ manufacturers. Each PDF is verified against the expected part number.
+
+**Extract (parse).** The **datasheets** skill turns those PDFs into structured JSON — pinouts, voltage ratings, electrical characteristics, peripherals, topology, SPICE model coefficients. Extractions are cached per-MPN under `<project>/datasheets/extracted/` and scored on a five-dimension quality rubric. Analyzer skills (`kicad`, `emc`, `spice`, `thermal`, `kidoc`) consume the cache through a shared helper API with trust gates — so a schematic finding tagged `confidence: datasheet-backed` means a scored extraction produced the underlying fact, not a keyword match on the part number.
+
+For the full pipeline — page selection, the quality rubric, the consumer API, and what it deliberately doesn't do — see **[Datasheet Extraction Guide](datasheet-extraction.md)**.
 
 ## 📋 BOM management — from schematic to order
 
@@ -477,8 +484,6 @@ v1.1 shipped the analysis engine. v1.2 makes it something you'd actually hand to
 | **Professional checks** | Fab notes, silkscreen completeness, BOM lock, connector ground distribution, certification suggestions. |
 | **Test corpus** | 5,829 repos, 1.2M+ regression assertions at 100% pass, 400+ unit tests, 0 open issues. |
 
-See the full [CHANGELOG](CHANGELOG.md) for all 20 feature sections and 25 bug fixes.
-
 ## 🎯 v1.1 — EMC Pre-Compliance + Analysis Toolkit
 
 New skill: **EMC pre-compliance risk analysis** — predicts the most common causes of EMC test failures from your KiCad schematic and PCB layout. Plus four new analysis tools for tolerance, diffing, thermal, and what-if exploration.
@@ -487,7 +492,7 @@ New skill: **EMC pre-compliance risk analysis** — predicts the most common cau
 
 | Category                  | Capabilities                                                                                                                                                                                                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EMC pre-compliance**    | 42 rule checks across ground plane integrity, decoupling, I/O filtering, switching harmonics, diff pair skew, PDN impedance, ESD paths, crosstalk, board edge radiation, thermal-EMC, shielding. SPICE-enhanced when ngspice is available. FCC/CISPR/automotive/military. |
+| **EMC pre-compliance**    | 44 rule checks across ground plane integrity, decoupling, I/O filtering, switching harmonics, diff pair skew, PDN impedance, ESD paths, crosstalk, board edge radiation, thermal-EMC, shielding, and magnetic leakage from switching inductors. SPICE-enhanced when ngspice is available. FCC/CISPR/automotive/military. |
 | **Plugin install**        | Available as a Claude Code plugin marketplace — `/plugin marketplace add aklofas/kicad-happy`.                                                                                                                                                                            |
 | **Monte Carlo tolerance** | `--monte-carlo N` runs N simulations with randomized component values within tolerance bands. Reports 3σ bounds and per-component sensitivity analysis.                                                                                                                   |
 | **Design diff**           | Compares two analysis JSONs — component changes, signal parameter shifts, EMC finding deltas. GitHub Action `diff-base: true` for automatic PR comparison.                                                                                                                |

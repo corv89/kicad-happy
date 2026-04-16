@@ -1,6 +1,6 @@
 ---
 name: mouser
-description: Search Mouser Electronics for electronic components — secondary source for prototype orders. Find parts, check pricing/stock, download datasheets, analyze specifications. Use with KiCad for BOM creation and part selection. Use this skill when the user specifically mentions Mouser, when DigiKey is out of stock or has worse pricing, when comparing prices across distributors, or when searching for parts that DigiKey doesn't carry. For package cross-reference tables and BOM workflow, see the `bom` skill.
+description: Search Mouser Electronics for electronic components — secondary source for prototype orders. Find parts, check pricing/stock, download datasheets, analyze specifications. Use with KiCad for BOM creation and part selection. Also supports batch MPN-list seeding (`--mpn-list`) for bulk datasheet workflows without a KiCad project. Use this skill when the user specifically mentions Mouser, when DigiKey is out of stock or has worse pricing, when comparing prices across distributors, or when searching for parts that DigiKey doesn't carry. For package cross-reference tables and BOM workflow, see the `bom` skill.
 ---
 
 # Mouser Electronics Parts Search & Analysis
@@ -201,7 +201,17 @@ python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> -o ./my-
 
 # Parallel downloads (3 workers)
 python3 <skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch> --parallel 3
+
+# Batch mode — sync from a plain MPN list (no KiCad project required)
+python3 <skill-path>/scripts/sync_datasheets_mouser.py --mpn-list mpns.txt --output ./datasheets
 ```
+
+**MPN-list batch mode** (KH-312) — when you have a list of MPNs but no
+KiCad project to point at (harness datasheet seeding, bulk part-library
+seeding). One MPN per line; blank lines and `#` comments (full-line and
+inline) are skipped; generic values (`100nF`, `DNP`) are filtered via
+`is_real_mpn()` and de-duplicated. Output defaults to `./datasheets/` in
+the current working directory when `--output` is omitted.
 
 ### Single Datasheet Download
 

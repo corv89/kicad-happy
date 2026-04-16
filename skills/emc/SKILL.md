@@ -1,10 +1,11 @@
 ---
 name: emc
 description: >-
-  EMC pre-compliance risk analysis for KiCad PCB designs — 17 check categories,
-  42 rule IDs covering ground planes, decoupling, I/O filtering, switching
+  EMC pre-compliance risk analysis for KiCad PCB designs — 18 check categories,
+  44 rule IDs covering ground planes, decoupling, I/O filtering, switching
   harmonics, clock routing, differential pair skew, board edge radiation, PDN
-  impedance, return paths, crosstalk, ESD protection, and shielding. Produces
+  impedance, return paths, crosstalk, ESD protection, shielding, and magnetic
+  leakage from switching inductors. Produces
   severity-ranked risk report with pre-compliance test plan. Supports FCC
   Part 15, CISPR 32, CISPR 25 (automotive), MIL-STD-461G. SPICE-enhanced when
   available. Use when the user asks about EMC, EMI, radiated/conducted
@@ -84,7 +85,7 @@ Read the JSON report and incorporate findings into the design review. Each findi
 
 ## What Gets Checked
 
-42 rule IDs across 17 categories. Each rule has a specific threshold, rationale, and source citation — see `references/pcb-emc-rules.md` for full details.
+44 rule IDs across 18 categories. Each rule has a specific threshold, rationale, and source citation — see `references/pcb-emc-rules.md` for full details.
 
 | Category | Rules | What it detects |
 |----------|-------|-----------------|

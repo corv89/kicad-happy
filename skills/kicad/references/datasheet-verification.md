@@ -45,7 +45,7 @@ PDFs are saved to `datasheets/` in the project directory.
 
 ### Stage 2: LLM extraction
 
-The LLM reads the downloaded PDF pages and produces structured JSON for each IC. The page selector (`datasheet_page_selector.py`) identifies which pages contain pin tables, absolute maximum ratings, and application circuits. The agent then fills in the extraction schema documented in `datasheet-extraction.md`.
+The LLM reads the downloaded PDF pages and produces structured JSON for each IC. The page selector (`datasheet_page_selector.py`) identifies which pages contain pin tables, absolute maximum ratings, and application circuits. The agent then fills in the extraction schema documented in the **`datasheets` skill** — see `skills/datasheets/references/extraction-schema.md` for the canonical schema and `skills/datasheets/references/field-extraction-guide.md` for how to find each field in vendor datasheets.
 
 This step is interactive — it requires the agent to read PDF pages and produce JSON. It cannot be fully automated.
 

@@ -4,7 +4,10 @@ description: >-
   Analyze KiCad projects and PDF schematics: schematics, PCB layouts, Gerbers,
   footprints, symbols, netlists, and design rules. Reviews designs for bugs,
   traces nets, cross-references schematic to PCB, extracts BOM data, checks
-  DRC/ERC, DFM, power trees, and regulator circuits. Analyzes PDF schematics
+  DRC/ERC, DFM, power trees, and regulator circuits. Every finding carries a
+  confidence label (deterministic / heuristic / datasheet-backed) and evidence
+  source; outputs a trust_summary rollup so the reviewer can see at a glance
+  whether claims are grounded in the datasheet or heuristically inferred. Analyzes PDF schematics
   from dev boards, reference designs, eval kits, and datasheets. Supports
   KiCad 5–10. Use whenever the user mentions .kicad_sch, .kicad_pcb,
   .kicad_pro, PCB design review, schematic analysis, PDF schematics, reference
@@ -96,7 +99,7 @@ python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --output anal
 Outputs structured JSON (~60-220KB depending on board complexity) with:
 - **Components & BOM**: inventory with reference, value, footprint, lib_id, type classification, MPN, datasheet; deduplicated BOM with quantities
 - **Nets**: full connectivity map with pin-to-net mapping, wire counts, no-connects
-- **Signal analysis** (automated subcircuit detection):
+- **Detected subcircuits** (pattern-matched circuits — all emitted as `findings[]` entries with matching `Det.*` detectors; use `get_findings(data, Det.POWER_REGULATORS)` etc. to fetch):
   - Power regulators — LDO/switching/inverting topology, Vout estimation via datasheet-verified Vref lookup (~60 families) with heuristic fallback and fixed-output suffix parsing, `vref_source` (`lookup`/`heuristic`/`fixed_suffix`) and `vout_net_mismatch` fields
   - Voltage dividers, RC/LC filters (cutoff frequency), feedback networks, crystal circuits (load cap analysis, IC pin-based detection)
   - Op-amp circuits (configuration, gain, integrator/compensator), transistor circuits (net-name-aware load classification: motor/heater/fan/solenoid/valve/pump/relay/speaker/buzzer/lamp; FET level shifter topology)
@@ -223,23 +226,30 @@ committing to git, but don't delete them between analysis steps.
 
 ### Harmonized Output Format
 
-All analyzers produce a uniform output structure:
+All analyzers produce a uniform output envelope:
 
 ```json
 {
-    "analyzer_type": "schematic|pcb|emc|cross_analysis|thermal|gerber|lifecycle",
-    "elapsed_s": 1.23,
+    "analyzer_type": "schematic|pcb|emc|cross_analysis|thermal|gerber|lifecycle|spice",
+    "schema_version": "1.3.0",
     "summary": {
         "total_findings": 42,
         "by_severity": {"error": 3, "warning": 15, "info": 24}
     },
     "findings": [
-        {"rule_id": "...", "detector": "...", "severity": "...", "summary": "...", ...}
-    ]
+        {"rule_id": "...", "detector": "...", "severity": "...", "confidence": "...", "evidence_source": "...", "summary": "...", ...}
+    ],
+    "trust_summary": {
+        "total_findings": 42,
+        "trust_level": "high|mixed|low",
+        "by_confidence": {"deterministic": 20, "heuristic": 18, "datasheet-backed": 4},
+        "by_evidence_source": {"datasheet": 4, "topology": 10, "heuristic_rule": 18, ...},
+        "provenance_coverage_pct": 96.5
+    }
 }
 ```
 
-The `findings` list is the single authoritative source for all findings. Use `finding_schema.get_findings()` or `finding_schema.group_findings()` to filter by detector, rule prefix, or category. Detector names are available as constants in `finding_schema.Det`.
+The `findings` list is the single authoritative source for all findings. Use `finding_schema.get_findings()` or `finding_schema.group_findings()` to filter by detector, rule prefix, or category. Detector names are available as constants in `finding_schema.Det`. Severities are `error`, `warning`, or `info`; confidence is `deterministic`, `heuristic`, or `datasheet-backed`.
 
 All analyzers support `--text` for human-readable output, `--analysis-dir` for
 integrated run-folder output (preferred), and `--output` for writing to a
@@ -310,35 +320,30 @@ All fields are optional. Missing fields use defaults.
 
 **Schematic analyzer top-level keys:**
 ```
-analyzer_type, elapsed_s, summary, findings,
-file, kicad_version, file_version, title_block, statistics, bom, components,
-nets, subcircuits, ic_pin_analysis, design_analysis,
-connectivity_issues, labels, no_connects, power_symbols, annotation_issues,
-label_shape_warnings, pwr_flag_warnings, footprint_filter_warnings,
-sourcing_audit, ground_domains, bus_topology, wire_geometry,
-simulation_readiness, property_issues, placement_analysis, hierarchical_labels,
-power_regulators, voltage_dividers, rc_filters, lc_filters, feedback_networks,
-opamp_circuits, transistor_circuits, bridge_circuits, crystal_circuits,
-current_sense, decoupling_analysis, protection_devices, design_observations
+analyzer_type, schema_version, summary, findings, trust_summary,
+file, kicad_version, file_version, title_block, statistics,
+bom, components, nets, subcircuits, ic_pin_analysis, design_analysis,
+connectivity_issues, hierarchy_context, hierarchy_warning,
+net_classifications, rail_voltages
 ```
-(plus domain-specific subcircuit keys when present; `signal_analysis` wrapper removed — see note below)
-Optional (present when non-empty): `text_annotations`, `alternate_pin_summary`, `pin_coverage_warnings`, `instance_consistency_warnings`, `pdn_impedance`, `sleep_current_audit`, `voltage_derating`, `power_budget`, `power_sequencing`, `bom_optimization`, `test_coverage`, `assembly_complexity`, `usb_compliance`, `inrush_analysis`, `sheets`
+Optional (present when non-empty): `pdn_impedance`, `sleep_current_audit`, `voltage_derating`, `power_budget`, `power_sequencing`, `bom_optimization`, `test_coverage`, `assembly_complexity`, `usb_compliance`, `inrush_analysis`, `sheets` (multi-sheet only), `missing_info`, `bom_lock`, `project_settings`
 
 Key nested structures:
 - `statistics`: `{total_components, unique_parts, dnp_parts, total_nets, total_wires, total_no_connects, component_types, power_rails, missing_mpn, ...}`
 - `bom[]`: `{reference, references[], value, footprint, mpn, manufacturer, datasheet, quantity, dnp, ...}`
 - `components[]`: `{reference, value, footprint, lib_id, lib_name, type, category, mpn, datasheet, dnp, in_bom, parsed_value, ...}`
 - `nets{net_name}`: `{pins[], wires, labels[], ...}` — each pin: `{component, pin_number, pin_name, pin_type, ...}` (NOT `ref` or `pin`)
-- `signal_analysis` wrapper no longer exists — detected subcircuit lists (`power_regulators[]`, `voltage_dividers[]`, `rc_filters[]`, `lc_filters[]`, `feedback_networks[]`, `opamp_circuits[]`, `transistor_circuits[]`, `bridge_circuits[]`, `crystal_circuits[]`, `current_sense[]`, `decoupling_analysis[]`, `protection_devices[]`, `buzzer_speaker_circuits[]`, `ethernet_interfaces[]`, `hdmi_dvi_interfaces[]`, `memory_interfaces[]`, `rf_chains[]`, `rf_matching[]`, `bms_systems[]`, `key_matrices[]`, `isolation_barriers[]`, `addressable_led_chains[]`, `design_observations[]`) are now top-level keys alongside `findings`. All rule-flagged issues are in `findings[]`; subcircuit lists contain non-finding structured data.
+- `subcircuits[]`: IC-neighborhood groupings (`{center_ic, ic_value, neighbor_components, ...}`), NOT a categorized detection index — see the JSON field cheat sheet at the top of this file.
+- **Detected subcircuits live in `findings[]`** — power regulators, voltage dividers, RC/LC filters, feedback networks, opamp/transistor/bridge/crystal circuits, current sense, decoupling, protection, buzzer/speaker, Ethernet/HDMI/memory interfaces, RF chains/matching, BMS, key matrices, isolation barriers, addressable LED chains, and design observations all emit as findings with matching `Det.*` detectors. Use `get_findings(data, Det.POWER_REGULATORS)` etc. to fetch them. The pre-v1.3 `signal_analysis` wrapper and its top-level detection lists are gone.
 
 **PCB analyzer top-level keys:**
 ```
-analyzer_type, elapsed_s, summary, findings,
-file, kicad_version, file_version, statistics, layers, setup, nets,
-board_outline, component_groups, footprints, tracks, vias, zones,
-connectivity, net_lengths
+analyzer_type, schema_version, summary, findings, trust_summary,
+file, kicad_version, file_version, statistics, layers, setup,
+nets, net_name_to_id, board_outline, component_groups, footprints,
+tracks, vias, zones, keepout_zones, connectivity, net_lengths
 ```
-Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `layer_transitions`, `silkscreen`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `dfm_summary`, `placement_density`, `copper_presence_summary`, `board_thickness_mm`, `trace_proximity` (with `--proximity`). Sections previously at top level (`thermal_analysis`, `thermal_pad_vias`, `tombstoning_risk`, `placement_analysis`, `current_capacity`, `copper_presence`, `dfm`) are now in `findings[]`.
+Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `layer_transitions`, `silkscreen`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `dfm_summary`, `placement_density`, `copper_presence_summary`, `board_thickness_mm`, `trace_proximity` (with `--proximity`). Sections previously at top level (`thermal_analysis`, `thermal_pad_vias`, `tombstoning_risk`, `placement_analysis`, `current_capacity`, `copper_presence`, `dfm`) are now in `findings[]`. With `--full`, the output also includes a `connectivity_graph` section (see "Connectivity Graph" above).
 
 Key nested structures:
 - `net_lengths` is a **list** (not dict): `[{net, net_number, total_length_mm, segment_count, via_count, layers{}}, ...]` sorted by length descending
@@ -348,9 +353,9 @@ Key nested structures:
 
 **Gerber analyzer top-level keys:**
 ```
-analyzer_type, elapsed_s, summary, findings,
-statistics, completeness, alignment, drill_classification, pad_summary,
-board_dimensions, gerbers, drills
+analyzer_type, schema_version, summary, findings, trust_summary,
+directory, generator, layer_count, statistics, completeness, alignment,
+drill_classification, pad_summary, board_dimensions, gerbers, drills
 ```
 
 **Workflow:** When analyzing a KiCad project, scan the project directory for all available file types and run every applicable analyzer — not just the one the user mentioned. A complete analysis uses all the data available:
@@ -417,7 +422,7 @@ DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LC
 python3 <skill-path>/scripts/datasheet_page_selector.py <pdf_path> --mpn <mpn> --category <category>
 ```
 
-After reading the selected pages and producing an extraction JSON, score and cache it using `datasheet_score` and `datasheet_extract_cache` modules. Extractions are stored in `datasheets/extracted/<MPN>.json` and reused across reviews. See `references/datasheet-extraction.md` for the full schema, extraction guidance, and scoring rubric.
+After reading the selected pages and producing an extraction JSON, score and cache it using `datasheet_score` and `datasheet_extract_cache` modules. Extractions are stored in `datasheets/extracted/<MPN>.json` and reused across reviews. The **`datasheets` skill** owns the full extraction pipeline (schema, page selection, scoring rubric, consumer API) — see `skills/datasheets/SKILL.md` and its reference guides.
 
 **What to extract from each datasheet** (note page/section/figure/equation numbers for citations):
 - Pin function table (pin number → name → function)
@@ -615,18 +620,22 @@ Detailed methodology and format documentation lives in reference files. Read the
 |-----------|-------|-------------|
 | `schematic-analysis.md` | 1133 | Deep schematic review: datasheet validation, design patterns, error taxonomy, tolerance stacking, GPIO audit, motor control, battery life, supply chain |
 | `pcb-layout-analysis.md` | 447 | Advanced PCB: impedance calculations, differential pairs, return paths, copper balance, edge clearance, copper-sensitive components (capacitive touch, antennas), custom analysis scripts |
-| `output-schema.md` | 227 | Full analyzer JSON schema with field names, types, and common extraction patterns |
-| `datasheet-extraction.md` | 352 | Structured datasheet extraction schema, extraction guidance, scoring rubric for cached extractions |
+| `output-schema.md` | 293 | Full analyzer JSON schema with field names, types, and common extraction patterns |
 | `file-formats.md` | 379 | Manual file inspection: S-expression structure, field-by-field docs for all KiCad file types, version detection |
 | `gerber-parsing.md` | 729 | Gerber/Excellon format details, X2 attributes, analysis techniques |
 | `pdf-schematic-extraction.md` | 315 | PDF schematic analysis: extraction workflow, notation conventions, KiCad translation |
 | `supplementary-data-sources.md` | 288 | Legacy KiCad 5 data recovery: netlist parsing, cache library, PCB cross-reference |
-| `net-tracing.md` | 109 | Manual net tracing: coordinate math, Y-axis inversion, rotation transforms |
+| `net-tracing.md` | 120 | Manual net tracing: coordinate math, Y-axis inversion, rotation transforms |
 | `manual-schematic-parsing.md` | 289 | Fallback when schematic script fails |
-| `manual-pcb-parsing.md` | 464 | Fallback when PCB script fails |
+| `manual-pcb-parsing.md` | 467 | Fallback when PCB script fails |
 | `manual-gerber-parsing.md` | 621 | Fallback when Gerber script fails |
-| `report-generation.md` | 573 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
+| `report-generation.md` | 614 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
 | `standards-compliance.md` | 638 | IPC/IEC standards tables: conductor spacing (IPC-2221A Table 6-1), current capacity (IPC-2221A/IPC-2152), annular rings, hole sizes, impedance, via protection (IPC-4761), creepage/clearance (ECMA-287/IEC 60664-1). Consider for all boards; auto-trigger for professional/industrial designs, high voltage, mains input, or safety isolation. |
+| `design-intent.md` | — | Design intent resolution, target market / certification / power constraints that gate findings by context |
+| `diff-analysis.md` | — | How `diff_analysis.py` compares two analyzer runs and emits severity-ranked change reports |
+| `what-if.md` | — | How `what_if.py` patches component values, recalculates derived fields, and suggests fixes for feedback dividers / crystal load caps / cap derating |
+| `config-reference.md` | — | `.kicad-happy.json` schema — project config for analysis cache, suppressions, design intent, risk scoring |
+| `datasheet-verification.md` | — | Automated cross-check of schematic connections against structured datasheet extractions (pin voltage, required externals, decoupling adequacy) |
 
 For script internals, data structures, signal analysis patterns, and batch test suite documentation, see `scripts/README.md`.
 
