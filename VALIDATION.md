@@ -79,58 +79,81 @@ Hard assertions on known-good output values. If a previously correct result chan
 
 | Category | Assertion count | Pass rate |
 |----------|----------------|-----------|
-| **Total** | **2,042,829** | **100%** |
+| **Total** | **2,239,678** | **100%** |
 
 Assertions are seeded from validated output and checked on every run. When analyzer logic changes intentionally (new fields, corrected calculations), affected assertions are re-seeded after manual verification.
 
 ## Signal detector coverage
 
-42 active schematic detectors verified against the corpus:
+65 active schematic detectors verified against the corpus:
 
 | Detector | Repos with hits |
 |----------|----------------|
-| power_sequencing_validation | 5,842 |
-| rail_voltages | 5,550 |
-| esd_coverage_audit | 5,074 |
-| design_observations | 4,954 |
-| decoupling_analysis | 3,848 |
-| led_audit | 3,021 |
-| power_regulators | 2,986 |
-| rc_filters | 2,657 |
-| transistor_circuits | 2,295 |
-| voltage_dividers | 2,032 |
-| crystal_circuits | 1,852 |
-| protection_devices | 1,676 |
-| debug_interfaces | 1,024 |
-| lc_filters | 833 |
-| opamp_circuits | 741 |
-| feedback_networks | 524 |
-| memory_interfaces | 435 |
-| key_matrices | 423 |
-| sensor_interfaces | 373 |
-| addressable_led_chains | 366 |
-| level_shifters | 359 |
-| buzzer_speaker_circuits | 307 |
-| adc_circuits | 281 |
-| motor_drivers | 274 |
-| battery_chargers | 273 |
-| rf_matching | 244 |
-| reset_supervisors | 237 |
-| clock_distribution | 211 |
-| audio_circuits | 203 |
-| isolation_barriers | 188 |
-| power_path | 187 |
-| current_sense | 177 |
-| rf_chains | 154 |
-| bridge_circuits | 137 |
-| rtc_circuits | 121 |
-| ethernet_interfaces | 119 |
-| led_driver_ics | 83 |
-| hdmi_dvi_interfaces | 80 |
-| display_interfaces | 55 |
-| thermocouple_rtd | 48 |
-| bms_systems | 25 |
-| lvds_interfaces | 15 |
+| audit_rail_sources | 5,214 |
+| audit_esd_protection | 5,074 |
+| detect_design_observations | 4,951 |
+| audit_datasheet_coverage | 4,023 |
+| audit_sourcing_gate | 3,962 |
+| detect_decoupling | 3,848 |
+| validate_pullups | 3,293 |
+| audit_connector_ground_distribution | 3,147 |
+| audit_led_circuits | 3,019 |
+| detect_power_regulators | 2,979 |
+| analyze_connectivity | 2,825 |
+| detect_rc_filters | 2,579 |
+| detect_voltage_dividers | 2,281 |
+| detect_transistor_circuits | 2,208 |
+| detect_crystal_circuits | 1,852 |
+| detect_protection_devices | 1,674 |
+| audit_power_pin_dc_paths | 1,605 |
+| detect_solder_jumpers | 1,399 |
+| suggest_certifications | 1,187 |
+| validate_led_resistors | 1,149 |
+| detect_label_aliases | 1,119 |
+| validate_power_sequencing | 1,049 |
+| detect_debug_interfaces | 1,024 |
+| detect_wireless_modules | 972 |
+| detect_lc_filters | 833 |
+| validate_usb_bus | 809 |
+| validate_voltage_levels | 802 |
+| detect_opamp_circuits | 741 |
+| validate_i2c_bus | 475 |
+| detect_memory_interfaces | 435 |
+| detect_led_drivers | 428 |
+| detect_pwm_led_dimming | 423 |
+| detect_key_matrices | 423 |
+| detect_sensor_interfaces | 373 |
+| detect_addressable_leds | 366 |
+| detect_level_shifters | 359 |
+| detect_buzzer_speakers | 307 |
+| detect_adc_circuits | 281 |
+| detect_motor_drivers | 274 |
+| detect_battery_chargers | 273 |
+| detect_rf_matching | 244 |
+| detect_reset_supervisors | 237 |
+| detect_audio_circuits | 226 |
+| detect_clock_distribution | 211 |
+| detect_isolation_barriers | 189 |
+| detect_power_path | 187 |
+| detect_current_sense | 176 |
+| detect_rf_chains | 154 |
+| validate_feedback_stability | 153 |
+| detect_bridge_circuits | 137 |
+| validate_can_bus | 136 |
+| detect_rtc_circuits | 121 |
+| detect_ethernet_interfaces | 119 |
+| validate_spi_bus | 111 |
+| detect_led_driver_ics | 83 |
+| detect_hdmi_dvi_interfaces | 80 |
+| detect_headphone_jack | 79 |
+| detect_display_interfaces | 55 |
+| detect_thermocouple_rtd | 48 |
+| detect_energy_harvesting | 47 |
+| detect_integrated_ldos | 35 |
+| detect_bms_systems | 25 |
+| detect_transformer_feedback | 20 |
+| detect_lvds_interfaces | 15 |
+| detect_i2c_address_conflicts | 12 |
 
 ## How to reproduce
 
@@ -174,10 +197,10 @@ Each closed issue has a corresponding bugfix regression guard assertion that pre
 | Gerber directories | 5,506 |
 | EMC analyses | 36,658 |
 | SPICE simulations | 36,552 |
-| Components parsed | 1,305,219 |
-| Nets traced | 2,093,210 |
-| Regression assertions | 2,042,829 at 100% |
+| Components parsed | 1,305,560 |
+| Nets traced | 2,089,813 |
+| Regression assertions | 2,239,678 at 100% |
 | Bugfix guards | 76 (100% — no regressions) |
 | Closed issues | 275 analyzer + 8 harness |
 | Open issues | 0 |
-| Schematic detectors | 42 |
+| Schematic detectors | 65 |
