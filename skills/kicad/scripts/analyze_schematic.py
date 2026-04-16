@@ -5078,19 +5078,31 @@ def audit_sourcing_gate(components: list[dict]) -> list[dict]:
                                      "test_point", "mounting_hole",
                                      "fiducial", "graphic")
             and c.get("in_bom") and not c.get("dnp")]
-    seen = set()
-    unique = []
+    if not real:
+        return findings
+
+    # Group by BOM line (value + footprint).  A BOM line has coverage if any
+    # instance carries an MPN — the user can propagate it to siblings.
+    # Counting references instead inflates the denominator: a single generic
+    # 10 K resistor shared across 5 refs would register as 5 misses.
+    bom_lines: dict[tuple, dict] = {}
     for c in real:
+        key = (c.get("value", ""), c.get("footprint", ""))
+        line = bom_lines.setdefault(key, {"refs": [], "has_mpn": False})
         r = c.get("reference", "")
-        if r and r not in seen:
-            seen.add(r)
-            unique.append(c)
-    total = len(unique)
+        if r:
+            line["refs"].append(r)
+        if c.get("mpn"):
+            line["has_mpn"] = True
+
+    total = len(bom_lines)
     if total == 0:
         return findings
-    missing = sorted(c.get("reference", "")
-                     for c in unique if not c.get("mpn"))
-    covered = total - len(missing)
+    missing_lines = [line for line in bom_lines.values()
+                     if not line["has_mpn"]]
+    # Collect refs from missing lines for the description, sorted naturally.
+    missing = sorted({r for line in missing_lines for r in line["refs"]})
+    covered = total - len(missing_lines)
     pct = covered / total * 100.0
 
     if pct >= 100.0:
@@ -5098,15 +5110,15 @@ def audit_sourcing_gate(components: list[dict]) -> list[dict]:
     if pct < 50.0:
         rid, sev = "SS-001", "high"
         headline = ("Sourcing blocker: BOM has <50% MPN coverage "
-                    f"({covered}/{total} parts). Board is not pre-fab ready.")
+                    f"({covered}/{total} unique parts). Board is not pre-fab ready.")
     elif pct < 80.0:
         rid, sev = "SS-002", "warning"
-        headline = (f"Sourcing gap: {covered}/{total} BOM parts have an MPN "
+        headline = (f"Sourcing gap: {covered}/{total} unique BOM parts have an MPN "
                     f"({pct:.0f}%). Populate before fab.")
     else:
         rid, sev = "SS-003", "info"
-        headline = (f"Sourcing nearly complete: {covered}/{total} parts "
-                    f"have MPNs ({pct:.0f}%). Fill in remaining refs.")
+        headline = (f"Sourcing nearly complete: {covered}/{total} unique parts "
+                    f"have MPNs ({pct:.0f}%). Fill in remaining lines.")
 
     findings.append({
         "detector": "audit_sourcing_gate",
@@ -5117,16 +5129,18 @@ def audit_sourcing_gate(components: list[dict]) -> list[dict]:
         "category": "sourcing",
         "summary": headline,
         "description": (f"Sourcing audit: {covered} of {total} unique BOM "
-                        f"references carry a manufacturer part number "
-                        f"({pct:.1f}%). Pre-fab readiness requires 100% "
-                        f"coverage; production assembly requires all parts "
-                        f"sourceable via one of the supported distributors."),
+                        f"lines (grouped by value + footprint) carry a "
+                        f"manufacturer part number ({pct:.1f}%). Pre-fab "
+                        f"readiness requires 100% coverage; production "
+                        f"assembly requires all parts sourceable via one of "
+                        f"the supported distributors."),
         "components": missing[:50],
         "nets": [],
         "pins": [],
         "mpn_coverage_percent": round(pct, 1),
-        "missing_mpn_count": len(missing),
-        "total_bom_parts": total,
+        "missing_mpn_lines": len(missing_lines),
+        "missing_mpn_refs": len(missing),
+        "total_bom_lines": total,
         "recommendation": (
             "Populate the MPN field on the listed refs (use the digikey / "
             "mouser / lcsc / element14 skill to search by value/footprint "
@@ -9126,6 +9140,25 @@ def main():
         intent = resolve_design_intent(config,
                                         schematic_data=sch_data_for_intent)
         result['design_intent'] = intent
+
+        # Gate CERT-001 blanket certification suggestions on target_market.
+        # For hobby projects, "EU EMC compliance required" and the fallback
+        # FCC Part 15 Subpart B fire as noise on every board.  Keep specific
+        # triggers (RF, wireless, battery, USB, ethernet, HV) — those
+        # represent real circuit hazards regardless of market.
+        target_market = (intent or {}).get('target_market', 'hobby')
+        if target_market == 'hobby':
+            _blanket_cert_prefixes = (
+                'FCC Part 15 Subpart B',
+                'CISPR 32 / CE EMC Directive',
+            )
+            result['findings'] = [
+                f for f in result.get('findings', [])
+                if not (isinstance(f, dict)
+                        and f.get('rule_id') == 'CERT-001'
+                        and any(str(f.get('standard', '')).startswith(p)
+                                for p in _blanket_cert_prefixes))
+            ]
     except ImportError:
         pass
 
