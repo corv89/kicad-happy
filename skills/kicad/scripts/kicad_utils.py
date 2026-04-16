@@ -1877,7 +1877,7 @@ _KNOWN_FREQS = {
     'TPS62140': 2.5e6,
     'TPS62133': 2.5e6,
     'TPS62150': 2.5e6,
-    'TPS62160': 2.5e6,
+    'TPS62160': 2.25e6,    # TPS62160: 2.25MHz typ (differs from TPS62130/140/150 family at 2.5MHz)
     'TPS62203': 1.0e6,     # TPS62203/77: 1MHz
     'TPS62175': 1.0e6,
     'TPS62177': 1.0e6,
@@ -1934,7 +1934,7 @@ _KNOWN_FREQS = {
     'TPS63020': 2.4e6,     # TPS63020/070/etc: 2.4MHz
     'TPS63070': 2.4e6,
     'TPS63060': 2.4e6,
-    'TPS63000': 2.4e6,
+    'TPS63000': 1.5e6,     # TPS63000: 1.5MHz max (differs from TPS63020/60/70 family at 2.4MHz)
     'TPS63802': 2.1e6,     # TPS63802: 2.1MHz
     'TPS631000': 2.0e6,    # TPS631000/011: 2MHz
     'TPS631011': 2.0e6,
@@ -1964,7 +1964,7 @@ _KNOWN_FREQS = {
     'MP2359': 1.4e6,   # MP2359: 1.4MHz
     'AP3012': 1.5e6,   # AP3012: 1.5MHz
     'RT8059': 1.5e6,   # RT8059: 1.5MHz
-    'SY820': 800e3,    # SY8208: 800kHz
+    'SY8208': 800e3,   # SY8208: 800kHz (prefix narrowed from 'SY820' to avoid matching SY8200 family at 500kHz)
     'MCP1640': 500e3,  # MCP1640: 500kHz
     'MCP1603': 2.0e6,  # MCP1603: 2MHz
     'XL6009': 400e3,   # XL6009: 400kHz
