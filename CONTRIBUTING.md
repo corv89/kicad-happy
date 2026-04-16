@@ -9,8 +9,9 @@ skills/
 ├── kicad/           # Core analysis skill (schematic, PCB, Gerber, thermal, diff, what-if)
 │   ├── SKILL.md     # Skill definition with triggers and usage docs
 │   ├── scripts/     # Python analysis scripts (zero-dep, Python 3.8+)
-│   └── references/  # Deep methodology guides (14 files)
-├── emc/             # EMC pre-compliance (42 rules, 17 categories)
+│   └── references/  # Deep methodology guides (19 files)
+├── datasheets/      # Structured extraction pipeline — per-MPN cache, quality scoring, consumer API
+├── emc/             # EMC pre-compliance (44 rules, 18 categories)
 ├── spice/           # SPICE simulation (ngspice/LTspice/Xyce)
 ├── kidoc/           # Engineering documentation generation
 ├── bom/             # BOM management
@@ -28,17 +29,23 @@ Each skill has a `SKILL.md` with YAML frontmatter (name, description, triggers) 
 
 | File | LOC | Purpose |
 |------|-----|---------|
-| `kicad/scripts/analyze_schematic.py` | ~7,200 | S-expression parser + schematic analysis orchestrator |
-| `kicad/scripts/signal_detectors.py` | ~3,000 | Core signal path detectors (regulators, filters, opamps, dividers, crystals, protection) |
-| `kicad/scripts/domain_detectors.py` | ~4,500 | Domain-specific detectors (Ethernet, USB-C, BMS, motor drive, sensors, audio, LEDs, etc.) |
-| `kicad/scripts/analyze_pcb.py` | ~4,300 | PCB layout analysis (footprints, tracks, vias, zones, DFM) |
-| `kicad/scripts/analyze_gerbers.py` | ~1,200 | Gerber/Excellon verification |
-| `kicad/scripts/kicad_utils.py` | ~460 | Shared utilities (component classification, value parsing, net detection) |
-| `kicad/scripts/kicad_types.py` | ~60 | `AnalysisContext` dataclass — shared state for all detectors |
-| `kicad/scripts/sexp_parser.py` | — | S-expression parser shared by schematic and PCB analyzers |
-| `emc/scripts/emc_rules.py` | ~4,100 | 42 EMC rule implementations |
-| `emc/scripts/emc_formulas.py` | ~1,300 | Radiation formulas, harmonic analysis, PDN impedance |
-| `emc/scripts/emc_spice.py` | ~680 | SPICE-enhanced PDN, filter insertion loss, harmonic FFT |
+| `kicad/scripts/analyze_schematic.py` | ~9,300 | S-expression parser + schematic analysis orchestrator |
+| `kicad/scripts/signal_detectors.py` | ~4,400 | Core signal path detectors (regulators, filters, opamps, dividers, crystals, protection) |
+| `kicad/scripts/domain_detectors.py` | ~6,100 | Domain-specific detectors (Ethernet, USB-C, BMS, motor drive, sensors, audio, LEDs, etc.) |
+| `kicad/scripts/validation_detectors.py` | ~1,000 | Validation detectors (pull-ups, voltage mismatch, protocol buses, power sequencing, feedback stability) |
+| `kicad/scripts/analyze_pcb.py` | ~6,600 | PCB layout analysis (footprints, tracks, vias, zones, DFM, assembly checks, connectivity graph) |
+| `kicad/scripts/analyze_gerbers.py` | ~1,400 | Gerber/Excellon verification |
+| `kicad/scripts/cross_analysis.py` | ~430 | Schematic + PCB cross-domain checks |
+| `kicad/scripts/finding_schema.py` | ~330 | Rich finding factory, `Det` constants, consumer helpers, trust_summary aggregation |
+| `kicad/scripts/output_filters.py` | ~460 | Stage/audience filtering for all analyzers |
+| `kicad/scripts/kicad_utils.py` | ~860 | Shared utilities (component classification, value parsing, net detection, switching frequencies) |
+| `kicad/scripts/kicad_types.py` | ~110 | `AnalysisContext` dataclass — shared state for all detectors |
+| `kicad/scripts/sexp_parser.py` | ~220 | S-expression parser shared by schematic and PCB analyzers |
+| `emc/scripts/emc_rules.py` | ~4,200 | 44 EMC rule implementations |
+| `emc/scripts/emc_formulas.py` | ~1,350 | Radiation formulas, harmonic analysis, PDN impedance |
+| `emc/scripts/emc_spice.py` | ~700 | SPICE-enhanced PDN, filter insertion loss, harmonic FFT |
+| `datasheets/scripts/datasheet_extract_cache.py` | ~430 | Per-MPN extraction cache manager |
+| `datasheets/scripts/datasheet_features.py` | — | Consumer API for analyzers (get_regulator_features, get_mcu_features, etc.) |
 
 ### Zero-dependency policy
 
@@ -109,8 +116,8 @@ EMC rules live in `emc/scripts/emc_rules.py`. Each rule:
 
 1. Has an ID (e.g., `DC-006`) following the category prefix convention
 2. Receives schematic JSON, PCB JSON, and config
-3. Returns findings with severity (CRITICAL/HIGH/MEDIUM/LOW/INFO) and a description
-4. Should include an equation tag comment (e.g., `# EQ-097: ...`) if it uses a non-trivial formula
+3. Returns findings built via `_make_finding()` with `severity` (`error`, `warning`, `info`), `confidence` (`deterministic`, `heuristic`, `datasheet-backed`), and an `evidence_source` tag
+4. Should include an equation tag comment (e.g., `# EQ-097: ...`) inside the function body above the math expression, with a `# Source:` citation line
 
 All formulas should reference a primary source (textbook, app note, standard) in the equation tag.
 
@@ -157,17 +164,18 @@ All scripts exit 0 on success. The schematic and PCB analyzers produce JSON to s
 
 ## Test harness
 
-Changes to any analysis script must be validated against the [test harness](https://github.com/aklofas/kicad-happy-testharness) — a corpus of 5,800+ real-world KiCad projects spanning hobby boards, production hardware, motor controllers, RF frontends, battery management systems, IoT devices, audio amplifiers, and more. KiCad 5 through 10.
+Changes to any analysis script must be validated against the [test harness](https://github.com/aklofas/kicad-happy-testharness) — a corpus of 5,829 real-world KiCad projects spanning hobby boards, production hardware, motor controllers, RF frontends, battery management systems, IoT devices, audio amplifiers, and more. KiCad 5 through 10.
 
 ### What the harness checks
 
 | Layer | What it catches | How |
 |-------|----------------|-----|
 | **Crash testing** | Parser errors, unhandled exceptions, edge cases | Runs every analyzer against every file in the corpus |
-| **Regression assertions** | Output drift, lost detections, changed values | 428K+ assertions on known-good outputs |
-| **Bugfix guards** | Previously fixed bugs returning | 77 targeted assertions on specific past failures |
-| **Equation audits** | Formula correctness | 96 equations tracked with primary source citations |
-| **Constant audits** | Magic numbers drifting | 295 constants tracked, 0 critical-risk |
+| **Regression assertions** | Output drift, lost detections, changed values | 2M+ assertions on known-good outputs |
+| **Bugfix guards** | Previously fixed bugs returning | Targeted assertions on specific past failures |
+| **Equation audits** | Formula correctness | 107 equations tracked with primary source citations |
+| **Constant audits** | Magic numbers drifting | 105+ switching frequencies + other constants tracked, 0 critical-risk |
+| **Schema drift** | Analyzer `--schema` output diverging from emitted JSON | Symmetric-difference check across all 8 analyzers |
 
 ### Running the harness
 

@@ -21,7 +21,7 @@ No external tools required — all checks work with analytical formulas alone. W
 
 ## Check Categories
 
-40 rule IDs across 18 categories:
+44 rule IDs across 18 categories:
 
 | Category | Rule IDs | What it detects | Requires |
 |----------|----------|-----------------|----------|
@@ -29,12 +29,12 @@ No external tools required — all checks work with analytical formulas alone. W
 | **Decoupling** | DC-001 to DC-003 | Cap too far from IC, IC with no decoupling cap, cap too far from via (connection inductance) | PCB |
 | **I/O filtering** | IO-001, IO-002 | Connector without filtering, insufficient ground pins for signal count | PCB + schematic |
 | **Switching EMC** | SW-001 to SW-003 | Harmonic overlap with test bands, switching node copper area, input cap loop area | Schematic + PCB |
-| **Clock routing** | CK-001 to CK-003 | Clock on outer layer, long clock trace, clock routed near connector | PCB + schematic |
+| **Clock routing** | CK-001 to CK-004 | Clock on outer layer, long clock trace, clock routed near connector, stub length | PCB + schematic |
 | **Via stitching** | VS-001 | Ground via spacing exceeds 2x lambda/20 at highest frequency | PCB + schematic |
 | **Stackup** | SU-001 to SU-003 | Adjacent signal layers, signal far from reference plane, thin interplane cap | PCB |
 | **Differential pair** | DP-001 to DP-004 | Intra-pair skew vs protocol limits, CM radiation from skew, reference plane change, outer layer routing | PCB + schematic |
 | **Board edge** | BE-001 to BE-003 | Signal trace near edge, incomplete ground pour ring, insufficient connector area stitching | PCB |
-| **PDN impedance** | PD-001, PD-002 | Anti-resonance peaks exceeding target impedance in decoupling network | PCB + schematic |
+| **PDN impedance** | PD-001 to PD-004 | Anti-resonance peaks exceeding target impedance in decoupling network | PCB + schematic |
 | **Return path** | RP-001 | Layer transition via without nearby ground stitching via | PCB |
 | **Crosstalk** | XT-001 | Trace spacing violating 3H rule, aggressor-victim pairs | PCB (--proximity) |
 | **EMI filter** | EF-001, EF-002 | Input filter cutoff too close to switching frequency | Schematic |
@@ -42,6 +42,7 @@ No external tools required — all checks work with analytical formulas alone. W
 | **Thermal-EMC** | TH-001, TH-002 | MLCC DC bias derating (SRF shift), ferrite near heat source | PCB + schematic |
 | **Shielding** | SH-001 | Connector aperture slot resonance coinciding with emission source | PCB + schematic |
 | **Emission estimates** | EE-001, EE-002 | Board cavity resonance frequencies, switching harmonic envelope | PCB / schematic |
+| **Magnetic leakage** | ML-001 | Unshielded switching inductors within 15mm of sensitive analog circuits (ADCs, opamps, crystals, RF) | PCB + schematic |
 
 ## The Physics
 

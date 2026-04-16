@@ -166,10 +166,10 @@ class ZoneFills:
                 if z.get("net_name")]
 
 
-# EQ-098: d = min(||P - (A + t(B-A))||) with t clamped to [0,1]
-# Source: Self-evident — 2D point-to-segment distance (project, clamp, Euclidean).
 def _dist_point_to_segment(px, py, x1, y1, x2, y2):
     """Distance from point (px, py) to line segment (x1,y1)-(x2,y2)."""
+    # EQ-098: d = min(||P - (A + t(B-A))||) with t clamped to [0,1]
+    # Source: Self-evident — 2D point-to-segment distance (project, clamp, Euclidean).
     dx, dy = x2 - x1, y2 - y1
     if dx == 0 and dy == 0:
         return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
@@ -1186,12 +1186,6 @@ def _extract_keepout_zones(zones: list[dict],
     return keepouts
 
 
-# EQ-100: Arc bounding box — 3-point circumscribed circle via determinant,
-#   then check whether arc sweep (via atan2 of endpoints + midpoint) crosses
-#   any cardinal axis at 0, π/2, π, 3π/2. Crossings extend the bbox to ±r.
-# Source: Standard computational geometry. Circumscribed circle from 3 points:
-#   https://en.wikipedia.org/wiki/Circumscribed_circle#Circumscribed_circles_of_triangles
-#   Arc bbox via cardinal-crossing test is a well-known CAD/CAM technique.
 def extract_board_outline(root: list) -> dict:
     """Extract board outline from Edge.Cuts layer."""
     edges = []
@@ -1272,6 +1266,15 @@ def extract_board_outline(root: list) -> dict:
             all_y.extend([cy - r, cy + r])
             continue
         if e["type"] == "arc" and e.get("mid"):
+            # EQ-100: Arc bounding box — 3-point circumscribed circle via
+            #   determinant, then check whether arc sweep (via atan2 of
+            #   endpoints + midpoint) crosses any cardinal axis at 0, π/2, π,
+            #   3π/2. Crossings extend the bbox to ±r.
+            # Source: Standard computational geometry. Circumscribed circle
+            #   from 3 points:
+            #   https://en.wikipedia.org/wiki/Circumscribed_circle#Circumscribed_circles_of_triangles
+            #   Arc bbox via cardinal-crossing test is a well-known CAD/CAM
+            #   technique.
             # Arc: include start/end plus any cardinal extrema the arc passes through
             sx, sy = e["start"]
             mx, my = e["mid"]
@@ -1788,8 +1791,6 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
     return findings
 
 
-# EQ-101: d = √((x1-x2)² + (y1-y2)²) over all pad pairs; return minimum.
-# Source: Self-evident — 2D Euclidean distance.
 def _min_power_pad_distance(ic_fp: dict, cap_fp: dict) -> float:
     """Minimum distance between IC power/ground pads and capacitor pads.
 
@@ -1797,6 +1798,8 @@ def _min_power_pad_distance(ic_fp: dict, cap_fp: dict) -> float:
     where footprint center can be 3+ mm from the actual power pin.
     Falls back to footprint center distance if pad data is missing.
     """
+    # EQ-101: d = √((x1-x2)² + (y1-y2)²) over all pad pairs; return minimum.
+    # Source: Self-evident — 2D Euclidean distance.
     ic_pads = ic_fp.get("pads", [])
     cap_pads = cap_fp.get("pads", [])
 
@@ -5095,8 +5098,6 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict,
     return results
 
 
-# EQ-102: d = √((px-zx)² + (py-zy)²) for point-to-zone-pour proximity.
-# Source: Self-evident — 2D Euclidean distance.
 def analyze_copper_presence(footprints: list[dict], zones: list[dict],
                             zone_fills: ZoneFills,
                             ref_layer_map: dict[str, str] | None = None) -> dict:
@@ -5311,7 +5312,10 @@ def analyze_copper_presence(footprints: list[dict], zones: list[dict],
             if not bbox or len(bbox) != 4:
                 continue
             bx_min, by_min, bx_max, by_max = bbox
-            # Distance from point to axis-aligned bounding box
+            # EQ-102: d = √((px-zx)² + (py-zy)²) for point-to-zone-pour proximity.
+            # Source: Self-evident — 2D Euclidean distance to the nearest
+            #   axis-aligned bounding-box edge (dx/dy clamped to 0 when the
+            #   point is inside the box on that axis).
             dx = max(bx_min - fx, 0, fx - bx_max)
             dy = max(by_min - fy, 0, fy - by_max)
             dist = math.sqrt(dx * dx + dy * dy)
@@ -5767,10 +5771,10 @@ def analyze_via_in_pad(footprints: list[dict], vias: dict, thermal_pad_refs: set
     return findings
 
 
-# EQ-103: d = min distance from via center to any Edge.Cuts line segment.
-# Source: Self-evident — 2D point-to-segment distance (see EQ-098).
 def analyze_board_edge_via_clearance(vias: dict, board_outline: dict) -> list[dict]:
     """BV-001: Check vias close to board edges."""
+    # EQ-103: d = min distance from via center to any Edge.Cuts line segment.
+    # Source: Self-evident — 2D point-to-segment distance (see EQ-098).
     findings: list[dict] = []
     via_list = vias.get("vias", [])
     edges = board_outline.get("edges", [])
@@ -5778,9 +5782,9 @@ def analyze_board_edge_via_clearance(vias: dict, board_outline: dict) -> list[di
     if not via_list or not edges:
         return findings
 
-    # EQ-104: Helper — same 2D point-to-segment distance as EQ-098.
-    # Source: Self-evident — kept as a local helper to avoid import cycles.
     def _pt_seg_dist(px, py, x1, y1, x2, y2):
+        # EQ-104: Helper — same 2D point-to-segment distance as EQ-098.
+        # Source: Self-evident — kept as a local helper to avoid import cycles.
         dx, dy = x2 - x1, y2 - y1
         length_sq = dx * dx + dy * dy
         if length_sq == 0:

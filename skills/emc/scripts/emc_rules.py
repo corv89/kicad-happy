@@ -3947,11 +3947,6 @@ def analyze_regulatory_coverage(standard: str, market: Optional[str],
 # Inductor Magnetic Leakage
 # ---------------------------------------------------------------------------
 
-# EQ-106: Proximity gate — emit ML-001 when d_mm < 15mm AND H_field_A_per_m
-#   (from EQ-105, assuming I_peak = 1A, package = 5mm) exceeds threshold.
-#   d = √((x_ind - x_sens)² + (y_ind - y_sens)²).
-# Source: Threshold from Ott, "EMC Engineering" Ch. 11 rule-of-thumb for
-#   unshielded switching inductor coupling to high-impedance analog nodes.
 def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
     """ML-001: Flag unshielded switching inductors near sensitive circuits.
 
@@ -4057,6 +4052,13 @@ def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
 
     for ind in sw_inductors:
         for sens in sensitive:
+            # EQ-106: Proximity gate — emit ML-001 when d_mm < 15mm AND
+            #   H_field_A_per_m (from EQ-105, assuming I_peak = 1A, package
+            #   = 5mm) exceeds threshold.
+            #   d = √((x_ind - x_sens)² + (y_ind - y_sens)²).
+            # Source: Threshold from Ott, "EMC Engineering" Ch. 11
+            #   rule-of-thumb for unshielded switching inductor coupling to
+            #   high-impedance analog nodes.
             dx = ind['x'] - sens['x']
             dy = ind['y'] - sens['y']
             dist_mm = math.sqrt(dx * dx + dy * dy)

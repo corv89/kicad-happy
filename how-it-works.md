@@ -28,21 +28,23 @@ The schematic analyzer (`analyze_schematic.py`) reads your `.kicad_sch` file and
 
 4. **Builds the net graph** using union-find on pin coordinates. Every wire endpoint, label, power symbol, and component pin gets a coordinate key. Points within 0.01mm are merged. Wires union their endpoints. Labels union their position with any wire they touch. The result: for every net, a complete list of which component pins are connected.
 
-5. **Runs 40 signal and domain detectors.** Each is a pure function that looks for specific circuit patterns in the connectivity graph:
+5. **Runs 60+ signal, domain, validation, and audit detectors.** Each is a pure function that looks for specific circuit patterns in the connectivity graph:
 
    | Detector | What it finds |
    |----------|--------------|
    | Voltage dividers | Two resistors sharing a node, one side to power/ground. Computes ratio and output voltage. |
    | RC/LC filters | Resistor-capacitor or inductor-capacitor pairs. Computes cutoff frequency. |
-   | Power regulators | ICs with feedback divider networks. Computes Vout from Vref (datasheet lookup for ~150 part families, heuristic fallback). |
+   | Power regulators | ICs with feedback divider networks. Computes Vout from Vref (datasheet lookup for ~60 part families, heuristic fallback). |
    | Transistor circuits | MOSFETs and BJTs with gate/base biasing, load classification, flyback diode detection. |
    | Op-amp circuits | Inverting/non-inverting/buffer/differential configurations. Gain computation from feedback resistors. |
    | Current sense | Shunt resistors with differential measurement. Power dissipation calculation. |
    | Protection devices | TVS, ESD, varistors mapped to the interfaces they protect. |
    | Crystal circuits | Crystals with load capacitor verification. |
    | Bridge circuits | H-bridge and 3-phase motor drive topologies. |
-   | Bus detection | I2C (with pull-up resistance check), SPI, UART, CAN (with termination check). |
-   | Domain detectors | RF chains, Ethernet, HDMI, memory, BMS, battery chargers, motor drivers, ADC, reset/supervisor, clock distribution, display/touch, sensors, level shifters, audio, LED drivers, RTC, thermocouple/RTD, power sequencing, debug interfaces, ESD coverage audit, and more. |
+   | Bus detection | I2C (with pull-up resistance check), SPI, UART, CAN, RS-485 (with termination check). |
+   | Validation detectors | Pull-up/pull-down presence, cross-domain voltage mismatch, protocol electrical validation, power sequencing dependency graph, LED resistor sizing, feedback network stability. |
+   | Audit detectors | Sourcing gate (MPN/BOM coverage), datasheet coverage, rail-source audit, label-alias audit, power-pin DC-path audit. |
+   | Domain detectors | RF chains, Ethernet, HDMI, memory, BMS, battery chargers, motor drivers, ADC, reset/supervisor, clock distribution, display/touch, sensors, level shifters, audio, LED drivers, RTC, thermocouple/RTD, power sequencing, debug interfaces, ESD coverage, wireless modules, transformer SMPS feedback, I2C address conflicts, energy harvesting, PWM LED dimming, headphone jacks, and more. |
 
    Detectors run in dependency order — voltage dividers are found first, then regulators reference those dividers for feedback network analysis. Each detector is documented in [methodology_schematic.md](skills/kicad/scripts/methodology_schematic.md).
 
@@ -52,9 +54,9 @@ The PCB analyzer (`analyze_pcb.py`) and Gerber analyzer (`analyze_gerbers.py`) f
 
 ### Step 2: Gather datasheets
 
-The agent downloads datasheets for every component with an MPN, using the distributor API skills (DigiKey, Mouser, LCSC, element14). PDFs are stored locally in a `datasheets/` directory with an index manifest.
+The agent downloads datasheets for every component with an MPN, using the distributor API skills (DigiKey, Mouser, LCSC, element14). PDFs are stored locally in a `datasheets/` directory with a `manifest.json` (legacy name: `index.json`). The **`datasheets` skill** then extracts structured specs from those PDFs into per-MPN JSON under `datasheets/extracted/`, scored on a five-dimension quality rubric — see the [Datasheet Extraction Guide](datasheet-extraction.md) for the full pipeline.
 
-This step is critical. Without datasheets, a review can only check that a design is *self-consistent* (the schematic agrees with itself). With datasheets, it can check that the design is *correct* (component values match manufacturer recommendations, absolute maximum ratings aren't exceeded, reference circuits are followed).
+This step is critical. Without datasheets, a review can only check that a design is *self-consistent* (the schematic agrees with itself). With datasheets, it can check that the design is *correct* (component values match manufacturer recommendations, absolute maximum ratings aren't exceeded, reference circuits are followed). Every finding carries a confidence label (`deterministic`, `heuristic`, `datasheet-backed`) so the reviewer can see at a glance which claims are grounded in the manufacturer's spec.
 
 ### Step 3: Cross-reference and review
 
@@ -64,7 +66,7 @@ The agent reads the analysis JSON and datasheets together, then:
 - **Validates against datasheets.** Checks feedback divider Vout against the regulator's actual Vref. Verifies filter cutoff frequencies match the application note. Confirms current sense resistor power dissipation is within rating.
 - **Cross-references schematic to PCB.** Component counts match? All nets routed? Thermal vias adequate for power components? Decoupling caps placed close to IC supply pins?
 - **Checks fabrication files.** Gerber layers complete? Drill files present? Coordinate alignment consistent? Zip archives up-to-date?
-- **Writes the review.** Structured report with findings categorized by severity (CRITICAL / WARNING / SUGGESTION), power tree visualization, signal analysis walkthrough, and DFM assessment.
+- **Writes the review.** Structured report with findings categorized by severity (`error` / `warning` / `info`), power tree visualization, signal analysis walkthrough, and DFM assessment.
 
 ### Step 4: You review the review
 
@@ -96,13 +98,13 @@ Being honest about limitations is more useful than pretending they don't exist.
 
 - **Layout parasitics.** The PCB analyzer measures trace widths and via counts, and the `--proximity` flag does spatial analysis to flag signal nets running close together (crosstalk risk). When both schematic and PCB data are available, SPICE simulations can inject extracted PCB trace parasitics. But full impedance matching and return path analysis require dedicated SI tools.
 
-- **Full EMC compliance.** The **emc** skill now performs pre-compliance risk analysis (42 rule checks, PDN impedance, switching harmonics, diff pair skew — see the [EMC guide](emc-precompliance.md)), but it's analytical, not a substitute for pre-compliance testing with actual test equipment.
+- **Full EMC compliance.** The **emc** skill now performs pre-compliance risk analysis (44 rule checks, PDN impedance, switching harmonics, diff pair skew — see the [EMC guide](emc-precompliance.md)), but it's analytical, not a substitute for pre-compliance testing with actual test equipment.
 
 - **Mechanical fit.** Board outline dimensions are extracted, but interference with enclosures, connector mating height, thermal clearance to adjacent boards — these require 3D mechanical context the analyzer doesn't have.
 
 **Things the analyzer might get wrong:**
 
-- **Regulator Vout estimates.** The Vref lookup table covers ~150 part families, each verified against the manufacturer's datasheet. If your regulator isn't in it, the analyzer falls back to a heuristic sweep that's right most of the time but not always. The `vref_source` field in the output tells you which method was used — `"lookup"` means datasheet-verified, `"heuristic"` means check it yourself.
+- **Regulator Vout estimates.** The Vref lookup table covers ~60 part families, each verified against the manufacturer's datasheet. If your regulator isn't in it, the analyzer falls back to a heuristic sweep that's right most of the time but not always. The `vref_source` field in the output tells you which method was used — `"lookup"` means datasheet-verified, `"heuristic"` means check it yourself.
 
 - **Legacy KiCad 5 designs.** The legacy `.sch` format stores pin positions in separate `.lib` files. The analyzer parses cache libraries (`-cache.lib`) and project `.lib` files automatically, with built-in fallbacks for common standard library symbols (R, C, L, D, LED, transistors). Pin coverage is typically 92–100% depending on which `.lib` files are available in the repo. Components whose `.lib` files are missing (e.g., standard KiCad system libraries not committed to the project) will lack pin data and won't participate in signal analysis.
 
@@ -153,8 +155,8 @@ python3 skills/kicad/scripts/analyze_schematic.py your_board.kicad_sch --output 
 # Check component count
 python3 -c "import json; d=json.load(open('analysis.json')); print(f'Components: {d[\"statistics\"][\"total_components\"]}')"
 
-# Look at detected voltage dividers
-python3 -c "import json; d=json.load(open('analysis.json')); [print(f'{vd[\"r_top\"][\"ref\"]} + {vd[\"r_bottom\"][\"ref\"]}: ratio={vd[\"ratio\"]:.3f}') for vd in d.get('signal_analysis',{}).get('voltage_dividers',[])]"
+# Look at detected voltage dividers (findings[] with detector='detect_voltage_dividers')
+python3 -c "import json; d=json.load(open('analysis.json')); [print(f'{f[\"components\"][0]}: {f[\"summary\"]}') for f in d.get('findings',[]) if f.get('detector') == 'detect_voltage_dividers']"
 
 # Trace a specific net
 python3 -c "import json; d=json.load(open('analysis.json')); net=d['nets'].get('+3V3',{}); print(f'Pins on +3V3: {len(net.get(\"pins\",[]))}'); [print(f'  {p[\"component\"]}.{p[\"pin_number\"]} ({p[\"pin_name\"]})') for p in net.get('pins',[])]"
@@ -164,7 +166,7 @@ The JSON is the truth. Everything the agent says should trace back to it. If it 
 
 ### "Open source analysis scripts are a liability — what if they have bugs?"
 
-The scripts are tested against a [dedicated test harness](https://github.com/aklofas/kicad-happy-testharness) containing 5,800+ open-source KiCad projects from GitHub, Codeberg, and GitLab, spanning KiCad versions 5 through 10. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists and the test harness uses three layers of regression testing (see below).
+The scripts are tested against a [dedicated test harness](https://github.com/aklofas/kicad-happy-testharness) containing 5,829 open-source KiCad projects from GitHub, Codeberg, and GitLab, spanning KiCad versions 5 through 10. That's single-sheet hobby boards, multi-sheet industrial controllers, complex hierarchical designs with repeated sub-sheets, and everything in between. All parse and produce output without errors. Detection accuracy is harder to quantify — you can't count what you didn't catch — which is why this document exists and the test harness uses three layers of regression testing (see below).
 
 More importantly, the scripts are designed so that bugs produce *missing data*, not *wrong data*. If a detector fails to recognize a circuit pattern, you get a gap in the analysis (the reviewer's blind spot). If a detector misidentifies a circuit, it reports incorrect facts (the reviewer is misled). The detection logic is tuned to avoid the second failure mode — it's better to miss a voltage divider than to report one that doesn't exist.
 

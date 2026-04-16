@@ -187,7 +187,7 @@ Without any API credentials, the skill still works — it falls through to the b
 
 ## Testing
 
-The SPICE skill is validated against the same 5,800+ repo test corpus as the analyzers:
+The SPICE skill is validated against the same 5,829-repo test corpus as the analyzers:
 
 - **30,646 simulations** across the full corpus
 - **93.1% pass rate** (28,544 pass, 1,297 warn, 5 fail, 922 skip)

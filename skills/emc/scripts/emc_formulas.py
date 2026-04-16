@@ -1340,11 +1340,6 @@ def cross_rail_transient_current(downstream_node: dict,
 # Inductor near-field H-field estimation
 # ---------------------------------------------------------------------------
 
-# EQ-105: H = (m · sin θ) / (4π · r³), with m = N · I · A (magnetic moment)
-#   and A ≈ (package_mm / 2)² (effective loop area ≈ 25% of footprint).
-# Source: Jackson, "Classical Electrodynamics" 3rd ed. §5.6 (magnetic dipole
-#   near-field); Ott, "Electromagnetic Compatibility Engineering" Ch. 11
-#   (switching-regulator near-field coupling).
 def estimate_inductor_h_field(peak_current_a, distance_m,
                               inductor_size_mm=5.0):
     """Estimate peak H-field from a power inductor at a given distance.
@@ -1385,8 +1380,12 @@ def estimate_inductor_h_field(peak_current_a, distance_m,
     # Magnetic moment (single-turn approximation)
     m = peak_current_a * a_eff  # A*m^2
 
+    # EQ-105: H = (m · sin θ) / (4π · r³), with m = N · I · A (magnetic moment)
+    #   and A ≈ (package_mm / 2)² (effective loop area ≈ 25% of footprint).
+    # Source: Jackson, "Classical Electrodynamics" 3rd ed. §5.6 (magnetic
+    #   dipole near-field); Ott, "Electromagnetic Compatibility Engineering"
+    #   Ch. 11 (switching-regulator near-field coupling).
     # Near-field H at broadside (theta=90, sin=1, worst case)
-    # H = m / (4 * pi * r^3)
     import math
     h = m / (4.0 * math.pi * distance_m ** 3)
 
