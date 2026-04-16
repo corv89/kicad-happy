@@ -24,6 +24,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from finding_schema import make_finding
+from kicad_utils import build_net_id_map as _build_net_id_map
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +62,6 @@ def _parse_voltage_from_name(name: str) -> float | None:
     if m:
         return float(m.group(1))
     return None
-
-
-def _build_net_id_map(pcb: dict) -> dict[int, str]:
-    result = {}
-    for ni in pcb.get('nets', {}).get('net_info', []):
-        result[ni.get('id', -1)] = ni.get('name', '')
-    return result
 
 
 # ---------------------------------------------------------------------------

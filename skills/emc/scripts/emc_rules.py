@@ -33,7 +33,7 @@ from emc_formulas import (
     distributed_pdn_impedance_sweep, cross_rail_transient_current,
     parallel_cap_impedance,
 )
-from kicad_utils import lookup_switching_freq as _estimate_switching_freq
+from kicad_utils import lookup_switching_freq as _estimate_switching_freq, build_net_id_map
 from finding_schema import Det, get_findings
 
 
@@ -2628,6 +2628,7 @@ def check_esd_protection_path(pcb: Dict,
     if not protection:
         return findings
 
+    net_id_map = build_net_id_map(pcb)
     footprints = pcb.get('footprints', [])
     connectors = _connector_refs(footprints)
     if not connectors:
@@ -2714,9 +2715,12 @@ def check_esd_protection_path(pcb: Dict,
                 vy = via.get('y', 0)
                 d = math.sqrt((px - vx)**2 + (py - vy)**2)
                 if d <= 3.0:  # Within 3mm of TVS
-                    # Check if it's a ground via
-                    net = via.get('net_name', via.get('net', ''))
-                    if isinstance(net, str) and _is_ground_net(net):
+                    net_id = via.get('net')
+                    if isinstance(net_id, int):
+                        net_name = net_id_map.get(net_id, '')
+                    else:
+                        net_name = via.get('net_name', '') if isinstance(via.get('net_name'), str) else ''
+                    if _is_ground_net(net_name):
                         gnd_vias_near += 1
 
             if gnd_vias_near == 0:

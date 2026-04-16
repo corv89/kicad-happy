@@ -1993,3 +1993,28 @@ def match_known_switching(value: str, lib_id: str) -> bool:
         if val_upper.startswith(pu) or lib_part.startswith(pu):
             return True
     return False
+
+
+def build_net_id_map(pcb):
+    """Return {net_id (int): net_name (str)} from PCB JSON.
+
+    Handles both the current flat form pcb['nets'] = {"6": "GND", ...}
+    and the legacy nested form pcb['nets']['net_info'] = [{"id": 6, ...}, ...].
+    """
+    nets = pcb.get('nets', {})
+    out = {}
+    if isinstance(nets, dict):
+        for k, v in nets.items():
+            if isinstance(v, str):
+                try:
+                    out[int(k)] = v
+                except (ValueError, TypeError):
+                    continue
+        if out:
+            return out
+        for ni in nets.get('net_info', []) or []:
+            try:
+                out[int(ni.get('id', -1))] = ni.get('name', '')
+            except (ValueError, TypeError):
+                continue
+    return out
