@@ -479,6 +479,7 @@ def main():
 
     result = {
         'analyzer_type': 'emc',
+        'schema_version': '1.3.0',
         'summary': {
             'total_findings': len(findings),
             'categories_checked': len(category_summary),

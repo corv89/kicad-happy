@@ -6085,6 +6085,7 @@ def analyze_pcb(path: str, *, proximity: bool = False,
 
     result = {
         "analyzer_type": "pcb",
+        "schema_version": "1.3.0",
         "confidence_map": confidence_map,
         "file": str(path),
         "kicad_version": generator_version,

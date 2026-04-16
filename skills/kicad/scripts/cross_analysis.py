@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from finding_schema import make_finding
+from finding_schema import make_finding, compute_trust_summary
 from kicad_utils import build_net_id_map as _build_net_id_map
 
 
@@ -921,9 +921,12 @@ def main():
 
     result = {
         'analyzer_type': 'cross_analysis',
-        'analysis_time_s': round(elapsed, 3),
+        'schema_version': '1.3.0',
+        'elapsed_s': round(elapsed, 3),
+        'analysis_time_s': round(elapsed, 3),  # alias — removed in Phase 3
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,
+        'trust_summary': compute_trust_summary(findings),
     }
 
     from output_filters import apply_output_filters

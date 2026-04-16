@@ -1310,6 +1310,7 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
 
     result = {
         "analyzer_type": "gerber",
+        "schema_version": "1.3.0",
         "directory": str(directory),
         "generator": generator,
         "layer_count": layer_count,

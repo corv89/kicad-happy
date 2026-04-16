@@ -3162,6 +3162,7 @@ def parse_legacy_schematic(path: str) -> dict:
 
     result = {
         "analyzer_type": "schematic",
+        "schema_version": "1.3.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "trust_summary": compute_trust_summary(findings),
         "file": str(path),
@@ -8863,6 +8864,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
 
     result = {
         "analyzer_type": "schematic",
+        "schema_version": "1.3.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "confidence_map": confidence_map,
         "trust_summary": compute_trust_summary(findings, bom=bom),

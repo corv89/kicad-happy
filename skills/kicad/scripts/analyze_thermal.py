@@ -978,6 +978,7 @@ def main():
 
     result = {
         "analyzer_type": "thermal",
+        "schema_version": "1.3.0",
         "summary": {
             "total_findings": len(findings),
             "components_assessed": len(assessments),
