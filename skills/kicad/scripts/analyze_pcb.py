@@ -3210,6 +3210,27 @@ def extract_silkscreen(root: list, footprints: list[dict]) -> dict:
     return result
 
 
+_RF_MODULE_KEYWORDS = (
+    'ESP32', 'ESP8266', 'WROOM', 'WROVER', 'XIAO', 'nRF52', 'nRF53',
+    'RN4871', 'RN4870', 'RAK', 'LoRa', 'SIM800', 'SIM7', 'EC25', 'SIM868',
+    'BGM', 'BGT', 'BM71', 'HM-10', 'HC-05',
+)
+_RF_LIB_KEYWORDS = ('RF_Module', 'RF_WiFi', 'RF_Bluetooth', 'RF_GPS')
+
+
+def _is_rf_module(fp: dict) -> bool:
+    """Return True if the footprint looks like an RF/wireless module."""
+    library = fp.get('library', '') or ''
+    value = fp.get('value', '') or ''
+    for kw in _RF_LIB_KEYWORDS:
+        if kw in library:
+            return True
+    for kw in _RF_MODULE_KEYWORDS:
+        if kw.lower() in value.lower() or kw.lower() in library.lower():
+            return True
+    return False
+
+
 def analyze_placement(footprints: list[dict], outline: dict) -> dict:
     """Component placement analysis — courtyard overlaps and edge clearance.
 
@@ -3237,6 +3258,9 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
                 ox = min(cy_a["max_x"], cy_b["max_x"]) - max(cy_a["min_x"], cy_b["min_x"])
                 oy = min(cy_a["max_y"], cy_b["max_y"]) - max(cy_a["min_y"], cy_b["min_y"])
                 overlap_mm2 = round(ox * oy, 3)
+                is_rf_overlap = _is_rf_module(fp_a) or _is_rf_module(fp_b)
+                severity = 'warning' if is_rf_overlap else ('error' if overlap_mm2 > 1.0 else 'warning')
+                rf_note = ' (courtyard includes RF keepout — verify body collision manually)' if is_rf_overlap else ''
                 overlaps.append({
                     "component_a": fp_a["reference"],
                     "component_b": fp_b["reference"],
@@ -3245,10 +3269,10 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
                     "detector": "analyze_placement",
                     "rule_id": "PM-001",
                     "category": "placement",
-                    "severity": "error" if overlap_mm2 > 1.0 else "warning",
+                    "severity": severity,
                     "confidence": "deterministic",
                     "evidence_source": "topology",
-                    "summary": f"Courtyard overlap between {fp_a['reference']} and {fp_b['reference']} ({overlap_mm2}mm\u00b2)",
+                    "summary": f"Courtyard overlap between {fp_a['reference']} and {fp_b['reference']} ({overlap_mm2}mm\u00b2){rf_note}",
                     "description": f"Components {fp_a['reference']} and {fp_b['reference']} have overlapping courtyards on {fp_a['layer']} ({overlap_mm2}mm\u00b2 overlap area).",
                     "components": [fp_a["reference"], fp_b["reference"]],
                     "nets": [],
@@ -5225,6 +5249,49 @@ def _compute_switching_loop_areas(footprints: list, schematic_data: dict) -> lis
     return results
 
 
+def _finest_smd_pad_dim(footprints: list[dict], side: str) -> float | None:
+    """Return the smallest SMD pad dimension (width or height) on the given side.
+
+    Uses pad 'width' and 'height' fields as a proxy for pad pitch — fine-pitch
+    parts (BGA, fine-pitch QFN) have smaller pads. Returns None when no SMD
+    pads with size data are found.
+    """
+    min_dim: float | None = None
+    for fp in footprints:
+        layer = fp.get("layer", "F.Cu")
+        fp_side = layer if layer in ("F.Cu", "B.Cu") else "F.Cu"
+        if fp_side != side:
+            continue
+        for pad in fp.get("pads", []):
+            if pad.get("type") != "smd":
+                continue
+            w = pad.get("width")
+            h = pad.get("height")
+            if w is None or h is None:
+                continue
+            dim = min(float(w), float(h))
+            if dim > 0 and (min_dim is None or dim < min_dim):
+                min_dim = dim
+    return min_dim
+
+
+def _fiducial_severity_from_pitch(min_pad_dim: float | None) -> tuple[str, str]:
+    """Return (severity, pitch_note) based on smallest SMD pad dimension.
+
+    Thresholds use pad size as a proxy for pitch:
+      <= 0.3 mm pad dim  -> likely BGA / fine-pitch QFN  -> 'error'
+      <= 0.5 mm pad dim  -> medium pitch (SOT-563 etc.)  -> 'warning'
+      >  0.5 mm or None  -> coarse pitch                 -> 'info'
+    """
+    if min_pad_dim is None:
+        return "info", " (pad pitch unknown — coarse assumed)"
+    if min_pad_dim <= 0.3:
+        return "error", f" (finest pad dim {min_pad_dim:.2f}mm — BGA/fine-pitch QFN present)"
+    if min_pad_dim <= 0.5:
+        return "warning", f" (finest pad dim {min_pad_dim:.2f}mm — medium-pitch part present)"
+    return "info", f" (finest pad dim {min_pad_dim:.2f}mm — coarse pitch only)"
+
+
 def analyze_fiducials(footprints: list[dict]) -> dict:
     """FD-001: Check for assembly fiducial markers."""
     fiducials_by_side: dict[str, list[str]] = {"F.Cu": [], "B.Cu": []}
@@ -5256,18 +5323,21 @@ def analyze_fiducials(footprints: list[dict]) -> dict:
         if count >= 3:
             continue  # Adequate
 
+        # Pitch-aware severity: use finest SMD pad dimension as pitch proxy
+        min_pad_dim = _finest_smd_pad_dim(footprints, side)
+        severity, pitch_note = _fiducial_severity_from_pitch(min_pad_dim)
+
         if count == 0:
-            severity = "error"
-            summary = f"No fiducials on {side} ({smd_count} SMD components)"
+            summary = f"No fiducials on {side} ({smd_count} SMD components){pitch_note}"
         else:
-            severity = "warning"
-            summary = f"Only {count} fiducial(s) on {side} (need >= 3)"
+            summary = f"Only {count} fiducial(s) on {side} (need >= 3){pitch_note}"
 
         findings.append({
             "side": side,
             "fiducial_count": count,
             "fiducial_refs": fids,
             "smd_component_count": smd_count,
+            "finest_smd_pad_dim_mm": min_pad_dim,
             "detector": "analyze_fiducials",
             "rule_id": "FD-001",
             "category": "assembly",
