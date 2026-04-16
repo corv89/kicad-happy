@@ -3917,7 +3917,7 @@ def _detect_i2c_buses(ctx: AnalysisContext) -> list[dict]:
                 }
 
                 # I2C rise time validation
-                # EQ-089: t_r = 0.8473 * R_pullup * C_bus (RC time constant to 70% VDD)
+                # EQ-097: t_r = 0.8473 * R_pullup * C_bus (RC time constant to 70% VDD)
                 # I2C spec limits: Standard 1000ns, Fast 300ns, Fast+ 120ns, HS 50ns
                 if entry.get("pull_ups") and entry.get("estimated_bus_capacitance_pF"):
                     pullup_ohms = [pu["ohms"] for pu in entry["pull_ups"] if pu.get("ohms")]
