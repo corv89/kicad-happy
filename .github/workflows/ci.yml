@@ -61,6 +61,30 @@ jobs:
       - name: kidoc_orchestrator.py --help
         run: python3 skills/kidoc/scripts/kidoc_orchestrator.py --help > /dev/null
 
+  harness-quick-sanity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Clone test harness at pinned commit
+        run: |
+          git clone https://github.com/aklofas/kicad-happy-testharness.git /tmp/harness
+          cd /tmp/harness
+          git checkout fa454ff3eb
+
+      - name: Run quick-sanity tests (<1s, 5-repo assertions, no corpus dep)
+        env:
+          KICAD_HAPPY_DIR: ${{ github.workspace }}
+        run: |
+          cd /tmp/harness
+          python3 run_tests.py --quick-sanity
+
   harness-smoke:
     runs-on: ubuntu-latest
 
@@ -76,11 +100,11 @@ jobs:
         run: |
           git clone https://github.com/aklofas/kicad-happy-testharness.git /tmp/harness
           cd /tmp/harness
-          git checkout 1719c052b02
+          git checkout fa454ff3eb
 
-      - name: Run quick-sanity tests (<1s, no corpus dependency)
+      - name: Run smoke tests (~30s, 565-test PR-gate subset, no corpus dep)
         env:
           KICAD_HAPPY_DIR: ${{ github.workspace }}
         run: |
           cd /tmp/harness
-          python3 run_tests.py --quick-sanity
+          python3 run_tests.py --smoke
