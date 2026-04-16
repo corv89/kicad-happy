@@ -9056,18 +9056,11 @@ def _get_schema():
             "erc_warnings": "[string]",
         },
         "connectivity_issues": {"single_pin_nets": "[net_name]", "multi_driver_nets": "[net_name]", "floating_nets": "[net_name]"},
-        "_optional_sections": "power_budget, power_sequencing, pdn_impedance, sleep_current_audit, usb_compliance, inrush_analysis, bom_optimization, test_coverage, assembly_complexity, sheets (multi-sheet only), missing_info, bom_lock",
-        "hierarchy_context": {
-            "root_schematic": "string — root .kicad_sch filename",
-            "target_sheet": "string — this sub-sheet filename",
-            "sheets_in_project": "[string — all sheet filenames]",
-            "cross_sheet_nets": "{label_name: {external_components: [{reference, value, lib_id, type, sheet}], is_power_rail: bool, connected_sheets: [string]}}",
-            "project_power_rails": "[string — power rail net names]",
-            "reference_corrections_applied": "int",
-        },
-        "hierarchy_warning": "string — present when sub-sheet detected without root (optional)",
-        "_redirected_from": "string — original filename when sub-sheet was redirected to root (optional)",
-        "_stale_file_warning": "string — present when input file is not in the project sheet tree (optional)",
+        "_optional_sections": "power_budget, power_sequencing, pdn_impedance, sleep_current_audit, usb_compliance, inrush_analysis, bom_optimization, test_coverage, assembly_complexity, sheets (multi-sheet only), missing_info, bom_lock, project_settings",
+        "hierarchy_context": "OPTIONAL — only present when analyzing a sub-sheet with hierarchy context resolved. Shape: {root_schematic, target_sheet, sheets_in_project: [string], cross_sheet_nets: {label: {external_components, is_power_rail, connected_sheets}}, project_power_rails: [string], reference_corrections_applied: int}",
+        "hierarchy_warning": "OPTIONAL string — present when sub-sheet detected without root",
+        "_redirected_from": "OPTIONAL string — original filename when sub-sheet was redirected to root",
+        "_stale_file_warning": "OPTIONAL string — present when input file is not in the project sheet tree",
     }
 
 
