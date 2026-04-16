@@ -3369,8 +3369,20 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
                 oy = min(cy_a["max_y"], cy_b["max_y"]) - max(cy_a["min_y"], cy_b["min_y"])
                 overlap_mm2 = round(ox * oy, 3)
                 is_rf_overlap = _is_rf_module(fp_a) or _is_rf_module(fp_b)
-                severity = 'warning' if is_rf_overlap else ('error' if overlap_mm2 > 1.0 else 'warning')
-                rf_note = ' (courtyard includes RF keepout — verify body collision manually)' if is_rf_overlap else ''
+                # RF module courtyards deliberately encode the antenna RF
+                # keepout (e.g., ESP32-S3-WROOM-1 extends ~7mm past the body
+                # to enforce the no-copper keepout).  Overlap with a neighbor
+                # usually means the neighbor is inside the keepout, not a
+                # physical body collision.  Demote to info with a hint.
+                if is_rf_overlap:
+                    severity = 'info'
+                elif overlap_mm2 > 1.0:
+                    severity = 'error'
+                else:
+                    severity = 'warning'
+                rf_note = (' (courtyard includes RF keepout — verify neighbor '
+                           'is outside the antenna keepout, not a body collision)'
+                           if is_rf_overlap else '')
                 overlaps.append({
                     "component_a": fp_a["reference"],
                     "component_b": fp_b["reference"],
@@ -3422,6 +3434,20 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
 
             if min_edge < 1.0:  # Flag components within 1mm of edge
                 clearance = round(min_edge, 2)
+                # RF module footprints deliberately put the courtyard past the
+                # board edge to expose the antenna to free space (WROOM-1 etc.).
+                # Downgrade the edge-clearance finding to info with a note.
+                is_rf = _is_rf_module(fp)
+                if is_rf:
+                    severity = 'info'
+                    rf_suffix = (' (RF module antenna at board edge — '
+                                 'verify antenna clearance, not a body collision)')
+                elif clearance < 0.5:
+                    severity = 'error'
+                    rf_suffix = ''
+                else:
+                    severity = 'warning'
+                    rf_suffix = ''
                 edge_close.append({
                     "component": fp["reference"],
                     "layer": fp["layer"],
@@ -3429,10 +3455,10 @@ def analyze_placement(footprints: list[dict], outline: dict) -> dict:
                     "detector": "analyze_placement",
                     "rule_id": "PM-002",
                     "category": "placement",
-                    "severity": "error" if clearance < 0.5 else "warning",
+                    "severity": severity,
                     "confidence": "deterministic",
                     "evidence_source": "topology",
-                    "summary": f"{fp['reference']} is {clearance}mm from board edge",
+                    "summary": f"{fp['reference']} is {clearance}mm from board edge{rf_suffix}",
                     "description": f"Component {fp['reference']} on {fp['layer']} is only {clearance}mm from the board edge, risking damage during depaneling or handling.",
                     "components": [fp["reference"]],
                     "nets": [],
