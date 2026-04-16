@@ -207,8 +207,21 @@ def get_xy(node: list) -> tuple[float, float] | None:
 
 
 def has_flag(node: list, flag: str) -> bool:
-    """Check if a node contains a flag like 'hide' or 'yes'."""
-    return flag in node
+    """Check if a node contains a flag like 'hide' or 'yes'.
+
+    Handles three KiCad forms:
+    - Bare token:    (pin ... hide ...)        — legacy (KiCad 5/6/early 7)
+    - Boolean yes:   (pin ... (hide yes) ...)  — post-20241004
+    - Boolean no:    (pin ... (hide no) ...)   — post-20241004 (returns False)
+
+    Absent flag returns False.
+    """
+    if flag in node:
+        return True
+    for child in node:
+        if isinstance(child, list) and len(child) >= 2 and child[0] == flag:
+            return str(child[1]).lower() in ("yes", "true")
+    return False
 
 
 if __name__ == "__main__":
