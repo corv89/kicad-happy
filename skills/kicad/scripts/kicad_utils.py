@@ -401,6 +401,11 @@ E96_DECADE = [1.00, 1.02, 1.05, 1.07, 1.10, 1.13, 1.15, 1.18, 1.21, 1.24,
 _E_SERIES = {"E12": E12_DECADE, "E24": E24_DECADE, "E96": E96_DECADE}
 
 
+# EQ-107: Log-decade snapping — normalize v into [1, 10) via 10^⌊log₁₀(v)⌋,
+#   find nearest neighbour in the canonical decade table, scale back by decade.
+# Source: Self-evident — standard E-series (IEC 60063) value selection.
+#   IEC 60063 defines the E6/E12/E24/E48/E96/E192 tables as tolerance-based
+#   geometric progressions; snapping is nearest-neighbour on the log scale.
 def snap_to_e_series(value: float, series: str = "E96") -> tuple:
     """Snap a value to the nearest standard E-series value.
 

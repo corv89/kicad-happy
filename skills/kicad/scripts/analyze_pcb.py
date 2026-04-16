@@ -166,6 +166,8 @@ class ZoneFills:
                 if z.get("net_name")]
 
 
+# EQ-098: d = min(||P - (A + t(B-A))||) with t clamped to [0,1]
+# Source: Self-evident — 2D point-to-segment distance (project, clamp, Euclidean).
 def _dist_point_to_segment(px, py, x1, y1, x2, y2):
     """Distance from point (px, py) to line segment (x1,y1)-(x2,y2)."""
     dx, dy = x2 - x1, y2 - y1
@@ -216,6 +218,8 @@ class CopperPresence:
                     self._pads_by_layer.setdefault(lyr, []).append(
                         (px, py_val, pw, ph))
 
+    # EQ-099: Perimeter sample at (x + r·cos(iπ/4), y + r·sin(iπ/4)) for i=0..7
+    # Source: Self-evident — 8-point circle sampling at 45° intervals.
     def has_coverage_near(self, x, y, layer, *, radius_mm=0.5):
         """True if any copper on *layer* is within *radius_mm* of (x, y).
 
@@ -1182,6 +1186,12 @@ def _extract_keepout_zones(zones: list[dict],
     return keepouts
 
 
+# EQ-100: Arc bounding box — 3-point circumscribed circle via determinant,
+#   then check whether arc sweep (via atan2 of endpoints + midpoint) crosses
+#   any cardinal axis at 0, π/2, π, 3π/2. Crossings extend the bbox to ±r.
+# Source: Standard computational geometry. Circumscribed circle from 3 points:
+#   https://en.wikipedia.org/wiki/Circumscribed_circle#Circumscribed_circles_of_triangles
+#   Arc bbox via cardinal-crossing test is a well-known CAD/CAM technique.
 def extract_board_outline(root: list) -> dict:
     """Extract board outline from Edge.Cuts layer."""
     edges = []
@@ -1778,6 +1788,8 @@ def analyze_return_path_continuity(tracks, net_names, zones, zone_fills,
     return findings
 
 
+# EQ-101: d = √((x1-x2)² + (y1-y2)²) over all pad pairs; return minimum.
+# Source: Self-evident — 2D Euclidean distance.
 def _min_power_pad_distance(ic_fp: dict, cap_fp: dict) -> float:
     """Minimum distance between IC power/ground pads and capacitor pads.
 
@@ -5083,6 +5095,8 @@ def analyze_thermal_pad_vias(footprints: list[dict], vias: dict,
     return results
 
 
+# EQ-102: d = √((px-zx)² + (py-zy)²) for point-to-zone-pour proximity.
+# Source: Self-evident — 2D Euclidean distance.
 def analyze_copper_presence(footprints: list[dict], zones: list[dict],
                             zone_fills: ZoneFills,
                             ref_layer_map: dict[str, str] | None = None) -> dict:
@@ -5753,6 +5767,8 @@ def analyze_via_in_pad(footprints: list[dict], vias: dict, thermal_pad_refs: set
     return findings
 
 
+# EQ-103: d = min distance from via center to any Edge.Cuts line segment.
+# Source: Self-evident — 2D point-to-segment distance (see EQ-098).
 def analyze_board_edge_via_clearance(vias: dict, board_outline: dict) -> list[dict]:
     """BV-001: Check vias close to board edges."""
     findings: list[dict] = []
@@ -5762,6 +5778,8 @@ def analyze_board_edge_via_clearance(vias: dict, board_outline: dict) -> list[di
     if not via_list or not edges:
         return findings
 
+    # EQ-104: Helper — same 2D point-to-segment distance as EQ-098.
+    # Source: Self-evident — kept as a local helper to avoid import cycles.
     def _pt_seg_dist(px, py, x1, y1, x2, y2):
         dx, dy = x2 - x1, y2 - y1
         length_sq = dx * dx + dy * dy
