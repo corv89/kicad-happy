@@ -507,7 +507,6 @@ def main():
         'category_summary': category_summary,
         'board_info': extract_board_info(schematic, pcb),
         'elapsed_s': round(elapsed, 3),
-        'trust_summary': compute_trust_summary(findings),
     }
 
     # --compact is presentation-only: strip INFO findings from output
@@ -517,6 +516,10 @@ def main():
 
     from output_filters import apply_output_filters
     apply_output_filters(result, args.stage, args.audience)
+
+    # Compute trust_summary post-filter so it matches the final findings[]
+    # emitted to consumers (KH-311).
+    result['trust_summary'] = compute_trust_summary(result['findings'])
 
     # Analysis cache integration
     if args.analysis_dir:

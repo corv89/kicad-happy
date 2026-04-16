@@ -4003,7 +4003,10 @@ def check_inductor_leakage(pcb: Dict, schematic: Dict) -> List[Dict]:
     # RF chains
     for rf in get_findings(schematic, Det.RF_CHAINS):
         for comp in rf.get('components', []):
-            r = comp.get('ref') or comp.get('reference', '')
+            if isinstance(comp, str):
+                r = comp
+            else:
+                r = comp.get('ref') or comp.get('reference', '')
             if r:
                 sensitive_refs.add(r)
 
