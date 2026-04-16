@@ -817,7 +817,8 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
     # Build output
     result = {
         "analyzer_type": "lifecycle",
-        "audit_date": datetime.now(timezone.utc).isoformat(),
+        "schema_version": "1.3.0",
+        "audit_date": datetime.now().astimezone().isoformat(timespec='seconds'),
         "components_checked": total,
         "components_with_mpn": total,
         "components_without_mpn": skipped,
@@ -862,8 +863,18 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
         result["observations"] = observations
 
     all_findings = result.get("findings", [])
+    sev_counts = {"error": 0, "warning": 0, "info": 0}
+    for f in all_findings:
+        s = (f.get("severity") or "info").lower()
+        if s in ("critical", "high", "error"):
+            sev_counts["error"] += 1
+        elif s in ("medium", "low", "warning"):
+            sev_counts["warning"] += 1
+        else:
+            sev_counts["info"] += 1
     result["summary"] = {
         "total_findings": len(all_findings),
+        "by_severity": sev_counts,
         "components_checked": total,
         "lifecycle_issues": len(lifecycle_findings),
         "temperature_issues": len(temperature_findings),

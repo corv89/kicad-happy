@@ -1127,9 +1127,18 @@ def build_report(simulation_runs):
         counts[status] = counts.get(status, 0) + 1
 
     report = {
+        "analyzer_type": "spice",
+        "schema_version": "1.3.0",
         "summary": {
             "total": len(simulation_runs),
             **counts,
+            # Map simulation status to the standard by_severity vocabulary so
+            # release gates and summarize tools can aggregate uniformly.
+            "by_severity": {
+                "error": counts["fail"],
+                "warning": counts["warn"],
+                "info": counts["pass"] + counts["skip"],
+            },
         },
         "simulation_results": simulation_runs,
     }
