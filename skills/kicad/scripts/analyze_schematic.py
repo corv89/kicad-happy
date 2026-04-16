@@ -9174,6 +9174,12 @@ def main():
 
     # Datasheet verification — cross-check extracted datasheet data against schematic
     try:
+        # Import datasheet_verify from the datasheets skill
+        import os as _os, sys as _sys
+        _ds_scripts = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                    '..', '..', 'datasheets', 'scripts')
+        if _os.path.isdir(_ds_scripts):
+            _sys.path.insert(0, _os.path.abspath(_ds_scripts))
         from datasheet_verify import run_datasheet_verification
         project_dir = str(Path(args.schematic).parent)
         ds_verify = run_datasheet_verification(result, project_dir=project_dir)

@@ -18,13 +18,13 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Import datasheet_extract_cache from the kicad scripts directory
+# Import datasheet_extract_cache from the datasheets skill
 # ---------------------------------------------------------------------------
 
-_kicad_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              '..', '..', 'kicad', 'scripts')
-if os.path.isdir(_kicad_scripts):
-    sys.path.insert(0, os.path.abspath(_kicad_scripts))
+_ds_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           '..', '..', 'datasheets', 'scripts')
+if os.path.isdir(_ds_scripts):
+    sys.path.insert(0, os.path.abspath(_ds_scripts))
 
 try:
     from datasheet_extract_cache import (

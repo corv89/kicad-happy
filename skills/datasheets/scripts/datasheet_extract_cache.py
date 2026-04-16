@@ -31,7 +31,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Bump this when the extraction schema changes to trigger re-extraction
-EXTRACTION_VERSION = 1
+# v2 (2026-04-15): added peripherals.usb, electrical.en_v_ih_max/en_v_il_min,
+# electrical.iss_time_us, features.has_pg, features.has_soft_start,
+# pins[].function (functional category) and top-level topology for
+# structured consumer access via datasheet_features.py.
+EXTRACTION_VERSION = 2
 
 # Extractions older than this are considered stale (days)
 DEFAULT_MAX_AGE_DAYS = 90
