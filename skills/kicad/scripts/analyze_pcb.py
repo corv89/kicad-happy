@@ -2776,8 +2776,8 @@ def analyze_vias(vias: dict, footprints: list[dict],
         "through": {}, "blind": {}, "buried": {}, "micro": {},
     }
     for v in all_vias:
-        vtype = v.get("type", "through") or "through"
-        # Normalize — KiCad stores "blind" or "micro" as keywords
+        # extract_vias always emits `type` as one of through/blind/buried/micro (KH-318).
+        vtype = v["type"]
         if vtype not in type_counts:
             vtype = "through"
         type_counts[vtype] += 1
@@ -2863,7 +2863,7 @@ def analyze_vias(vias: dict, footprints: list[dict],
                     "via_y": round(vy, 3),
                     "via_drill": v.get("drill", 0),
                     "same_net": same_net,
-                    "via_type": v.get("type", "through") or "through",
+                    "via_type": v["type"],
                 })
                 break  # Each via counted once
 

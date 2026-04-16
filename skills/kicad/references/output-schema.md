@@ -200,7 +200,11 @@ width_distribution: {width_mm: count}, layer_distribution: {layer: count}
 
 ```
 count: int, size_distribution: {size: count}
-via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}
+vias (--full): [{x, y: float, layers: [string], size, drill: float,
+                  net: int|null, type: 'through|blind|buried|micro'}]
+via_in_pad: [{component, pad, via_x, via_y, via_drill, same_net,
+              via_type: 'through|blind|buried|micro'}]
+via_fanout: {ref: {via_count, fanout_traces}}
 ```
 
 ### Optional sections
