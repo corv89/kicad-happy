@@ -5,11 +5,9 @@ description: >-
   footprints, symbols, netlists, and design rules. Reviews designs for bugs,
   traces nets, cross-references schematic to PCB, extracts BOM data, checks
   DRC/ERC, DFM, power trees, and regulator circuits. Every finding carries a
-  confidence label (deterministic / heuristic / datasheet-backed) and evidence
-  source; outputs a trust_summary rollup so the reviewer can see at a glance
-  whether claims are grounded in the datasheet or heuristically inferred. Analyzes PDF schematics
-  from dev boards, reference designs, eval kits, and datasheets. Supports
-  KiCad 5–10. Use whenever the user mentions .kicad_sch, .kicad_pcb,
+  confidence label and evidence source with trust_summary rollup. Analyzes PDF
+  schematics from dev boards, reference designs, eval kits, and datasheets.
+  Supports KiCad 5–10. Use whenever the user mentions .kicad_sch, .kicad_pcb,
   .kicad_pro, PCB design review, schematic analysis, PDF schematics, reference
   designs, Gerber files, DRC/ERC, netlist issues, BOM extraction, signal
   tracing, power budget, DFM, or wants to understand, debug, compare, or
