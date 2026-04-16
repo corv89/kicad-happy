@@ -128,10 +128,13 @@ Use `detector` to filter by type. The `finding_schema.py` module provides `get_f
 ### design_analysis
 
 ```
-buses: {i2c|spi|uart|can|sdio: [bus_instances], differential_pairs: [...]}
-power_domains: {ic_ref: domain_info}
+net_classification: {net: {type: 'power'|'ground'|'data'|...}}
+power_domains: {ic_power_rails: {ref: {voltage, rail_net}}, ...}
 cross_domain_signals: [signals crossing voltage domains]
+bus_analysis: {i2c|spi|uart|can|sdio|usb: [bus_instances]}
+differential_pairs: [{positive, negative, type, shared_ics, has_esd, ...}]
 erc_warnings: [string]
+passive_warnings: [string]
 ```
 
 ### Optional sections (included when applicable)

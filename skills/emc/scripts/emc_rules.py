@@ -2457,15 +2457,17 @@ def check_crosstalk_3h_rule(pcb: Dict,
 
     # Build the set of known differential pairs so we don't flag nets that
     # are *supposed* to be close-coupled (USB D+/D-, LVDS, Ethernet, CAN, etc.).
+    # The schematic analyzer emits diff pairs at
+    # `design_analysis.differential_pairs` (list of dicts with positive /
+    # negative / type / ...).  A few legacy output paths also stashed them
+    # elsewhere — check all three for safety.
     diff_pair_keys: set[tuple[str, str]] = set()
     if schematic:
-        # Differential pairs live under design_analysis.buses.differential_pairs
-        # after the signal_analysis flatten, and also at top-level differential_pairs
-        # on some output flows. Check both.
-        _buses = (schematic.get('design_analysis', {}) or {}).get('buses', {}) or {}
+        _design = schematic.get('design_analysis', {}) or {}
         _dp_sources = [
-            _buses.get('differential_pairs') or [],
-            schematic.get('differential_pairs') or [],
+            _design.get('differential_pairs') or [],                              # current path
+            (_design.get('buses', {}) or {}).get('differential_pairs') or [],     # legacy nested path
+            schematic.get('differential_pairs') or [],                            # legacy top-level
         ]
         for _dps in _dp_sources:
             for _dp in _dps:

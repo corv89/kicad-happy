@@ -847,9 +847,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Thermal hotspot estimator for KiCad designs"
     )
-    parser.add_argument("--schematic", "-s", required=True,
+    parser.add_argument("--schematic", "-s",
                         help="Schematic analyzer JSON (from analyze_schematic.py)")
-    parser.add_argument("--pcb", "-p", required=True,
+    parser.add_argument("--pcb", "-p",
                         help="PCB analyzer JSON (from analyze_pcb.py)")
     parser.add_argument("--output", "-o",
                         help="Output JSON file path (default: stdout)")
@@ -863,6 +863,8 @@ def main():
                         help="Path to .kicad-happy.json project config file")
     parser.add_argument("--analysis-dir",
                         help="Write thermal.json to this directory (analysis folder convention)")
+    parser.add_argument("--schema", action="store_true",
+                        help="Print JSON output schema and exit")
     parser.add_argument('--stage', default=None,
                         choices=['schematic', 'layout', 'pre_fab', 'bring_up'],
                         help='Filter findings by review stage')
@@ -870,6 +872,40 @@ def main():
                         choices=['designer', 'reviewer', 'manager'],
                         help='Audience level for summaries and --text output')
     args = parser.parse_args()
+
+    if args.schema:
+        schema = {
+            "analyzer_type": "string — always 'thermal'",
+            "schema_version": "string — semver (currently '1.3.0')",
+            "summary": {
+                "total_findings": "int",
+                "components_assessed": "int",
+                "active": "int — non-suppressed findings",
+                "suppressed": "int",
+                "critical": "int — deprecated, retained for consumer compat",
+                "high": "int — deprecated, retained for consumer compat",
+                "medium": "int — deprecated, retained for consumer compat",
+                "low": "int — deprecated, retained for consumer compat",
+                "info": "int — deprecated, retained for consumer compat",
+                "by_severity": "{error: int, warning: int, info: int}",
+                "thermal_score": "float (0-100)",
+            },
+            "findings": "[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components, nets, pins, recommendation, report_context}] — TS-001..005, TP-001..002, TH-DET assessments",
+            "trust_summary": {
+                "total_findings": "int",
+                "trust_level": "'high' | 'mixed' | 'low'",
+                "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
+                "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
+                "provenance_coverage_pct": "float",
+            },
+            "elapsed_s": "float — analysis wall-clock time",
+            "missing_info": "OPTIONAL — {default_rtheta_ja: [ref], default_tj_max: [ref]} when any component used default thermal parameters",
+        }
+        print(json.dumps(schema, indent=2))
+        sys.exit(0)
+
+    if not args.schematic or not args.pcb:
+        parser.error("the --schematic and --pcb arguments are required (except with --schema)")
 
     # Load inputs
     try:
