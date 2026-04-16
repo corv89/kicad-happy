@@ -37,7 +37,7 @@ from kicad_utils import (is_ground_name, is_power_net_name,
                          extract_pro_design_rules, extract_pro_text_variables,
                          load_kicad_dru, load_lib_tables)
 from pcb_connectivity import build_connectivity_graph
-from finding_schema import compute_trust_summary
+from finding_schema import compute_trust_summary, sort_findings
 
 
 # ---------------------------------------------------------------------------
@@ -6326,6 +6326,9 @@ def analyze_pcb(path: str, *, proximity: bool = False,
         findings.extend(copper.get('touch_pad_gnd_clearance', []))
         if copper.get('opposite_layer_summary'):
             result['copper_presence_summary'] = copper['opposite_layer_summary']
+
+    # Deterministic order for byte-identical repeated runs (KH-316).
+    sort_findings(findings)
 
     result['findings'] = findings
     result['trust_summary'] = compute_trust_summary(findings)

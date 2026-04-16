@@ -626,7 +626,10 @@ def get_primary_metric(det_type: str) -> str:
 def compute_detection_id(det, det_type):
     """Compute a stable hash ID for a detection based on identity fields.
 
-    Deterministic: same detection -> same ID across runs.
+    Deterministic: same detection -> same ID across runs.  List-valued
+    identity fields are sorted before hashing so upstream set/dict
+    iteration order doesn't affect the ID (KH-316).
+
     Format: det_type:xxxxxxxxxxxx (12-char SHA-256 prefix).
     """
     schema = SCHEMAS.get(det_type)
@@ -642,6 +645,8 @@ def compute_detection_id(det, det_type):
             else:
                 val = None
                 break
+        if isinstance(val, list):
+            val = sorted(val, key=str)
         parts.append(str(val) if val is not None else "")
 
     raw = "::".join(parts)

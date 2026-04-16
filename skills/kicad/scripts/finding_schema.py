@@ -213,6 +213,58 @@ def compute_trust_summary(findings, bom=None):
 
 
 # ---------------------------------------------------------------------------
+# Deterministic ordering for findings lists
+# ---------------------------------------------------------------------------
+
+def sort_findings(findings):
+    """Sort a findings list in-place by a stable composite key.
+
+    Produces deterministic output across runs so baseline snapshots stay
+    byte-identical and git diffs stay minimal.  Sort key:
+
+        (rule_id, detector, sorted_components, sorted_nets, summary)
+
+    Also sorts each finding's ``components``, ``nets``, and ``pins`` lists
+    in place so upstream set/dict iteration order doesn't surface as drift
+    in the output.  Ties fall through to ``summary`` as the final
+    disambiguator.  Non-dict entries are tolerated (sorted to the end).
+
+    Args:
+        findings: List of finding dicts.  Mutated in place.
+
+    Returns:
+        The same list (for chaining convenience).
+    """
+    # First pass: canonicalize nested list fields within each finding so
+    # set-iteration order doesn't leak into output.
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        for key in ('components', 'nets', 'pins'):
+            v = f.get(key)
+            if isinstance(v, list) and all(not isinstance(x, (dict, list)) for x in v):
+                f[key] = sorted(v, key=str)
+
+    def _key(f):
+        if not isinstance(f, dict):
+            return (1, '', '', '', '', '')
+        comps = f.get('components') or []
+        nets = f.get('nets') or []
+        first_comp = str(comps[0]) if comps else ''
+        first_net = str(nets[0]) if nets else ''
+        return (
+            0,
+            str(f.get('rule_id') or ''),
+            str(f.get('detector') or ''),
+            first_comp,
+            first_net,
+            str(f.get('summary') or ''),
+        )
+    findings.sort(key=_key)
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Detector name constants — avoids string typos across consumers
 # ---------------------------------------------------------------------------
 

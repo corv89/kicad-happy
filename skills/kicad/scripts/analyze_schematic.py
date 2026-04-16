@@ -124,7 +124,7 @@ from validation_detectors import (
     validate_led_resistors,
     validate_feedback_stability,
 )
-from finding_schema import compute_trust_summary
+from finding_schema import compute_trust_summary, sort_findings
 
 
 # ---------------------------------------------------------------------------
@@ -3159,6 +3159,9 @@ def parse_legacy_schematic(path: str) -> dict:
             _pin_source_counts[src] += 1
         else:
             _pin_source_counts[src] = 1
+
+    # Deterministic order for byte-identical repeated runs (KH-316).
+    sort_findings(findings)
 
     result = {
         "analyzer_type": "schematic",
@@ -8860,6 +8863,10 @@ def analyze_schematic(path: str, project_root: str | None = None,
             sev_counts["warning"] += 1
         else:
             sev_counts["info"] += 1
+
+    # Deterministic order so repeated runs produce byte-identical output
+    # (KH-316).  Sort key: (rule_id, detector, first_component, first_net, summary).
+    sort_findings(findings)
 
     result = {
         "analyzer_type": "schematic",
