@@ -661,9 +661,11 @@ def extract_footprints(root: list) -> list[dict]:
                 # Pad position is relative to footprint; compute absolute
                 px, py = pad_at[0], pad_at[1]
                 pad_angle = pad_at[2]
-                # Rotate pad position by footprint angle
+                # KiCad PCB footprint rotations are clockwise in board coords.
+                # Use the negative angle to map local pad offsets into absolute
+                # board space; using +angle mirrors rotated footprints.
                 if angle != 0:
-                    rad = math.radians(angle)
+                    rad = math.radians(-angle)
                     rpx = px * math.cos(rad) - py * math.sin(rad)
                     rpy = px * math.sin(rad) + py * math.cos(rad)
                     px, py = rpx, rpy
@@ -756,7 +758,7 @@ def extract_footprints(root: list) -> list[dict]:
                             if len(xy) >= 3:
                                 lx, ly = float(xy[1]), float(xy[2])
                                 if angle != 0:
-                                    rad = math.radians(angle)
+                                    rad = math.radians(-angle)
                                     rx = lx * math.cos(rad) - ly * math.sin(rad)
                                     ry = lx * math.sin(rad) + ly * math.cos(rad)
                                     lx, ly = rx, ry
@@ -768,7 +770,7 @@ def extract_footprints(root: list) -> list[dict]:
                         lx, ly = float(node[1]), float(node[2])
                         # Transform to absolute coordinates
                         if angle != 0:
-                            rad = math.radians(angle)
+                            rad = math.radians(-angle)
                             rx = lx * math.cos(rad) - ly * math.sin(rad)
                             ry = lx * math.sin(rad) + ly * math.cos(rad)
                             lx, ly = rx, ry
@@ -6587,13 +6589,11 @@ def main():
         import tempfile
         from analysis_cache import (ensure_analysis_dir, hash_source_file,
                                      should_create_new_run, create_run,
-                                     overwrite_current, CANONICAL_OUTPUTS)
+                                     overwrite_current, CANONICAL_OUTPUTS,
+                                     resolve_analysis_dir)
 
         project_dir = str(Path(args.pcb).parent)
-        if not os.path.isabs(args.analysis_dir):
-            analysis_dir = os.path.join(project_dir, args.analysis_dir)
-        else:
-            analysis_dir = args.analysis_dir
+        analysis_dir = resolve_analysis_dir(args.analysis_dir)
 
         # Find .kicad_pro for manifest
         pro_file = ""
