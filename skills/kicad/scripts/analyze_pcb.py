@@ -117,15 +117,18 @@ class ZoneFills:
 
     def __init__(self) -> None:
         self._fills: list[
-            tuple[int, str, list[tuple[float, float]],
+            tuple[int, int, str, list[tuple[float, float]],
                   tuple[float, float, float, float]]
         ] = []
+        self._next_fill_id = 0
 
     def add(self, zone_idx: int, layer: str,
             coords: list[tuple[float, float]]) -> None:
         """Register a filled polygon region for spatial queries."""
         bbox = _polygon_bbox(coords)
-        self._fills.append((zone_idx, layer, coords, bbox))
+        fill_id = self._next_fill_id
+        self._next_fill_id += 1
+        self._fills.append((fill_id, zone_idx, layer, coords, bbox))
 
     @property
     def has_data(self) -> bool:
@@ -137,7 +140,7 @@ class ZoneFills:
         """Return zone dicts that have filled copper at (x, y) on layer."""
         results = []
         seen: set[int] = set()
-        for zone_idx, fill_layer, coords, bbox in self._fills:
+        for _fill_id, zone_idx, fill_layer, coords, bbox in self._fills:
             if fill_layer != layer or zone_idx in seen:
                 continue
             # Fast bounding box rejection
@@ -148,9 +151,27 @@ class ZoneFills:
                 seen.add(zone_idx)
         return results
 
+    def fill_regions_at_point(self, x: float, y: float, layer: str,
+                              zones: list[dict],
+                              *,
+                              net_name: str | None = None) -> list[tuple[int, int]]:
+        """Return ``(fill_id, zone_idx)`` regions containing the point."""
+        results: list[tuple[int, int]] = []
+        for fill_id, zone_idx, fill_layer, coords, bbox in self._fills:
+            if fill_layer != layer:
+                continue
+            if x < bbox[0] or x > bbox[2] or y < bbox[1] or y > bbox[3]:
+                continue
+            if not _point_in_polygon(x, y, coords):
+                continue
+            if net_name is not None and zones[zone_idx].get("net_name", "") != net_name:
+                continue
+            results.append((fill_id, zone_idx))
+        return results
+
     def has_copper_at(self, x: float, y: float, layer: str) -> bool:
         """Check if any zone has filled copper at (x, y) on layer."""
-        for _zone_idx, fill_layer, coords, bbox in self._fills:
+        for _fill_id, _zone_idx, fill_layer, coords, bbox in self._fills:
             if fill_layer != layer:
                 continue
             if x < bbox[0] or x > bbox[2] or y < bbox[1] or y > bbox[3]:
