@@ -40,7 +40,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 from analyzer_envelope import (  # noqa: E402
-    TrustSummary, Finding, Assessment, BySeverity,
+    TrustSummary, Finding, Assessment, BySeverity, InputsBlock,
 )
 
 
@@ -208,13 +208,16 @@ class PCBEnvelope:
         "description": "Semver. Value: '1.4.0' at Track 1.1 landing.",
         "const": "1.4.0"})
 
+    # --- Provenance ---
+    inputs: InputsBlock = field(metadata={
+        "description": "Source files, hashes, run_id, config_hash, upstream "
+                       "artifacts for this run."})
+
     # --- Universal core ---
     summary: PCBSummary = field(metadata={
         "description": "Roll-up summary (total + by_severity)."})
     trust_summary: TrustSummary = field(metadata={
         "description": "Trust posture rollup (confidence + evidence source)."})
-    file: str = field(metadata={
-        "description": "Resolved absolute path of the analyzed .kicad_pcb."})
     kicad_version: str = field(metadata={
         "description": "KiCad generator version string, e.g. '9.0'."})
     file_version: str = field(metadata={

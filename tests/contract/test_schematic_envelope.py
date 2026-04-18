@@ -48,3 +48,37 @@ def test_schematic_runtime_schema_version_is_1_4_0():
     out = _run([str(SCHEMATIC), str(FIXTURE)])
     result = json.loads(out)
     assert result["schema_version"] == "1.4.0"
+
+
+def test_schematic_inputs_block_populated():
+    """Track 1.3: inputs block records fixture path + sha256 + run_id."""
+    out = _run([str(SCHEMATIC), str(FIXTURE)])
+    result = json.loads(out)
+    inputs = result["inputs"]
+
+    # Path normalization — Python emits the same absolute/relative form the
+    # analyzer received. We just check the fixture path appears in source_files.
+    assert any(p.endswith("simple.kicad_sch") for p in inputs["source_files"])
+
+    # Every source_files entry has a corresponding source_hashes entry.
+    for p in inputs["source_files"]:
+        assert p in inputs["source_hashes"]
+        # SHA-256 hex = 64 chars.
+        assert len(inputs["source_hashes"][p]) == 64
+
+    # run_id has the expected format.
+    import re
+    assert re.match(r"^\d{8}T\d{6}Z-[0-9a-f]{6}$", inputs["run_id"])
+
+    # Raw-input analyzer — empty upstream.
+    assert inputs["upstream_artifacts"] == {}
+
+
+def test_schematic_legacy_file_field_removed():
+    """Track 1.3: the legacy 'file' top-level field is gone (replaced by
+    inputs.source_files[0])."""
+    schema = json.loads(_run([str(SCHEMATIC), "--schema"]))
+    assert "file" not in schema["properties"], (
+        "Legacy 'file' field must be removed from schematic envelope. "
+        "Consumers must read inputs.source_files[0]."
+    )

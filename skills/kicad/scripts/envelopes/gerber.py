@@ -41,7 +41,9 @@ _PARENT = os.path.dirname(_HERE)
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
+from analyzer_envelope import (  # noqa: E402
+    TrustSummary, Finding, Assessment, BySeverity, InputsBlock,
+)
 
 
 @dataclass
@@ -254,6 +256,11 @@ class GerberEnvelope:
     schema_version: str = field(metadata={
         "description": "Semver. Value: '1.4.0' at Track 1.1 landing.",
         "const": "1.4.0"})
+
+    # --- Provenance ---
+    inputs: InputsBlock = field(metadata={
+        "description": "Source files, hashes, run_id, config_hash, upstream "
+                       "artifacts for this run."})
 
     # --- Universal core ---
     summary: GerberSummary = field(metadata={

@@ -42,3 +42,15 @@ def test_gerber_schema_version_and_analyzer_type_are_const():
 def test_gerber_runtime_schema_version_is_1_4_0():
     result = json.loads(_run([str(GERBER), str(FIXTURE)]))
     assert result["schema_version"] == "1.4.0"
+
+
+def test_gerber_inputs_block_populated():
+    out = _run([str(GERBER), str(FIXTURE)])
+    result = json.loads(out)
+    inputs = result["inputs"]
+    # Gerber hashes every file in the directory — expect at least the 6
+    # standard layers + drill file.
+    assert len(inputs["source_files"]) >= 6
+    for p in inputs["source_files"]:
+        assert len(inputs["source_hashes"][p]) == 64
+    assert inputs["upstream_artifacts"] == {}

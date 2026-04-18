@@ -40,6 +40,7 @@ from pcb_connectivity import build_connectivity_graph
 from finding_schema import compute_trust_summary, sort_findings
 from envelopes.pcb import PCBEnvelope
 from schema_codec import emit_schema
+from inputs_builder import build_inputs
 
 
 # ---------------------------------------------------------------------------
@@ -6157,7 +6158,6 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     result = {
         "analyzer_type": "pcb",
         "schema_version": "1.4.0",
-        "file": str(path),
         "kicad_version": generator_version,
         "file_version": version,
         "statistics": stats,
@@ -6469,6 +6469,18 @@ def main():
     except ImportError:
         config = {"version": 1, "project": {}, "suppressions": []}
 
+    # Build inputs provenance block (Track 1.3).
+    _pcb_path = Path(args.pcb)
+    if args.config:
+        _cfg_path = Path(args.config) if Path(args.config).is_file() else None
+    else:
+        _default_cfg = _pcb_path.parent / ".kicad-happy.json"
+        _cfg_path = _default_cfg if _default_cfg.is_file() else None
+    inputs = build_inputs(
+        source_files=[_pcb_path],
+        config_path=_cfg_path,
+    )
+
     schematic_data = None
     if args.schematic:
         try:
@@ -6489,6 +6501,10 @@ def main():
                          schematic_data=schematic_data,
                          return_path_radius_mm=args.return_path_radius_mm,
                          gp001_debug=args.gp001_debug)
+    # Inject provenance and drop legacy 'file' key (already removed from
+    # internal result assembly, but belt-and-suspenders).
+    result["inputs"] = inputs
+    result.pop("file", None)
 
     # GP-001 debug: write per-sample diagnostics to disk and strip from output
     gp001_debug_data = result.pop("_gp001_debug_samples", None)

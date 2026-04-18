@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from envelopes.gerber import GerberEnvelope  # noqa: E402
 from schema_codec import emit_schema  # noqa: E402
+from inputs_builder import build_inputs  # noqa: E402
 
 
 _POWER_KEYWORDS_GERBER = {"vcc", "vdd", "gnd", "agnd", "dgnd", "gndref",
@@ -1569,7 +1570,29 @@ def main():
     if not args.directory:
         parser.error("the following arguments are required: directory")
 
+    # Build inputs provenance block (Track 1.3). Walk the gerber directory
+    # and hash every gerber/drill/job file present.
+    _gerber_dir = Path(args.directory)
+    _gerber_exts = {".gbr", ".gbl", ".gtl", ".gbs", ".gts",
+                    ".gbo", ".gto", ".gm1", ".gko", ".drl",
+                    ".xln", ".nc",
+                    ".g1", ".g2", ".g3", ".g4",
+                    ".g2l", ".g3l", ".g4l", ".g5l", ".g6l",
+                    ".gtp", ".gbp"}
+    _gerber_files = []
+    if _gerber_dir.is_dir():
+        for p in sorted(_gerber_dir.iterdir()):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() in _gerber_exts or p.name.lower().endswith(".gbrjob"):
+                _gerber_files.append(p)
+            elif p.suffix.lower() == ".txt" and _is_excellon_file(p):
+                _gerber_files.append(p)
+    inputs = build_inputs(source_files=_gerber_files)
+
     result = analyze_gerbers(args.directory, full=args.full)
+    # Inject provenance.
+    result["inputs"] = inputs
 
     from output_filters import apply_output_filters
     apply_output_filters(result, args.stage, args.audience)

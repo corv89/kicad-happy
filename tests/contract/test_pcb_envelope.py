@@ -39,3 +39,20 @@ def test_pcb_schema_version_and_analyzer_type_are_const():
 def test_pcb_runtime_schema_version_is_1_4_0():
     result = json.loads(_run([str(PCB), str(FIXTURE)]))
     assert result["schema_version"] == "1.4.0"
+
+
+def test_pcb_inputs_block_populated():
+    out = _run([str(PCB), str(FIXTURE)])
+    result = json.loads(out)
+    inputs = result["inputs"]
+    assert any(p.endswith("simple.kicad_pcb") for p in inputs["source_files"])
+    for p in inputs["source_files"]:
+        assert len(inputs["source_hashes"][p]) == 64
+    import re
+    assert re.match(r"^\d{8}T\d{6}Z-[0-9a-f]{6}$", inputs["run_id"])
+    assert inputs["upstream_artifacts"] == {}
+
+
+def test_pcb_legacy_file_field_removed():
+    schema = json.loads(_run([str(PCB), "--schema"]))
+    assert "file" not in schema["properties"]

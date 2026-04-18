@@ -127,6 +127,7 @@ from validation_detectors import (
 from finding_schema import compute_trust_summary, sort_findings
 from envelopes.schematic import SchematicEnvelope
 from schema_codec import emit_schema
+from inputs_builder import build_inputs
 
 
 # ---------------------------------------------------------------------------
@@ -3170,7 +3171,6 @@ def parse_legacy_schematic(path: str) -> dict:
         "schema_version": "1.4.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "trust_summary": compute_trust_summary(findings),
-        "file": str(path),
         "kicad_version": "5 (legacy)",
         "file_version": "4",
         "sheets_parsed": len(sheets_parsed),
@@ -8876,7 +8876,6 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "schema_version": "1.4.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "trust_summary": compute_trust_summary(findings, bom=bom),
-        "file": str(path),
         "kicad_version": generator_version,
         "file_version": file_version,
         "title_block": root_title_block,
@@ -9084,9 +9083,25 @@ def main():
     except ImportError:
         config = {"version": 1, "project": {}, "suppressions": []}
 
+    # Build inputs provenance block (Track 1.3).
+    _sch_path = Path(args.schematic)
+    if args.config:
+        _cfg_path = Path(args.config) if Path(args.config).is_file() else None
+    else:
+        _default_cfg = _sch_path.parent / ".kicad-happy.json"
+        _cfg_path = _default_cfg if _default_cfg.is_file() else None
+    inputs = build_inputs(
+        source_files=[_sch_path],
+        config_path=_cfg_path,
+    )
+
     result = analyze_schematic(args.schematic,
                                project_root=args.project_root,
                                no_hierarchy=args.no_hierarchy)
+    # Inject provenance and drop the legacy 'file' key (already removed
+    # from internal result assembly, but belt-and-suspenders).
+    result["inputs"] = inputs
+    result.pop("file", None)
 
     # Attach project config summary to output for downstream consumers
     project = config.get("project", {})
