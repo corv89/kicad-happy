@@ -69,6 +69,44 @@ def _collect_findings(run_dir: str) -> list[dict]:
     return out
 
 
+def _collect_assessments(run_dir: str) -> dict[str, int]:
+    """Walk analyzer JSONs, group assessments by rule_id.
+
+    Returns: dict {rule_id: count}. Assessments have no severity — they
+    are informational context emitted by detectors (e.g. thermal TH-DET).
+    """
+    from collections import Counter
+    counter: Counter = Counter()
+    for name in sorted(os.listdir(run_dir)):
+        if not name.endswith(".json"):
+            continue
+        full = os.path.join(run_dir, name)
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        for a in data.get("assessments", []) or []:
+            if isinstance(a, dict):
+                rid = a.get("rule_id") or "(unknown)"
+                counter[rid] += 1
+    return dict(counter)
+
+
+def _print_assessments_table(by_rule: dict[str, int]) -> None:
+    if not by_rule:
+        return
+    total = sum(by_rule.values())
+    print("")
+    print(f"## Assessments (informational) — {total} across "
+          f"{len(by_rule)} rule groups")
+    print(f"{'rule_id':<14} {'count':>5}")
+    print("-" * 22)
+    for rid, count in sorted(by_rule.items(),
+                             key=lambda x: (-x[1], x[0])):
+        print(f"{rid:<14} {count:>5}")
+
+
 def _norm(s: str) -> str:
     """Normalise a severity string to one of: high, warning, info."""
     s = (s or "").lower()
@@ -220,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     run_dir, run_id, manifest_version = _resolve_run_dir(args.analysis_dir, args.run)
     findings = _collect_findings(run_dir)
     findings = _filter_severity(findings, args.severity)
+    assessments_by_rule = _collect_assessments(run_dir)
+    assessment_total = sum(assessments_by_rule.values())
     if args.by_confidence:
         conf_rows = _aggregate_by_confidence(findings)
         if args.json:
@@ -230,12 +270,15 @@ def main(argv: list[str] | None = None) -> int:
                 "manifest_version": manifest_version,
                 "mode": "by_confidence",
                 "rows": conf_rows,
+                "assessments_by_rule_id": assessments_by_rule,
+                "assessment_total": assessment_total,
             }
             json.dump(payload, sys.stdout, indent=2)
             sys.stdout.write("\n")
         else:
             print(f"# Run: {run_dir}")
             _print_confidence_table(conf_rows)
+            _print_assessments_table(assessments_by_rule)
         return 0
 
     rows = _aggregate(findings)
@@ -261,6 +304,8 @@ def main(argv: list[str] | None = None) -> int:
                 "by_confidence": confidence_totals,
             },
             "rows": rows,
+            "assessments_by_rule_id": assessments_by_rule,
+            "assessment_total": assessment_total,
         }
         json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
@@ -268,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"# Run: {run_dir}")
         top = None if args.top == 0 else args.top
         _print_table(rows, top)
+        _print_assessments_table(assessments_by_rule)
     return 0
 
 
