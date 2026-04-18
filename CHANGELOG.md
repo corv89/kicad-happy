@@ -8,6 +8,27 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 1.3 — Formal inputs / provenance block
+
+**Theme: Consistent SHA-256 provenance across every analyzer.**
+
+New shared primitives `InputsBlock` and `UpstreamArtifact` in `analyzer_envelope.py`. Every envelope now carries a required `inputs` field: `source_files[]` + `source_hashes{}` + `run_id` + `config_hash` + `upstream_artifacts{}`.
+
+New helpers: `run_id.py` generates sortable IDs like `20260418T123456Z-a1b2c3`. `inputs_builder.py` centralizes SHA computation and upstream-artifact construction.
+
+Derivative analyzers (thermal, EMC, cross_analysis) populate `inputs.upstream_artifacts` with structured metadata (`path`, `sha256`, `schema_version`, `run_id`) about each prior-stage JSON they consume — enabling Track 2 datasheet cache audits and Track 3 Layer 2 review to walk the full provenance chain.
+
+#### Breaking changes
+- `schematic.file` and `pcb.file` top-level fields **REMOVED**. Consumers read `inputs.source_files[0]` instead.
+- Every analyzer envelope gains a required `inputs` field. External consumers validating `--schema` output must accept the new top-level key.
+
+#### Kept (parsed content, not provenance)
+- `kicad_version`, `file_version`, `title_block` stay on schematic / PCB envelopes — they describe parsed design content, not provenance of what we read.
+
+#### Added modules
+- `skills/kicad/scripts/run_id.py` — run_id generator
+- `skills/kicad/scripts/inputs_builder.py` — `build_inputs()` + `build_upstream_artifact()` helpers
+
 ### Track 1.2 — Findings / Assessments separation
 
 **Theme: Distinguish informational measurements from actionable warnings.**

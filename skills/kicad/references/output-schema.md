@@ -32,9 +32,9 @@ Output of `python3 skills/kicad/scripts/analyze_schematic.py <file>.kicad_sch`.
 |-----|------|----------|-------------|
 | `analyzer_type` | `string` | yes | Always 'schematic'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
+| `inputs` | `InputsBlock` | yes | Source files, hashes, run_id, config_hash, upstream artifacts for this run. |
 | `summary` | `SchematicSummary` | yes | Roll-up summary (total + by_severity). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source + optional BOM coverage). |
-| `file` | `string` | yes | Resolved absolute path of the analyzed schematic. |
 | `kicad_version` | `string` | yes | KiCad generator version string, e.g. '9.0' or '5 (legacy)'. |
 | `file_version` | `string` | yes | KiCad file format version string. |
 | `title_block` | `TitleBlock` | yes | KiCad title block (title/date/rev/company/comments). |
@@ -105,9 +105,9 @@ Output of `python3 skills/kicad/scripts/analyze_pcb.py <file>.kicad_pcb`.
 |-----|------|----------|-------------|
 | `analyzer_type` | `string` | yes | Always 'pcb'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
+| `inputs` | `InputsBlock` | yes | Source files, hashes, run_id, config_hash, upstream artifacts for this run. |
 | `summary` | `PCBSummary` | yes | Roll-up summary (total + by_severity). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source). |
-| `file` | `string` | yes | Resolved absolute path of the analyzed .kicad_pcb. |
 | `kicad_version` | `string` | yes | KiCad generator version string, e.g. '9.0'. |
 | `file_version` | `string` | yes | KiCad file format version string (e.g. '20241228'). |
 | `findings` | `list[Finding]` | yes | All PCB findings (flat list). |
@@ -159,6 +159,7 @@ Output of `python3 skills/kicad/scripts/analyze_gerbers.py <gerber_dir>/`.
 |-----|------|----------|-------------|
 | `analyzer_type` | `string` | yes | Always 'gerber'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
+| `inputs` | `InputsBlock` | yes | Source files, hashes, run_id, config_hash, upstream artifacts for this run. |
 | `summary` | `GerberSummary` | yes | Roll-up summary (total + by_severity). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source). |
 | `directory` | `string` | yes | Resolved absolute path of the scanned gerber directory. |
@@ -191,6 +192,7 @@ Output of `python3 skills/kicad/scripts/analyze_thermal.py --schematic ... --pcb
 |-----|------|----------|-------------|
 | `analyzer_type` | `string` | yes | Always 'thermal'. |
 | `schema_version` | `string` | yes | Schema semver. Value: '1.4.0' at Track 1.1 landing. |
+| `inputs` | `InputsBlock` | yes | Source JSON inputs, sha256s, run_id, plus upstream artifact metadata (schematic, pcb). |
 | `summary` | `ThermalSummary` | yes | Roll-up summary of thermal analysis. |
 | `findings` | `list[Finding]` | yes | All thermal findings: TS-001..005, TP-001..002. |
 | `assessments` | `list[Assessment]` | yes | TH-DET entries — per-component junction-temperature estimates. Informational (not findings). |
@@ -206,6 +208,7 @@ Output of `python3 skills/emc/scripts/analyze_emc.py --schematic ... --pcb ...`.
 |-----|------|----------|-------------|
 | `analyzer_type` | `string` | yes | Always 'emc'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
+| `inputs` | `InputsBlock` | yes | Source JSON inputs, sha256s, run_id, plus upstream artifact metadata (schematic, pcb). |
 | `target_standard` | `string` | yes | Target EMC standard key (e.g. 'fcc-class-b', 'cispr-class-b', 'cispr-25'). |
 | `summary` | `EMCSummary` | yes | EMC roll-up summary (counts + risk score). |
 | `findings` | `list[Finding]` | yes | All EMC findings. |
@@ -228,6 +231,7 @@ Output of `python3 skills/kicad/scripts/cross_analysis.py --schematic ... --pcb 
 |-----|------|----------|-------------|
 | `analyzer_type` | `string` | yes | Always 'cross_analysis'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
+| `inputs` | `InputsBlock` | yes | Source JSON inputs, sha256s, run_id, plus upstream artifact metadata (schematic, pcb). |
 | `elapsed_s` | `float` | yes | Analysis wall-clock time in seconds. |
 | `summary` | `CrossAnalysisSummary` | yes | Roll-up summary (total + by_severity). |
 | `findings` | `list[Finding]` | yes | All cross-domain findings. |
