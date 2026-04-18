@@ -30,6 +30,8 @@ if os.path.isdir(_kicad_scripts):
 from emc_rules import run_all_checks, generate_test_plan, analyze_regulatory_coverage
 from emc_formulas import STANDARDS, MARKET_STANDARDS
 from finding_schema import compute_trust_summary
+from emc_envelope import EMCEnvelope
+from schema_codec import emit_schema
 
 # Shared severity weights — used by both risk score and per-net scoring.
 # Keyed on the v1.3 envelope vocabulary (error/warning/info); legacy
@@ -339,41 +341,7 @@ def main():
     args = parser.parse_args()
 
     if args.schema:
-        schema = {
-            "analyzer_type": "string — always 'emc'",
-            "schema_version": "string — semver (currently '1.3.0')",
-            "target_standard": "string — target EMC standard (e.g. 'fcc-class-b')",
-            "elapsed_s": "float — analysis wall-clock time",
-            "summary": {
-                "total_findings": "int",
-                "categories_checked": "int",
-                "active": "int — non-suppressed findings",
-                "suppressed": "int — suppressed findings count",
-                "critical": "int — deprecated, retained for consumer compat",
-                "high": "int — deprecated, retained for consumer compat",
-                "medium": "int — deprecated, retained for consumer compat",
-                "low": "int — deprecated, retained for consumer compat",
-                "info": "int — deprecated, retained for consumer compat",
-                "by_severity": "{error: int, warning: int, info: int}",
-                "emc_risk_score": "float (0-100)",
-            },
-            "findings": "[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components: [string], nets: [string], pins, recommendation, report_context}]",
-            "trust_summary": {
-                "total_findings": "int — post-filter (KH-311)",
-                "trust_level": "'high' | 'mixed' | 'low'",
-                "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
-                "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
-                "provenance_coverage_pct": "float",
-            },
-            "test_plan": "[{test: string, standard_clause, equipment, procedure, expected_result}]",
-            "regulatory_coverage": "{standard: {applicable_clauses: int, covered: int, coverage_pct: float}}",
-            "category_summary": "{category: {count: int, max_severity, severities: {}, suppressed_count: int}}",
-            "per_net_scores": "{net_name: {score: float, findings: int}}",
-            "board_info": "{layers: int, components: int, nets: int, switching_regulators: int, ...}",
-            "audience_summary": "{designer: {...}, reviewer: {...}, manager: {...}} — optional, present when --audience is set",
-        }
-        print(json.dumps(schema, indent=2))
-        sys.exit(0)
+        emit_schema(EMCEnvelope)
 
     if not args.schematic and not args.pcb:
         parser.error('At least one of --schematic or --pcb is required')
@@ -501,7 +469,7 @@ def main():
 
     result = {
         'analyzer_type': 'emc',
-        'schema_version': '1.3.0',
+        'schema_version': '1.4.0',
         'summary': {
             'total_findings': len(findings),
             'categories_checked': len(category_summary),

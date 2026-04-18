@@ -1,0 +1,51 @@
+"""Contract test: EMC analyzer output validates against its declared schema."""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from jsonschema import Draft202012Validator
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCHEMATIC = REPO_ROOT / "skills" / "kicad" / "scripts" / "analyze_schematic.py"
+PCB = REPO_ROOT / "skills" / "kicad" / "scripts" / "analyze_pcb.py"
+EMC = REPO_ROOT / "skills" / "emc" / "scripts" / "analyze_emc.py"
+FIXTURE = REPO_ROOT / "tests" / "fixtures" / "simple-project"
+
+
+def _run(argv):
+    return subprocess.run(
+        [sys.executable, *argv],
+        capture_output=True, text=True, check=True,
+    ).stdout
+
+
+def test_emc_schema_is_draft_2020_12():
+    schema = json.loads(_run([str(EMC), "--schema"]))
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    Draft202012Validator.check_schema(schema)
+
+
+def test_emc_output_validates(tmp_path):
+    sch_json = tmp_path / "sch.json"
+    pcb_json = tmp_path / "pcb.json"
+    sch_json.write_text(_run([str(SCHEMATIC), str(FIXTURE / "simple.kicad_sch")]))
+    pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
+    result = json.loads(_run([str(EMC), "--schematic", str(sch_json), "--pcb", str(pcb_json)]))
+    schema = json.loads(_run([str(EMC), "--schema"]))
+    Draft202012Validator(schema).validate(result)
+
+
+def test_emc_schema_version_and_analyzer_type_are_const():
+    schema = json.loads(_run([str(EMC), "--schema"]))
+    assert schema["properties"]["schema_version"]["const"] == "1.4.0"
+    assert schema["properties"]["analyzer_type"]["const"] == "emc"
+
+
+def test_emc_runtime_schema_version_is_1_4_0(tmp_path):
+    sch_json = tmp_path / "sch.json"
+    pcb_json = tmp_path / "pcb.json"
+    sch_json.write_text(_run([str(SCHEMATIC), str(FIXTURE / "simple.kicad_sch")]))
+    pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
+    result = json.loads(_run([str(EMC), "--schematic", str(sch_json), "--pcb", str(pcb_json)]))
+    assert result["schema_version"] == "1.4.0"
