@@ -350,7 +350,7 @@ def _compute_trust_posture(sch, pcb, thermal_data, emc_data):
         bc = ts.get('by_confidence', {})
         det += bc.get('deterministic', 0)
         heu += bc.get('heuristic', 0)
-        ds_backed += bc.get('datasheet-backed', 0)
+        ds_backed += bc.get('datasheet_backed', 0)
         unknown += ts.get('unknown_confidence', 0)
 
     levels = [ts.get('trust_level', 'high') for _, ts in sources]

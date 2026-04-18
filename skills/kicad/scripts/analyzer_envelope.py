@@ -85,8 +85,9 @@ class TrustSummary:
         "description": "Breakdown of findings[] by confidence bucket."})
     by_evidence_source: ByEvidenceSource = field(metadata={
         "description": "Breakdown of findings[] by evidence source."})
-    provenance_coverage_pct: float = field(metadata={
-        "description": "Percent of findings[] carrying explicit provenance metadata."})
+    provenance_coverage_pct: Optional[float] = field(default=None, metadata={
+        "description": "Percent of findings[] carrying explicit provenance metadata. "
+                       "None when total_findings == 0 (avoids misleading '100% of nothing')."})
     bom_coverage: Optional[BomCoverage] = field(default=None, metadata={
         "description": "BOM coverage — emitted by schematic analyzer only."})
 

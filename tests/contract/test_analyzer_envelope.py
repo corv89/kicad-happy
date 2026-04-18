@@ -46,7 +46,10 @@ def test_trust_summary_fields():
     assert props["trust_level"]["type"] == "string"
     assert props["by_confidence"]["type"] == "object"
     assert props["by_evidence_source"]["type"] == "object"
-    assert props["provenance_coverage_pct"]["type"] == "number"
+    # provenance_coverage_pct is Optional[float] — None when total_findings==0
+    assert props["provenance_coverage_pct"]["anyOf"] == [
+        {"type": "number"}, {"type": "null"}]
+    assert "provenance_coverage_pct" not in schema["required"]
     # bom_coverage is schematic-only -> optional
     assert "bom_coverage" not in schema["required"]
 

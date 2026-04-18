@@ -98,7 +98,7 @@ def _aggregate(findings: list[dict]) -> list[dict]:
     groups: dict[tuple, dict] = defaultdict(
         lambda: {"rule_id": "", "severity": "info", "count": 0,
                  "examples": [], "detectors": set(), "source_files": set(),
-                 "by_confidence": {"deterministic": 0, "heuristic": 0, "datasheet-backed": 0}})
+                 "by_confidence": {"deterministic": 0, "heuristic": 0, "datasheet_backed": 0}})
     for f in findings:
         rid = f.get("rule_id") or "(unknown)"
         sev_norm = (f.get("severity") or "info").lower()
@@ -147,7 +147,7 @@ def _print_table(rows: list[dict], top: int | None) -> None:
         bc = r.get("by_confidence", {})
         det = bc.get("deterministic", 0)
         heu = bc.get("heuristic", 0)
-        ds = bc.get("datasheet-backed", 0)
+        ds = bc.get("datasheet_backed", 0)
         ex = r["examples"][0][:50] if r["examples"] else ""
         print(f"{r['rule_id']:<14} {r['severity']:<9} {r['count']:>5}  {det:>4} {heu:>4} {ds:>3}  {ex}")
     if top and len(rows) > top:

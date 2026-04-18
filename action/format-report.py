@@ -187,7 +187,7 @@ def _render_trust_evidence(sch, pcb, emc, thermal):
         bc = ts.get('by_confidence', {})
         total_deterministic += bc.get('deterministic', 0)
         total_heuristic += bc.get('heuristic', 0)
-        total_datasheet += bc.get('datasheet-backed', 0)
+        total_datasheet += bc.get('datasheet_backed', 0)
         total_unknown += ts.get('unknown_confidence', 0)
 
     if total_findings == 0:
@@ -225,7 +225,7 @@ def _render_trust_evidence(sch, pcb, emc, thermal):
         bc = ts.get('by_confidence', {})
         d = bc.get('deterministic', 0)
         h = bc.get('heuristic', 0)
-        ds = bc.get('datasheet-backed', 0)
+        ds = bc.get('datasheet_backed', 0)
         level = ts.get('trust_level', '?')
         icon = trust_icon.get(level, '')
         L.append(f"| {name} | {n} | {d} ({round(100*d/n)}%) | "

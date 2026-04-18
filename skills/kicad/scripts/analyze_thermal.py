@@ -24,6 +24,9 @@ import re
 import sys
 import time
 
+from envelopes.thermal import ThermalEnvelope
+from schema_codec import emit_schema
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -874,35 +877,7 @@ def main():
     args = parser.parse_args()
 
     if args.schema:
-        schema = {
-            "analyzer_type": "string — always 'thermal'",
-            "schema_version": "string — semver (currently '1.3.0')",
-            "summary": {
-                "total_findings": "int",
-                "components_assessed": "int",
-                "active": "int — non-suppressed findings",
-                "suppressed": "int",
-                "critical": "int — deprecated, retained for consumer compat",
-                "high": "int — deprecated, retained for consumer compat",
-                "medium": "int — deprecated, retained for consumer compat",
-                "low": "int — deprecated, retained for consumer compat",
-                "info": "int — deprecated, retained for consumer compat",
-                "by_severity": "{error: int, warning: int, info: int}",
-                "thermal_score": "float (0-100)",
-            },
-            "findings": "[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components, nets, pins, recommendation, report_context}] — TS-001..005, TP-001..002, TH-DET assessments",
-            "trust_summary": {
-                "total_findings": "int",
-                "trust_level": "'high' | 'mixed' | 'low'",
-                "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
-                "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
-                "provenance_coverage_pct": "float",
-            },
-            "elapsed_s": "float — analysis wall-clock time",
-            "missing_info": "OPTIONAL — {default_rtheta_ja: [ref], default_tj_max: [ref]} when any component used default thermal parameters",
-        }
-        print(json.dumps(schema, indent=2))
-        sys.exit(0)
+        emit_schema(ThermalEnvelope)
 
     if not args.schematic or not args.pcb:
         parser.error("the --schematic and --pcb arguments are required (except with --schema)")
@@ -1020,7 +995,7 @@ def main():
 
     result = {
         "analyzer_type": "thermal",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "summary": {
             "total_findings": len(findings),
             "components_assessed": len(assessments),

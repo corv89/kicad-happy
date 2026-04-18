@@ -194,10 +194,19 @@ def compute_trust_summary(findings, bom=None):
         else:
             trust_level = 'high'
 
+    # v1.4 break: the aggregate key renames 'datasheet-backed' (hyphen)
+    # to 'datasheet_backed' (underscore) to match the typed envelope
+    # primitive at analyzer_envelope.ByConfidence. The per-finding
+    # `confidence` value is unchanged — only this rollup key moves.
+    by_confidence_out = {
+        'deterministic': by_confidence.get('deterministic', 0),
+        'heuristic': by_confidence.get('heuristic', 0),
+        'datasheet_backed': by_confidence.get('datasheet-backed', 0),
+    }
     result = {
         'total_findings': total,
         'trust_level': trust_level,
-        'by_confidence': by_confidence,
+        'by_confidence': by_confidence_out,
         'by_evidence_source': by_evidence,
         # None when no findings — avoids "100% coverage of nothing"
         # misleading aggregates in downstream consumers.
