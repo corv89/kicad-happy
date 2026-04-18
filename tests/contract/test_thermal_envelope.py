@@ -77,3 +77,38 @@ def test_thermal_assessments_are_separated_from_findings(tmp_path):
         f"Unexpected rule_ids in assessments[]: {extra}. Only TH-DET is "
         f"expected for thermal at v1.4."
     )
+
+
+def test_thermal_inputs_upstream_artifacts_populated(tmp_path):
+    """Track 1.3: thermal's inputs.upstream_artifacts carries schematic + pcb
+    metadata keyed by stage name."""
+    sch_json = tmp_path / "sch.json"
+    pcb_json = tmp_path / "pcb.json"
+    sch_json.write_text(_run([str(SCHEMATIC), str(FIXTURE / "simple.kicad_sch")]))
+    pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
+    result = json.loads(_run([
+        str(THERMAL), "--schematic", str(sch_json), "--pcb", str(pcb_json)
+    ]))
+
+    inputs = result["inputs"]
+    upstream = inputs["upstream_artifacts"]
+
+    assert "schematic" in upstream, "thermal must name schematic upstream"
+    assert "pcb" in upstream, "thermal must name pcb upstream"
+
+    sch_art = upstream["schematic"]
+    assert sch_art["path"] == str(sch_json)
+    assert len(sch_art["sha256"]) == 64
+    assert sch_art["schema_version"] == "1.4.0"
+    import re
+    assert re.match(r"^\d{8}T\d{6}Z-[0-9a-f]{6}$", sch_art["run_id"])
+
+    pcb_art = upstream["pcb"]
+    assert pcb_art["path"] == str(pcb_json)
+    assert len(pcb_art["sha256"]) == 64
+    assert pcb_art["schema_version"] == "1.4.0"
+    assert re.match(r"^\d{8}T\d{6}Z-[0-9a-f]{6}$", pcb_art["run_id"])
+
+    # source_files should list both JSON paths.
+    assert str(sch_json) in inputs["source_files"]
+    assert str(pcb_json) in inputs["source_files"]

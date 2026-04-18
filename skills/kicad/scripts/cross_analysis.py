@@ -27,6 +27,7 @@ from finding_schema import make_finding, compute_trust_summary
 from kicad_utils import build_net_id_map as _build_net_id_map
 from envelopes.cross_analysis import CrossAnalysisEnvelope
 from schema_codec import emit_schema
+from inputs_builder import build_inputs, build_upstream_artifact
 
 
 # ---------------------------------------------------------------------------
@@ -936,6 +937,20 @@ def main():
         with open(args.pcb, 'r') as f:
             pcb = json.load(f)
 
+    # Build inputs provenance block (Track 1.3).
+    from pathlib import Path as _Path
+    _upstream_artifacts = {
+        "schematic": build_upstream_artifact(_Path(args.schematic), schematic),
+    }
+    _source_files = [_Path(args.schematic)]
+    if pcb is not None and args.pcb:
+        _upstream_artifacts["pcb"] = build_upstream_artifact(_Path(args.pcb), pcb)
+        _source_files.append(_Path(args.pcb))
+    inputs = build_inputs(
+        source_files=_source_files,
+        upstream_artifacts=_upstream_artifacts,
+    )
+
     findings = run_all_checks(schematic, pcb)
     elapsed = time.time() - t0
 
@@ -947,6 +962,7 @@ def main():
     result = {
         'analyzer_type': 'cross_analysis',
         'schema_version': '1.4.0',
+        'inputs': inputs,
         'elapsed_s': round(elapsed, 3),
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,

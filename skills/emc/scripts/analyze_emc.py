@@ -32,6 +32,7 @@ from emc_formulas import STANDARDS, MARKET_STANDARDS
 from finding_schema import compute_trust_summary
 from emc_envelope import EMCEnvelope
 from schema_codec import emit_schema
+from inputs_builder import build_inputs, build_upstream_artifact
 
 # Shared severity weights — used by both risk score and per-net scoring.
 # Keyed on the v1.3 envelope vocabulary (error/warning/info); legacy
@@ -404,6 +405,27 @@ def main():
     if args.market is None and project.get('compliance_market'):
         args.market = project['compliance_market']
 
+    # Build inputs provenance block (Track 1.3).
+    from pathlib import Path as _Path
+    _upstream_artifacts = {}
+    _source_files = []
+    if schematic is not None and args.schematic:
+        _sch_path = _Path(args.schematic)
+        _upstream_artifacts["schematic"] = build_upstream_artifact(_sch_path, schematic)
+        _source_files.append(_sch_path)
+    if pcb is not None and args.pcb:
+        _pcb_path = _Path(args.pcb)
+        _upstream_artifacts["pcb"] = build_upstream_artifact(_pcb_path, pcb)
+        _source_files.append(_pcb_path)
+    _cfg_path = _Path(args.config) if args.config else None
+    if _cfg_path and not _cfg_path.is_file():
+        _cfg_path = None
+    inputs = build_inputs(
+        source_files=_source_files,
+        upstream_artifacts=_upstream_artifacts,
+        config_path=_cfg_path,
+    )
+
     # Run analysis
     t0 = time.time()
     findings = run_all_checks(schematic, pcb,
@@ -470,6 +492,7 @@ def main():
     result = {
         'analyzer_type': 'emc',
         'schema_version': '1.4.0',
+        'inputs': inputs,
         'summary': {
             'total_findings': len(findings),
             'categories_checked': len(category_summary),

@@ -74,3 +74,24 @@ def test_source_files_empty_list_is_allowed(tmp_path):
     result = build_inputs([], run_id="20260418T123456Z-abc123")
     assert result["source_files"] == []
     assert result["source_hashes"] == {}
+
+
+def test_build_upstream_artifact(tmp_path):
+    from inputs_builder import build_upstream_artifact
+    p = tmp_path / "sch.json"
+    p.write_text('{"schema_version": "1.4.0", "inputs": {"run_id": "20260418T123456Z-abc123"}}')
+    art = build_upstream_artifact(p, json.loads(p.read_text()))
+    assert art["path"] == str(p)
+    assert len(art["sha256"]) == 64
+    assert art["schema_version"] == "1.4.0"
+    assert art["run_id"] == "20260418T123456Z-abc123"
+
+
+def test_build_upstream_artifact_missing_fields(tmp_path):
+    """Tolerate upstream JSONs that predate v1.4 or lack the inputs block."""
+    from inputs_builder import build_upstream_artifact
+    p = tmp_path / "sch.json"
+    p.write_text('{}')
+    art = build_upstream_artifact(p, {})
+    assert art["schema_version"] == ""
+    assert art["run_id"] == ""

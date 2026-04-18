@@ -26,6 +26,7 @@ import time
 
 from envelopes.thermal import ThermalEnvelope
 from schema_codec import emit_schema
+from inputs_builder import build_inputs, build_upstream_artifact
 
 
 # ---------------------------------------------------------------------------
@@ -939,6 +940,23 @@ def main():
     if args.ambient == DEFAULT_AMBIENT_C and project.get("ambient_temperature_c"):
         args.ambient = project["ambient_temperature_c"]
 
+    # Build inputs provenance block (Track 1.3).
+    from pathlib import Path as _Path
+    _sch_path = _Path(args.schematic)
+    _pcb_path = _Path(args.pcb)
+    _upstream_artifacts = {
+        "schematic": build_upstream_artifact(_sch_path, schematic),
+        "pcb": build_upstream_artifact(_pcb_path, pcb),
+    }
+    _cfg_path = _Path(args.config) if args.config else None
+    if _cfg_path and not _cfg_path.is_file():
+        _cfg_path = None
+    inputs = build_inputs(
+        source_files=[_sch_path, _pcb_path],
+        upstream_artifacts=_upstream_artifacts,
+        config_path=_cfg_path,
+    )
+
     t0 = time.monotonic()
 
     # Estimate power dissipation
@@ -996,6 +1014,7 @@ def main():
     result = {
         "analyzer_type": "thermal",
         "schema_version": "1.4.0",
+        "inputs": inputs,
         "summary": {
             "total_findings": len(findings),
             "components_assessed": len(assessments),

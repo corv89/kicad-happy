@@ -49,3 +49,21 @@ def test_emc_runtime_schema_version_is_1_4_0(tmp_path):
     pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
     result = json.loads(_run([str(EMC), "--schematic", str(sch_json), "--pcb", str(pcb_json)]))
     assert result["schema_version"] == "1.4.0"
+
+
+def test_emc_inputs_upstream_artifacts_populated(tmp_path):
+    sch_json = tmp_path / "sch.json"
+    pcb_json = tmp_path / "pcb.json"
+    sch_json.write_text(_run([str(SCHEMATIC), str(FIXTURE / "simple.kicad_sch")]))
+    pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
+    result = json.loads(_run([
+        str(EMC), "--schematic", str(sch_json), "--pcb", str(pcb_json)
+    ]))
+    inputs = result["inputs"]
+    upstream = inputs["upstream_artifacts"]
+    assert "schematic" in upstream
+    assert "pcb" in upstream
+    assert upstream["schematic"]["schema_version"] == "1.4.0"
+    assert upstream["pcb"]["schema_version"] == "1.4.0"
+    assert str(sch_json) in inputs["source_files"]
+    assert str(pcb_json) in inputs["source_files"]

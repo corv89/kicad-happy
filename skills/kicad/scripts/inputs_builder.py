@@ -59,3 +59,21 @@ def build_inputs(
         "config_hash": config_hash,
         "upstream_artifacts": upstream_artifacts or {},
     }
+
+
+def build_upstream_artifact(path: Path | str, parsed: dict) -> dict:
+    """Build one UpstreamArtifact dict from a parsed analyzer JSON.
+
+    ``path`` is the filesystem path the analyzer read the JSON from.
+    ``parsed`` is the JSON's decoded Python dict — we read its
+    ``schema_version`` and ``inputs.run_id`` fields for the artifact
+    metadata.
+    """
+    path = Path(path)
+    sha = _sha256_file(path)
+    return {
+        "path": str(path),
+        "sha256": sha,
+        "schema_version": parsed.get("schema_version", ""),
+        "run_id": parsed.get("inputs", {}).get("run_id", ""),
+    }

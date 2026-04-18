@@ -44,7 +44,9 @@ _KICAD_SCRIPTS = os.path.abspath(os.path.join(_HERE, "..", "..", "kicad", "scrip
 if _KICAD_SCRIPTS not in sys.path:
     sys.path.insert(0, _KICAD_SCRIPTS)
 
-from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
+from analyzer_envelope import (  # noqa: E402
+    TrustSummary, Finding, Assessment, BySeverity, InputsBlock,
+)
 
 
 @dataclass
@@ -234,6 +236,11 @@ class EMCEnvelope:
     schema_version: str = field(metadata={
         "description": "Semver. Value: '1.4.0' at Track 1.1 landing.",
         "const": "1.4.0"})
+
+    # --- Provenance ---
+    inputs: InputsBlock = field(metadata={
+        "description": "Source JSON inputs, sha256s, run_id, plus upstream "
+                       "artifact metadata (schematic, pcb)."})
 
     # --- Universal core ---
     target_standard: str = field(metadata={

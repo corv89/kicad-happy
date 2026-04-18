@@ -13,7 +13,9 @@ _PARENT = os.path.dirname(_HERE)
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
+from analyzer_envelope import (  # noqa: E402
+    TrustSummary, Finding, Assessment, BySeverity, InputsBlock,
+)
 
 
 @dataclass
@@ -72,6 +74,12 @@ class ThermalEnvelope:
     schema_version: str = field(metadata={
         "description": "Schema semver. Value: '1.4.0' at Track 1.1 landing.",
         "const": "1.4.0"})
+
+    # --- Provenance ---
+    inputs: InputsBlock = field(metadata={
+        "description": "Source JSON inputs, sha256s, run_id, plus upstream "
+                       "artifact metadata (schematic, pcb)."})
+
     summary: ThermalSummary = field(metadata={
         "description": "Roll-up summary of thermal analysis."})
     findings: list[Finding] = field(metadata={
