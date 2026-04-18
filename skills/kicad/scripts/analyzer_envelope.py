@@ -154,3 +154,53 @@ class Finding:
     extra: Optional[dict] = field(default=None, metadata={
         "description": "Detector-specific extension fields (unconstrained for v1.4). "
                        "Tightens to per-rule_id typed schema in v1.5."})
+
+
+@dataclass
+class Assessment:
+    """One entry in an analyzer's assessments[] array.
+
+    Assessments are informational measurements — factual observations a
+    consumer may surface alongside findings but that do not themselves
+    imply any action or warning. They are NOT trust-summarized (no
+    severity, no recommendation). Domain-specific measurement fields
+    (e.g. junction temperature, margin, current draw) live in `extra`.
+
+    Example: thermal TH-DET entries (per-component Tj estimates) are
+    assessments, not findings. A thermal *warning* about a component
+    exceeding its Tj_max is a Finding; a thermal *measurement* that a
+    component is running at 45°C with 80°C of margin is an Assessment.
+    """
+    detector: str = field(metadata={
+        "description": "Analyzer that produced the assessment (e.g. 'analyze_thermal')."})
+    rule_id: str = field(metadata={
+        "description": "Stable rule identifier (e.g. 'TH-DET')."})
+    confidence: str = field(metadata={
+        "description": "'deterministic' | 'heuristic' | 'datasheet-backed'."})
+    evidence_source: str = field(metadata={
+        "description": "Evidence taxonomy: 'datasheet', 'topology', 'heuristic_rule', "
+                       "'symbol_footprint', 'bom', 'geometry', 'api_lookup'."})
+    summary: str = field(metadata={"description": "One-line human-readable summary."})
+    category: Optional[str] = field(default=None, metadata={
+        "description": "Domain category: 'thermal', 'power', 'signal_integrity', etc."})
+    components: Optional[list[str]] = field(default=None, metadata={
+        "description": "Component references the assessment applies to."})
+    nets: Optional[list[str]] = field(default=None, metadata={
+        "description": "Net names the assessment applies to."})
+    # TODO(v1.5): tighten to list[PinRef] once detectors emit consistent shape.
+    pins: Optional[list] = field(default=None, metadata={
+        "description": "Pins involved. Items may be dicts or shorthand strings ('R1.2'). "
+                       "Pin shape tightens to typed PinRef in v1.5."})
+    description: Optional[str] = field(default=None, metadata={
+        "description": "Longer-form description (optional, rendered in reports)."})
+    report_context: Optional[dict] = field(default=None, metadata={
+        "description": "Free-form context block for report rendering "
+                       "(e.g. thresholds, standard refs)."})
+    provenance: Optional[dict] = field(default=None, metadata={
+        "description": "Evidence provenance (source_file, sha256, extraction_id, ...)."})
+    detection_id: Optional[str] = field(default=None, metadata={
+        "description": "Stable per-assessment ID for cross-run tracking."})
+    extra: Optional[dict] = field(default=None, metadata={
+        "description": "Assessment-specific measurement fields (e.g. tj_estimated_c, "
+                       "margin_c, pdiss_w for thermal). Free-form for v1.4; tightens "
+                       "to per-rule_id typed schema in v1.5."})

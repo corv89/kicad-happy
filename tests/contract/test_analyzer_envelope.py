@@ -16,6 +16,7 @@ from analyzer_envelope import (  # noqa: E402
     BomCoverage,
     TitleBlock,
     Finding,
+    Assessment,
 )
 from jsonschema import Draft202012Validator  # noqa: E402
 
@@ -72,9 +73,33 @@ def test_title_block_all_optional():
     assert schema["required"] == []
 
 
+def test_assessment_required_fields():
+    schema = _assert_valid(Assessment)
+    required = set(schema["required"])
+    # Assessments are informational measurements — they carry detector/rule_id
+    # context, confidence, evidence source, and a summary. They do NOT carry
+    # severity or recommendation (those are Finding-only).
+    assert required == {"detector", "rule_id", "confidence", "evidence_source", "summary"}
+
+
+def test_assessment_has_no_severity_or_recommendation():
+    schema = _assert_valid(Assessment)
+    props = schema["properties"]
+    assert "severity" not in props, "Assessment must not declare severity"
+    assert "recommendation" not in props, "Assessment must not declare recommendation"
+
+
+def test_assessment_has_extra_for_domain_specific_measurements():
+    schema = _assert_valid(Assessment)
+    props = schema["properties"]
+    assert "extra" in props, "Assessment must declare extra field for domain measurements"
+    # extra is Optional[dict] -> anyOf[object, null]
+    assert "extra" not in schema["required"]
+
+
 @pytest.mark.parametrize("cls", [
     ByConfidence, ByEvidenceSource, BySeverity, BomCoverage,
-    TrustSummary, TitleBlock, Finding,
+    TrustSummary, TitleBlock, Finding, Assessment,
 ])
 def test_all_primitives_round_trip_through_codec(cls):
     """Every shared primitive must produce a valid Draft 2020-12 schema."""
