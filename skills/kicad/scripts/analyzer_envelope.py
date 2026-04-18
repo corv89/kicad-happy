@@ -4,6 +4,20 @@ Source-of-truth types composed by per-analyzer envelope modules. Every
 field carries a description via field(metadata={"description": ...}) so
 the schema codec can produce self-documenting JSON Schema.
 
+Scope: this module holds only the primitives reused by multiple analyzer
+envelopes (ByConfidence, ByEvidenceSource, BySeverity, BomCoverage,
+TrustSummary, TitleBlock, Finding). Analyzer-specific types — Statistics,
+SchematicSummary, PCBSummary, ThermalSummary, etc. — live in
+``envelopes/*.py`` alongside each analyzer's top-level envelope.
+
+Primitive pairings: ``BySeverity`` is composed by per-analyzer
+``<X>Summary`` dataclasses (e.g. ``SchematicSummary.by_severity``,
+``ThermalSummary.by_severity``) to report the severity histogram for
+that run. ``TrustSummary`` is the trust-posture rollup (confidence +
+evidence source) and deliberately does NOT include a severity
+breakdown — severity lives on the per-analyzer Summary, trust posture
+lives on TrustSummary.
+
 Serialization convention: dataclass field names use snake_case Python
 identifiers; the emitted JSON uses the same names verbatim. No alias
 layer. When a key in the emitted JSON contains a hyphen (like
@@ -115,20 +129,24 @@ class Finding:
     nets: Optional[list[str]] = field(default=None, metadata={
         "description": "Net names involved."})
     pins: Optional[list[dict]] = field(default=None, metadata={
-        "description": "Pins involved: [{component, pin_number, pin_name}]."})
+        "description": "Pins involved: [{component, pin_number, pin_name}]. "
+                       "Pin schema tightens to typed PinRef in v1.5."})
     recommendation: Optional[str] = field(default=None, metadata={
         "description": "Actionable fix or next step for the designer."})
     description: Optional[str] = field(default=None, metadata={
         "description": "Longer-form description (optional, rendered in reports)."})
     report_context: Optional[dict] = field(default=None, metadata={
         "description": "Free-form context block for report rendering "
-                       "(e.g. measured values, thresholds, schematic snippet references)."})
+                       "(e.g. measured values, thresholds, schematic snippet references). "
+                       "Tightens to typed shape per rule_id in v1.5."})
     provenance: Optional[dict] = field(default=None, metadata={
-        "description": "Evidence provenance (source_file, sha256, extraction_id, ...)."})
+        "description": "Evidence provenance (source_file, sha256, extraction_id, ...). "
+                       "Tightens to typed Provenance in v1.5."})
     detection_id: Optional[str] = field(default=None, metadata={
         "description": "Stable per-finding ID for cross-run tracking."})
     stages: Optional[list[str]] = field(default=None, metadata={
         "description": "Review stages this finding applies to: "
                        "'schematic', 'layout', 'pre_fab', 'bring_up'."})
     extra: Optional[dict] = field(default=None, metadata={
-        "description": "Detector-specific extension fields (unconstrained for v1.4)."})
+        "description": "Detector-specific extension fields (unconstrained for v1.4). "
+                       "Tightens to per-rule_id typed schema in v1.5."})

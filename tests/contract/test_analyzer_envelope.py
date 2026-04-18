@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "skills" / "kicad" / "scripts"))
 
@@ -65,3 +67,19 @@ def test_title_block_all_optional():
     schema = _assert_valid(TitleBlock)
     # Title block fields are all optional (may be blank in a given .kicad_sch)
     assert schema["required"] == []
+
+
+@pytest.mark.parametrize("cls", [
+    ByConfidence, ByEvidenceSource, BySeverity, BomCoverage,
+    TrustSummary, TitleBlock, Finding,
+])
+def test_all_primitives_round_trip_through_codec(cls):
+    """Every shared primitive must produce a valid Draft 2020-12 schema."""
+    schema = dataclass_to_json_schema(cls)
+    Draft202012Validator.check_schema(schema)
+    # Basic envelope invariants
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["title"] == cls.__name__
+    assert schema["type"] == "object"
+    assert "properties" in schema
+    assert "required" in schema
