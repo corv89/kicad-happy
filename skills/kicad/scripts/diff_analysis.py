@@ -227,6 +227,66 @@ def _pct_delta(old, new):
 
 
 # ---------------------------------------------------------------------------
+# Assessment diff
+# ---------------------------------------------------------------------------
+
+def diff_assessments(base_items, head_items):
+    """Diff two assessments[] lists. Returns {added, removed, unchanged_count}.
+
+    Assessments are informational measurements (no severity). They are
+    keyed by (rule_id, sorted components tuple) so that a per-component
+    measurement keeps a stable identity across runs. Use `detection_id`
+    when present — it is the authoritative stable identifier.
+    """
+    def _key(a):
+        if not isinstance(a, dict):
+            return ("", "", ())
+        det_id = a.get("detection_id") or ""
+        rid = a.get("rule_id", "")
+        refs = tuple(sorted(a.get("components") or []))
+        return (det_id, rid, refs)
+
+    if not isinstance(base_items, list):
+        base_items = []
+    if not isinstance(head_items, list):
+        head_items = []
+
+    base_map = {}
+    for a in base_items:
+        if isinstance(a, dict):
+            base_map[_key(a)] = a
+    head_map = {}
+    for a in head_items:
+        if isinstance(a, dict):
+            head_map[_key(a)] = a
+
+    added_keys = sorted(set(head_map) - set(base_map))
+    removed_keys = sorted(set(base_map) - set(head_map))
+    unchanged = len(set(base_map) & set(head_map))
+
+    def _summarize(key, item):
+        _, rid, refs = key
+        entry = {"rule_id": rid, "components": list(refs)}
+        if isinstance(item, dict) and item.get("summary"):
+            entry["summary"] = item["summary"]
+        return entry
+
+    return {
+        "added": [_summarize(k, head_map[k]) for k in added_keys],
+        "removed": [_summarize(k, base_map[k]) for k in removed_keys],
+        "unchanged_count": unchanged,
+    }
+
+
+def _attach_assessments_diff(result, base, head):
+    """Run diff_assessments on the envelopes and attach if non-empty."""
+    a_diff = diff_assessments(base.get("assessments", []),
+                              head.get("assessments", []))
+    if a_diff["added"] or a_diff["removed"] or a_diff["unchanged_count"]:
+        result["assessments"] = a_diff
+
+
+# ---------------------------------------------------------------------------
 # Auto-detection
 # ---------------------------------------------------------------------------
 
@@ -246,6 +306,8 @@ def detect_type(data):
         return "emc"
     if "simulation_results" in data:
         return "spice"
+    if "findings" in data and "thermal_score" in summary:
+        return "thermal"
     # Detect pre-v1.3 schematic format (signal_analysis wrapper, no findings[])
     if "signal_analysis" in data and "components" in data:
         return "schematic_old"
@@ -439,6 +501,8 @@ def diff_schematic(base, head, threshold):
             erc["resolved_warnings"] = [base_erc_map[k] for k in sorted(resolved_keys)]
         result["erc"] = erc
 
+    _attach_assessments_diff(result, base, head)
+
     return result
 
 
@@ -506,6 +570,8 @@ def diff_pcb(base, head, threshold):
 
     if fp_diff["added"] or fp_diff["removed"] or fp_diff["modified"]:
         result["footprints"] = fp_diff
+
+    _attach_assessments_diff(result, base, head)
 
     return result
 
@@ -600,6 +666,8 @@ def diff_emc(base, head, threshold):
         net_changes.sort(key=lambda n: -abs(n["delta"]))
         result["per_net_scores"] = net_changes
 
+    _attach_assessments_diff(result, base, head)
+
     return result
 
 
@@ -692,6 +760,74 @@ def diff_spice(base, head, threshold):
             if resolved_concerns:
                 mc["resolved"] = resolved_concerns
             result["monte_carlo"] = mc
+
+    _attach_assessments_diff(result, base, head)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Thermal diff
+# ---------------------------------------------------------------------------
+
+def diff_thermal(base, head, threshold):
+    """Diff two thermal analyzer JSONs.
+
+    Thermal's primary output is assessments[] (per-component Tj estimates
+    are TH-DET assessments as of v1.4). Findings are thermal *warnings*.
+    """
+    result = {}
+
+    # Summary deltas
+    stat_paths = [
+        "summary.total_findings", "summary.active", "summary.suppressed",
+        "summary.components_assessed", "summary.thermal_score",
+    ]
+    stats = _diff_counts(base, head, stat_paths)
+    if stats:
+        result["statistics"] = stats
+
+    # Findings: match by (rule_id, sorted components)
+    def _finding_key(f):
+        rule = f.get("rule_id", "")
+        comps = "|".join(sorted(f.get("components", [])))
+        return f"{rule}::{comps}"
+
+    base_findings = {_finding_key(f): f for f in base.get("findings", [])
+                     if isinstance(f, dict)}
+    head_findings = {_finding_key(f): f for f in head.get("findings", [])
+                     if isinstance(f, dict)}
+
+    findings_diff = {"new": [], "resolved": [], "changed_severity": []}
+    for key, f in head_findings.items():
+        if key not in base_findings:
+            findings_diff["new"].append({
+                "rule_id": f.get("rule_id", ""),
+                "severity": f.get("severity", ""),
+                "summary": f.get("summary", ""),
+                "components": f.get("components", []),
+            })
+        else:
+            bf = base_findings[key]
+            if bf.get("severity") != f.get("severity"):
+                findings_diff["changed_severity"].append({
+                    "rule_id": f.get("rule_id", ""),
+                    "base_severity": bf.get("severity", ""),
+                    "head_severity": f.get("severity", ""),
+                    "summary": f.get("summary", ""),
+                })
+    for key, f in base_findings.items():
+        if key not in head_findings:
+            findings_diff["resolved"].append({
+                "rule_id": f.get("rule_id", ""),
+                "severity": f.get("severity", ""),
+                "summary": f.get("summary", ""),
+            })
+
+    if findings_diff["new"] or findings_diff["resolved"] or findings_diff["changed_severity"]:
+        result["findings"] = findings_diff
+
+    _attach_assessments_diff(result, base, head)
 
     return result
 
@@ -864,6 +1000,17 @@ def build_summary(analyzer_type, diff_result):
         removed += len(diff_result.get("removed_results", []))
         modified += len(diff_result.get("status_changes", []))
 
+    elif analyzer_type == "thermal":
+        findings = diff_result.get("findings", {})
+        added += len(findings.get("new", []))
+        removed += len(findings.get("resolved", []))
+        modified += len(findings.get("changed_severity", []))
+
+    # Assessments (all analyzer types carry assessments[])
+    assessments = diff_result.get("assessments", {})
+    added += len(assessments.get("added", []))
+    removed += len(assessments.get("removed", []))
+
     total = added + removed + modified
     severity = classify_severity(analyzer_type, diff_result)
 
@@ -996,6 +1143,34 @@ def format_text(output):
             comps = ", ".join(sc.get("components", []))
             lines.append(f"  {direction}: {sc.get('subcircuit_type', '?')} {comps}: "
                          f"{sc.get('base_status', '?')} → {sc.get('head_status', '?')}")
+        lines.append("")
+
+    # Assessments (informational measurements — present on all analyzer types)
+    assessments = diff.get("assessments", {})
+    if assessments and (assessments.get("added")
+                        or assessments.get("removed")
+                        or assessments.get("unchanged_count")):
+        lines.append("Assessments:")
+        added = assessments.get("added", [])
+        removed = assessments.get("removed", [])
+        if added:
+            lines.append(f"  + Added ({len(added)}):")
+            for a in added[:5]:
+                refs = a.get("components") or []
+                refs_str = "[" + ", ".join(refs) + "]" if refs else "[]"
+                lines.append(f"    - {a.get('rule_id', '?')} on {refs_str}")
+            if len(added) > 5:
+                lines.append(f"    ... and {len(added) - 5} more")
+        if removed:
+            lines.append(f"  - Removed ({len(removed)}):")
+            for a in removed[:5]:
+                refs = a.get("components") or []
+                refs_str = "[" + ", ".join(refs) + "]" if refs else "[]"
+                lines.append(f"    - {a.get('rule_id', '?')} on {refs_str}")
+            if len(removed) > 5:
+                lines.append(f"    ... and {len(removed) - 5} more")
+        unchanged = assessments.get("unchanged_count", 0)
+        lines.append(f"  Unchanged: {unchanged}")
         lines.append("")
 
     # Risk score
@@ -1245,7 +1420,12 @@ def main():
         "pcb": diff_pcb,
         "emc": diff_emc,
         "spice": diff_spice,
+        "thermal": diff_thermal,
     }
+    if base_type not in diff_funcs:
+        print(f"Error: no diff function for analyzer type '{base_type}'",
+              file=sys.stderr)
+        sys.exit(1)
     diff_result = diff_funcs[base_type](base, head, args.threshold)
     summary = build_summary(base_type, diff_result)
 
