@@ -6,6 +6,52 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ---
 
+## v1.4-dev (in progress) — Track 1.1: Typed Analyzer Envelope SOT
+
+**Theme: Single Source of Truth for Analyzer Output** — Python dataclasses replace hand-maintained `_get_schema()` dicts across 6 analyzers. One typed definition now drives `--schema` emission (as real JSON Schema Draft 2020-12), generated reference docs, and contract-test validation of live runtime output.
+
+### Typed envelope source of truth
+
+Every analyzer's output shape is now declared as a Python dataclass with field metadata for descriptions and JSON name mapping. The same definition:
+
+- Emits real JSON Schema Draft 2020-12 via `--schema`
+- Is validated at test time by 51 contract tests against runtime analyzer output
+- Generates `skills/kicad/references/output-schema.md` via `gen_output_schema_md.py`
+- Runs in CI via the new `schema-contract` job
+
+### Breaking changes
+
+- **`--schema` output shape** — all six analyzers (schematic, PCB, gerber, thermal, EMC, cross_analysis) now emit JSON Schema Draft 2020-12. Prior format was a descriptive-string dict keyed by field name. Any external consumer parsing `--schema` output as the old dict shape will break.
+- **`schema_version` bumped 1.3.0 → 1.4.0** on every analyzer.
+- **`trust_summary.by_confidence` aggregate key renamed** `datasheet-backed` → `datasheet_backed` (rollup only; per-finding `confidence` VALUE stays `datasheet-backed` with the hyphen).
+- **`trust_summary.provenance_coverage_pct`** relaxed from `float` to `Optional[float]` — runtime has always emitted `null` when `total_findings == 0`; envelope now honestly reflects that. Consumers should accept null.
+- **`ThermalSummary`** now declares 6 previously-undeclared board-level fields: `total_board_dissipation_w`, `hottest_component`, and four related board-thermal rollup fields.
+- **Schematic envelope optional fields** — `_redirected_from` and `_stale_file_warning` moved to declared optional fields (via `field(metadata={"json_name": ...})`) rather than implicit runtime additions.
+
+### Closed issues
+
+- **KH-323** — `pin_coverage_warnings` now a declared OPTIONAL field on `SchematicEnvelope`. Harness can remove the `_KNOWN_UNDOCUMENTED['schematic']` allow-list entry.
+
+### Added modules
+
+- `skills/kicad/scripts/schema_codec.py` — dataclass → JSON Schema Draft 2020-12 converter. Stdlib-only. `dataclass_to_json_schema(cls)` + `emit_schema(cls)` CLI helper. Honors `field(metadata={"description": ..., "const": ..., "json_name": ...})`.
+- `skills/kicad/scripts/analyzer_envelope.py` — shared envelope primitives (TrustSummary, Finding, BySeverity, TitleBlock, BomCoverage, ByConfidence, ByEvidenceSource).
+- `skills/kicad/scripts/envelopes/*.py` — per-analyzer envelope dataclasses (schematic, pcb, gerber, thermal, cross_analysis).
+- `skills/emc/scripts/emc_envelope.py` — EMC envelope dataclass.
+- `skills/kicad/scripts/gen_output_schema_md.py` — regenerates `skills/kicad/references/output-schema.md` from dataclass introspection.
+
+### Test infrastructure
+
+- `tests/contract/` — pytest contract tests validating `--schema` output (Draft 2020-12 conformance) and live analyzer output against its declared schema. Uses `tests/fixtures/simple-project/`.
+- `requirements-dev.txt` — dev deps (`pytest`, `jsonschema`).
+- `schema-contract` CI job runs `pytest tests/contract/` on every PR.
+
+### Forward pointer
+
+Track 1.2 (findings/assessments separation) and Track 1.3 (structured provenance block) build on this typed SOT foundation.
+
+---
+
 ## v1.3.0 — 2026-04-16
 
 **Theme: Harmonized Analysis + Trust Infrastructure** — 168 commits making every analyzer speak the same format, every finding carry its own provenance, and the whole pipeline uniformly queryable, filterable, and auditable.
