@@ -1193,7 +1193,7 @@ def build_report(simulation_runs):
 
     report = {
         "analyzer_type": "spice",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "summary": {
             "total": len(simulation_runs),
             "total_findings": len(findings),

@@ -856,7 +856,7 @@ def audit_bom(analysis_json: dict, project_dir: str | None = None,
     # Build output
     result = {
         "analyzer_type": "lifecycle",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "audit_date": datetime.now().astimezone().isoformat(timespec='seconds'),
         "components_checked": total,
         "components_with_mpn": total,
