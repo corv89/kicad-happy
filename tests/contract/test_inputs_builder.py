@@ -1,0 +1,76 @@
+"""Tests for inputs_builder.build_inputs."""
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "skills" / "kicad" / "scripts"))
+
+from inputs_builder import build_inputs  # noqa: E402
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_basic_build(tmp_path):
+    a = tmp_path / "a.txt"
+    a.write_text("hello")
+    b = tmp_path / "b.txt"
+    b.write_text("world")
+
+    result = build_inputs([a, b], run_id="20260418T123456Z-abc123")
+
+    assert result["source_files"] == [str(a), str(b)]
+    assert result["source_hashes"] == {
+        str(a): _sha(b"hello"),
+        str(b): _sha(b"world"),
+    }
+    assert result["run_id"] == "20260418T123456Z-abc123"
+    assert result["config_hash"] is None
+    assert result["upstream_artifacts"] == {}
+
+
+def test_config_hash_populated_when_given(tmp_path):
+    cfg = tmp_path / ".kicad-happy.json"
+    cfg.write_text('{"version": 1}')
+    a = tmp_path / "a.txt"
+    a.write_text("hello")
+
+    result = build_inputs([a], config_path=cfg,
+                          run_id="20260418T123456Z-abc123")
+
+    assert result["config_hash"] == _sha(b'{"version": 1}')
+
+
+def test_upstream_artifacts_passed_through():
+    upstream = {
+        "schematic": {
+            "path": "/tmp/schematic.json",
+            "sha256": "a" * 64,
+            "schema_version": "1.4.0",
+            "run_id": "20260418T123456Z-999999",
+        }
+    }
+    result = build_inputs([], run_id="20260418T123456Z-abc123",
+                          upstream_artifacts=upstream)
+    assert result["upstream_artifacts"] == upstream
+
+
+def test_run_id_auto_generated_when_omitted(tmp_path):
+    a = tmp_path / "a.txt"
+    a.write_text("x")
+    result = build_inputs([a])
+    # Fallback auto-gen still yields a well-formed run_id.
+    assert isinstance(result["run_id"], str)
+    assert len(result["run_id"]) == 23  # "YYYYMMDDTHHMMSSZ-hhhhhh"
+
+
+def test_source_files_empty_list_is_allowed(tmp_path):
+    """Thermal/EMC read JSONs but we still record their paths via
+    source_files — build_inputs with an empty list is allowed for
+    synthetic test cases and early-exit edge cases."""
+    result = build_inputs([], run_id="20260418T123456Z-abc123")
+    assert result["source_files"] == []
+    assert result["source_hashes"] == {}
