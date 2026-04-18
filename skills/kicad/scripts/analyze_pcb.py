@@ -38,6 +38,8 @@ from kicad_utils import (is_ground_name, is_power_net_name,
                          load_kicad_dru, load_lib_tables)
 from pcb_connectivity import build_connectivity_graph
 from finding_schema import compute_trust_summary, sort_findings
+from envelopes.pcb import PCBEnvelope
+from schema_codec import emit_schema
 
 
 # ---------------------------------------------------------------------------
@@ -6154,7 +6156,7 @@ def analyze_pcb(path: str, *, proximity: bool = False,
 
     result = {
         "analyzer_type": "pcb",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "file": str(path),
         "kicad_version": generator_version,
         "file_version": version,
@@ -6405,60 +6407,6 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     return result
 
 
-def _get_schema():
-    """Return JSON output schema description for --schema flag."""
-    return {
-        "analyzer_type": "string — always 'pcb'",
-        "schema_version": "string — semver (currently '1.3.0')",
-        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
-        "trust_summary": {
-            "total_findings": "int",
-            "trust_level": "string — 'high' | 'mixed' | 'low'",
-            "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
-            "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
-            "provenance_coverage_pct": "float",
-        },
-        "findings": "[{detector, rule_id, severity, confidence, evidence_source, summary, category, components, nets, pins, recommendation, ...}] — flat list of all findings",
-        "file": "string — input file path",
-        "kicad_version": "string", "file_version": "string",
-        "statistics": {
-            "footprint_count": "int", "front_side": "int", "back_side": "int",
-            "smd_count": "int", "tht_count": "int", "copper_layers_used": "int",
-            "copper_layer_names": "[string]", "track_segments": "int", "via_count": "int",
-            "zone_count": "int", "total_track_length_mm": "float",
-            "board_width_mm": "float|null", "board_height_mm": "float|null",
-            "net_count": "int", "routing_complete": "bool", "unrouted_net_count": "int",
-        },
-        "layers": "[{name, type, index: int}]",
-        "setup": "object — design rules, pad_to_mask_clearance, etc.",
-        "nets": "{str(net_id): net_name}",
-        "net_name_to_id": "{net_name: int (net ID)} — reverse of nets",
-        "board_outline": {
-            "bounding_box": "{x_min, y_min, x_max, y_max, width, height: float}",
-            "outline_type": "string (rectangle|complex_polygon|...)",
-            "segments": "[{x1, y1, x2, y2: float, layer}]",
-        },
-        "component_groups": "{prefix: {count: int, type, examples: [ref]}}",
-        "footprints": "[{reference, value, library (lib:footprint path), footprint (alias of library), layer, x: float, y: float, angle: float, type: smd|through_hole|mixed, mpn, manufacturer, description, exclude_from_bom: bool, exclude_from_pos: bool, dnp: bool, pad_nets: {pad_number: {net: string, pin: string}}, connected_nets: [string]}]",
-        "tracks": {
-            "segment_count": "int", "arc_count": "int",
-            "width_distribution": "{width_mm_str: count}",
-            "layer_distribution": "{layer_name: count}",
-            "_with_full_flag": "segments: [{x1, y1, x2, y2, width: float, layer, net: int}], arcs: [{x1, y1, x2, y2, mid_x, mid_y, width: float, layer}]",
-        },
-        "vias": {
-            "count": "int", "size_distribution": "{size_str: count}",
-            "_analysis": "via_in_pad: [ref], via_fanout: {ref: {via_count, fanout_traces}}, via_current: [warning]",
-            "_with_full_flag": "vias: [{x, y: float, layers: [string], size, drill: float, net: int|null, type: 'through|blind|buried|micro'}]",
-        },
-        "zones": "[{net: int (net ID), net_name: string (net name), priority: int, layers: [string], bounding_box, island_count: int, thermal_bridging, filled: bool, is_keepout: bool (opt), keepout: {tracks, vias, pads, copperpour, footprints} (opt)}]",
-        "keepout_zones": "[{name, layers: [string], restrictions: {tracks, vias, pads, copperpour, footprints}, bounding_box: [min_x, min_y, max_x, max_y], area_mm2: float, nearby_components: [string]}]",
-        "connectivity": {"routing_complete": "bool", "unrouted_count": "int", "unconnected_pads": "[{reference, pad, expected_net}]"},
-        "net_lengths": "{net_name: {track_length_mm: float, via_count: int, layer_transitions: int}}",
-        "_optional_sections": "power_net_routing, decoupling_placement, ground_domains, current_capacity, thermal_analysis, placement_analysis, trace_proximity (--proximity), dfm, tombstoning_risk, thermal_pad_vias, copper_presence",
-    }
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad PCB Layout Analyzer")
@@ -6493,8 +6441,7 @@ def main():
     args = parser.parse_args()
 
     if args.schema:
-        print(json.dumps(_get_schema(), indent=2))
-        sys.exit(0)
+        emit_schema(PCBEnvelope)
 
     if not args.pcb:
         parser.error("the following arguments are required: pcb")
