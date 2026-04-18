@@ -204,3 +204,56 @@ class Assessment:
         "description": "Assessment-specific measurement fields (e.g. tj_estimated_c, "
                        "margin_c, pdiss_w for thermal). Free-form for v1.4; tightens "
                        "to per-rule_id typed schema in v1.5."})
+
+
+@dataclass
+class UpstreamArtifact:
+    """One entry in ``InputsBlock.upstream_artifacts``.
+
+    Names a prior analyzer JSON that this run consumed. Carries the
+    artifact's sha256 so consumers can detect whether the upstream has
+    drifted since the downstream run read it, plus the upstream's
+    schema_version and run_id so cross-run provenance chains can be
+    walked.
+    """
+    path: str = field(metadata={
+        "description": "Path to the upstream analyzer JSON file."})
+    sha256: str = field(metadata={
+        "description": "SHA-256 of the upstream JSON at read time "
+                       "(hex, unprefixed)."})
+    schema_version: str = field(metadata={
+        "description": "schema_version of the upstream envelope."})
+    run_id: str = field(metadata={
+        "description": "run_id of the upstream run (for provenance chains)."})
+
+
+@dataclass
+class InputsBlock:
+    """Provenance record of everything an analyzer run consumed.
+
+    Emitted by every analyzer. ``source_files`` and ``source_hashes`` list
+    every file read from disk. ``upstream_artifacts`` carries structured
+    metadata about prior-stage analyzer JSONs (thermal reads schematic +
+    pcb JSON; EMC and cross-analysis do the same). Raw-input analyzers
+    (schematic, pcb, gerber) emit an empty ``upstream_artifacts`` dict.
+
+    ``run_id`` uniquely identifies this run (see ``run_id.py`` for
+    format). ``config_hash`` is sha256 of the resolved
+    ``.kicad-happy.json`` when one was loaded, otherwise null.
+    """
+    source_files: list[str] = field(metadata={
+        "description": "Paths of every file read from disk during this run, "
+                       "in the order read."})
+    source_hashes: dict[str, str] = field(metadata={
+        "description": "Map: source_file path -> SHA-256 hex. Every entry in "
+                       "source_files has a corresponding entry here."})
+    run_id: str = field(metadata={
+        "description": "Unique identifier for this analyzer run. Format: "
+                       "'YYYYMMDDTHHMMSSZ-<6 hex chars>' "
+                       "(see run_id.generate_run_id)."})
+    upstream_artifacts: dict[str, UpstreamArtifact] = field(metadata={
+        "description": "Map: stage name ('schematic', 'pcb', ...) -> "
+                       "UpstreamArtifact. Empty for raw-input analyzers."})
+    config_hash: Optional[str] = field(default=None, metadata={
+        "description": "SHA-256 of the resolved .kicad-happy.json config file, "
+                       "or null when no project config was loaded."})

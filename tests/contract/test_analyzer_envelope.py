@@ -17,6 +17,8 @@ from analyzer_envelope import (  # noqa: E402
     TitleBlock,
     Finding,
     Assessment,
+    UpstreamArtifact,
+    InputsBlock,
 )
 from jsonschema import Draft202012Validator  # noqa: E402
 
@@ -97,9 +99,46 @@ def test_assessment_has_extra_for_domain_specific_measurements():
     assert "extra" not in schema["required"]
 
 
+def test_upstream_artifact_required_fields():
+    schema = _assert_valid(UpstreamArtifact)
+    required = set(schema["required"])
+    # Every upstream artifact reference must name a file (path) and a
+    # sha256 so consumers can verify the upstream hasn't drifted since
+    # this run consumed it. schema_version and run_id are required too
+    # so cross-run provenance can be walked.
+    assert required == {"path", "sha256", "schema_version", "run_id"}
+
+
+def test_inputs_block_required_fields():
+    schema = _assert_valid(InputsBlock)
+    required = set(schema["required"])
+    assert required == {
+        "source_files",
+        "source_hashes",
+        "run_id",
+        "upstream_artifacts",
+    }
+    # config_hash is optional: not every project uses .kicad-happy.json.
+    assert "config_hash" in schema["properties"]
+    assert "config_hash" not in required
+
+
+def test_inputs_block_upstream_artifacts_is_dict_of_upstream_artifact():
+    schema = _assert_valid(InputsBlock)
+    # upstream_artifacts is dict[str, UpstreamArtifact] — keyed by stage name
+    # (e.g. "schematic", "pcb"). dict[str, T] serializes as
+    # {"type": "object", "additionalProperties": <T>}.
+    prop = schema["properties"]["upstream_artifacts"]
+    assert prop["type"] == "object"
+    assert prop["additionalProperties"]["type"] == "object"
+    ua_required = set(prop["additionalProperties"]["required"])
+    assert ua_required == {"path", "sha256", "schema_version", "run_id"}
+
+
 @pytest.mark.parametrize("cls", [
     ByConfidence, ByEvidenceSource, BySeverity, BomCoverage,
     TrustSummary, TitleBlock, Finding, Assessment,
+    UpstreamArtifact, InputsBlock,
 ])
 def test_all_primitives_round_trip_through_codec(cls):
     """Every shared primitive must produce a valid Draft 2020-12 schema."""
