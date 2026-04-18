@@ -1230,7 +1230,7 @@ def build_report(simulation_runs):
             "by_confidence": {
                 "deterministic": len(findings),
                 "heuristic": 0,
-                "datasheet-backed": 0,
+                "datasheet_backed": 0,
             },
             "by_evidence_source": {},
             "provenance_coverage_pct": 0.0,
