@@ -6,5 +6,6 @@ CLAUDE.md
 /LOG-*
 .claude/
 .codex/
+.venv/
 test-output/
 docs/
