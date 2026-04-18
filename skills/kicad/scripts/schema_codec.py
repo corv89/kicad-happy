@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+import types
 import typing
 from dataclasses import MISSING, fields, is_dataclass
 
@@ -32,13 +33,13 @@ def dataclass_to_json_schema(cls: type) -> dict:
     """Top-level entry. Produces a complete Draft 2020-12 schema document."""
     if not is_dataclass(cls):
         raise TypeError(f"{cls!r} is not a dataclass")
-    body = _object_schema_for(cls, include_meta=True)
+    body = _object_schema_for(cls)
     body["$schema"] = _SCHEMA_URI
     body["title"] = cls.__name__
     return body
 
 
-def _object_schema_for(cls: type, *, include_meta: bool = False) -> dict:
+def _object_schema_for(cls: type) -> dict:
     """Internal: emit an object schema body for a dataclass."""
     hints = typing.get_type_hints(cls)
     props: dict[str, dict] = {}
@@ -51,7 +52,12 @@ def _object_schema_for(cls: type, *, include_meta: bool = False) -> dict:
                 f"Use dataclasses.field(metadata={{'description': '...'}}) "
                 f"on every envelope field."
             )
-        field_schema = _type_to_schema(hints[f.name])
+        try:
+            field_schema = _type_to_schema(hints[f.name])
+        except TypeError as e:
+            raise TypeError(
+                f"{cls.__name__}.{f.name}: {e}"
+            ) from e
         field_schema["description"] = meta["description"]
         props[f.name] = field_schema
         if f.default is MISSING and f.default_factory is MISSING:
@@ -121,8 +127,7 @@ def _type_to_schema(tp) -> dict:
 
 def _is_union_type(origin) -> bool:
     """True for PEP 604 'X | Y' unions (Python 3.10+)."""
-    import types as _types
-    return origin is getattr(_types, "UnionType", ())
+    return origin is types.UnionType
 
 
 def emit_schema(cls: type) -> None:

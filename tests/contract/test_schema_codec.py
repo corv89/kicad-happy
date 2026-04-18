@@ -142,3 +142,49 @@ def test_missing_description_raises():
 
     with pytest.raises(ValueError, match="missing description metadata"):
         dataclass_to_json_schema(Bad)
+
+
+def test_non_dataclass_raises_typeerror():
+    class NotADataclass:
+        x: int = 0
+
+    with pytest.raises(TypeError, match="not a dataclass"):
+        dataclass_to_json_schema(NotADataclass)
+
+
+def test_unsupported_type_raises_with_class_field_context():
+    @dataclass
+    class HasTuple:
+        pair: tuple[int, int] = field(metadata={"description": "a pair"})
+
+    with pytest.raises(TypeError, match=r"HasTuple\.pair"):
+        dataclass_to_json_schema(HasTuple)
+
+
+def test_multi_arg_union():
+    @dataclass
+    class Multi:
+        value: "int | str | None" = field(metadata={"description": "multi"})
+
+    schema = dataclass_to_json_schema(Multi)
+    _schema_is_valid(schema)
+    # 3-arg union -> general-union branch returns {"anyOf": [...]}
+    # Description is attached at the _object_schema_for level.
+    assert "anyOf" in schema["properties"]["value"]
+    variants = schema["properties"]["value"]["anyOf"]
+    types_seen = {tuple(sorted(v.items())) for v in variants}
+    assert len(variants) == 3
+    assert {"type": "integer"} in variants
+    assert {"type": "string"} in variants
+    assert {"type": "null"} in variants
+
+
+def test_default_factory_field_is_optional():
+    @dataclass
+    class HasFactory:
+        items: list[int] = field(default_factory=list, metadata={"description": "items"})
+
+    schema = dataclass_to_json_schema(HasFactory)
+    _schema_is_valid(schema)
+    assert schema["required"] == []
+    assert schema["properties"]["items"]["type"] == "array"
