@@ -129,9 +129,11 @@ class Finding:
         "description": "Component references involved (e.g. ['R1', 'U3'])."})
     nets: Optional[list[str]] = field(default=None, metadata={
         "description": "Net names involved."})
-    pins: Optional[list[dict]] = field(default=None, metadata={
-        "description": "Pins involved: [{component, pin_number, pin_name}]. "
-                       "Pin schema tightens to typed PinRef in v1.5."})
+    pins: Optional[list] = field(default=None, metadata={
+        "description": "Pins involved. Items may be dicts "
+                       "({component, pin_number, pin_name}) or shorthand "
+                       "strings ('R1.2'). Pin shape tightens to typed "
+                       "PinRef in v1.5."})
     recommendation: Optional[str] = field(default=None, metadata={
         "description": "Actionable fix or next step for the designer."})
     description: Optional[str] = field(default=None, metadata={

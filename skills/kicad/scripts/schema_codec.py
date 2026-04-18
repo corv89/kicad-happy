@@ -19,6 +19,9 @@ Rules:
     - field(metadata={"const": <value>}) adds "const": <value> to the
       emitted schema fragment — useful for discriminator fields like
       analyzer_type or schema_version that must carry a fixed value.
+    - field(metadata={"json_name": "<key>"}) renames the emitted JSON
+      property to <key> (used for underscore-prefixed keys like
+      "_redirected_from" that don't fit Python identifier rules).
 """
 from __future__ import annotations
 
@@ -64,9 +67,10 @@ def _object_schema_for(cls: type) -> dict:
         field_schema["description"] = meta["description"]
         if "const" in meta:
             field_schema["const"] = meta["const"]
-        props[f.name] = field_schema
+        json_key = meta.get("json_name", f.name)
+        props[json_key] = field_schema
         if f.default is MISSING and f.default_factory is MISSING:
-            required.append(f.name)
+            required.append(json_key)
     out = {"type": "object", "properties": props, "required": required}
     return out
 

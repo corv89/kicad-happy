@@ -200,3 +200,18 @@ def test_const_metadata_emits_const_constraint():
     assert schema["properties"]["kind"]["const"] == "widget"
     assert schema["properties"]["kind"]["type"] == "string"
     assert schema["properties"]["kind"]["description"] == "k"
+
+
+def test_json_name_metadata_renames_property():
+    @dataclass
+    class R:
+        underscore_field: str = field(metadata={
+            "description": "d",
+            "json_name": "_underscore_field",
+        })
+
+    schema = dataclass_to_json_schema(R)
+    _schema_is_valid(schema)
+    assert "_underscore_field" in schema["properties"]
+    assert "_underscore_field" in schema["required"]
+    assert "underscore_field" not in schema["properties"]

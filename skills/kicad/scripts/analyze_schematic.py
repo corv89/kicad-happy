@@ -125,6 +125,8 @@ from validation_detectors import (
     validate_feedback_stability,
 )
 from finding_schema import compute_trust_summary, sort_findings
+from envelopes.schematic import SchematicEnvelope
+from schema_codec import emit_schema
 
 
 # ---------------------------------------------------------------------------
@@ -3165,7 +3167,7 @@ def parse_legacy_schematic(path: str) -> dict:
 
     result = {
         "analyzer_type": "schematic",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "trust_summary": compute_trust_summary(findings),
         "file": str(path),
@@ -8870,7 +8872,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
 
     result = {
         "analyzer_type": "schematic",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "summary": {"total_findings": len(findings), "by_severity": sev_counts},
         "trust_summary": compute_trust_summary(findings, bom=bom),
         "file": str(path),
@@ -9023,57 +9025,6 @@ def analyze_schematic(path: str, project_root: str | None = None,
     return result
 
 
-def _get_schema():
-    """Return JSON output schema description for --schema flag."""
-    return {
-        "analyzer_type": "string — always 'schematic'",
-        "schema_version": "string — semver (currently '1.3.0')",
-        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
-        "trust_summary": {
-            "total_findings": "int",
-            "trust_level": "string — 'high' | 'mixed' | 'low'",
-            "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
-            "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
-            "provenance_coverage_pct": "float — % of findings with provenance metadata",
-            "bom_coverage": "{mpn_pct: float, datasheet_pct: float} — MPN/datasheet coverage excluding power symbols",
-        },
-        "file": "string — input file path",
-        "kicad_version": "string — generator version",
-        "file_version": "string",
-        "title_block": {"title": "string", "date": "string", "rev": "string",
-                        "company": "string", "comments": "{number: string}"},
-        "statistics": {
-            "total_components": "int", "unique_parts": "int", "dnp_parts": "int",
-            "total_nets": "int", "total_wires": "int", "total_no_connects": "int",
-            "component_types": "{type_name: count}", "power_rails": "[string]",
-            "missing_mpn": "[reference_string]", "missing_footprint": "[reference_string]",
-        },
-        "findings": "[{detector, rule_id, severity, confidence, evidence_source, summary, category, components, nets, pins, recommendation, ...detection-specific fields}] — flat list of all findings",
-        "bom": "[{value, footprint, mpn, manufacturer, digikey, mouser, lcsc, element14, datasheet, description, references: [string], quantity: int, dnp: bool, type}]",
-        "components": "[{reference, value, lib_id, footprint, datasheet, description, mpn, manufacturer, digikey, mouser, lcsc, element14, x: float, y: float, angle: float, mirror_x: bool, mirror_y: bool, unit: int|null, uuid, in_bom: bool, dnp: bool, on_board: bool, type, keywords, pins: [{number, name, type}], parsed_value: {value: float, unit: string}}]",
-        "nets": "{net_name: {name, pins: [{component, pin_number, pin_name, pin_type}], point_count: int}}",
-        "subcircuits": "[{reference, path, sheet_name, sheet_file, instances: int}]",
-        "ic_pin_analysis": "[{reference, value, pin_summary: {pin_number: {name, type, connected: bool, net}}, function, notes: [string]}]",
-        "rail_voltages": "{net_name: voltage_float} — promoted from signal_analysis",
-        "net_classifications": "{net_name: {type, ...}} — promoted from signal_analysis",
-        "design_analysis": {
-            "net_classification": "{net: {type: 'power'|'ground'|'data'|...}}",
-            "power_domains": "{ic_power_rails: {ref: {voltage, rail_net}}, ...}",
-            "cross_domain_signals": "[signals crossing voltage domains]",
-            "bus_analysis": "{i2c|spi|uart|can|sdio|usb: [bus_instances]}",
-            "differential_pairs": "[{positive, negative, type: 'USB'|'LVDS'|'Ethernet'|'CAN'|'generic', shared_ics: [ref], has_esd: bool, series_resistors: [ref], termination: [{ref,value,ohms}]}]",
-            "erc_warnings": "[string]",
-            "passive_warnings": "[string]",
-        },
-        "connectivity_issues": {"single_pin_nets": "[net_name]", "multi_driver_nets": "[net_name]", "floating_nets": "[net_name]"},
-        "_optional_sections": "power_budget, power_sequencing, pdn_impedance, sleep_current_audit, usb_compliance, inrush_analysis, bom_optimization, test_coverage, assembly_complexity, sheets (multi-sheet only), missing_info, bom_lock, project_settings",
-        "hierarchy_context": "OPTIONAL — only present when analyzing a sub-sheet with hierarchy context resolved. Shape: {root_schematic, target_sheet, sheets_in_project: [string], cross_sheet_nets: {label: {external_components, is_power_rail, connected_sheets}}, project_power_rails: [string], reference_corrections_applied: int}",
-        "hierarchy_warning": "OPTIONAL string — present when sub-sheet detected without root",
-        "_redirected_from": "OPTIONAL string — original filename when sub-sheet was redirected to root",
-        "_stale_file_warning": "OPTIONAL string — present when input file is not in the project sheet tree",
-    }
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad Schematic Analyzer")
@@ -9104,8 +9055,7 @@ def main():
     args = parser.parse_args()
 
     if args.schema:
-        print(json.dumps(_get_schema(), indent=2))
-        sys.exit(0)
+        emit_schema(SchematicEnvelope)
 
     if not args.schematic:
         parser.error("the following arguments are required: schematic")
