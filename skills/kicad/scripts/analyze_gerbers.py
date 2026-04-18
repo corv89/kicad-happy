@@ -26,6 +26,11 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from envelopes.gerber import GerberEnvelope  # noqa: E402
+from schema_codec import emit_schema  # noqa: E402
+
 
 _POWER_KEYWORDS_GERBER = {"vcc", "vdd", "gnd", "agnd", "dgnd", "gndref",
                           "vss", "avdd", "dvdd", "vbat", "vbus", "vin"}
@@ -1310,7 +1315,7 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
 
     result = {
         "analyzer_type": "gerber",
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "directory": str(directory),
         "generator": generator,
         "layer_count": layer_count,
@@ -1535,45 +1540,6 @@ def _build_gerber_findings(completeness, alignment, drill_classification,
     return findings
 
 
-def _get_schema():
-    """Return JSON output schema description for --schema flag."""
-    return {
-        "analyzer_type": "string — always 'gerber'",
-        "schema_version": "string — semver (currently '1.3.0')",
-        "summary": {"total_findings": "int", "by_severity": {"error": "int", "warning": "int", "info": "int"}},
-        "findings": "[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components, nets, pins, recommendation, report_context}] — GR-001..005 (missing layers, alignment, drill, paste apertures, outline closure)",
-        "trust_summary": {
-            "total_findings": "int",
-            "trust_level": "'high' | 'mixed' | 'low'",
-            "by_confidence": "{deterministic: int, heuristic: int, datasheet-backed: int}",
-            "by_evidence_source": "{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}",
-            "provenance_coverage_pct": "float",
-        },
-        "directory": "string — scan directory path",
-        "generator": "string (KiCad|other|unknown)",
-        "layer_count": "int",
-        "board_dimensions": {"x_min": "float", "x_max": "float", "y_min": "float",
-                             "y_max": "float", "width_mm": "float", "height_mm": "float"},
-        "statistics": {"gerber_files": "int", "drill_files": "int", "total_holes": "int",
-                       "total_flashes": "int", "total_draws": "int"},
-        "completeness": {"expected_layers": "[string]", "found_layers": "[string]",
-                         "missing": "[string]", "extra": "[string]",
-                         "complete": "bool",
-                         "has_pth_drill": "bool", "has_npth_drill": "bool",
-                         "source": "string — 'gbrjob' | 'filename_heuristic'"},
-        "alignment": "{layer_name: {coord_range: {x_min, x_max, y_min, y_max: float}}}",
-        "drill_classification": {"total_unique": "int", "via_apertures": "int",
-                                 "component_holes": "int", "front_side": "int",
-                                 "back_side": "int", "both_sides": "int",
-                                 "smd_apertures": "int"},
-        "pad_summary": {"smd_apertures": "int", "via_apertures": "int",
-                        "component_holes": "int", "tht": "int"},
-        "gerbers": "[{file, filename, layer_type, format: {zero_omit, notation, x_integer, x_decimal, y_integer, y_decimal}, units: mm|inch, flash_count: int, draw_count: int, region_count: int, apertures: {d_code: {type, params, function}}, x2_attributes: {FileFunction, ...}}]",
-        "drills": "[{file, filename, units: mm|inch|null, type: PTH|NPTH|unknown, hole_count: int, coordinate_range, tools: {tool_id: {diameter_mm: float, hole_count: int}}, x2_attributes}]",
-        "_optional_sections": "component_analysis, net_analysis, trace_widths, job_file, zip_archives, connectivity (--full)",
-    }
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KiCad Gerber & Drill File Analyzer")
@@ -1597,8 +1563,7 @@ def main():
     args = parser.parse_args()
 
     if args.schema:
-        print(json.dumps(_get_schema(), indent=2))
-        sys.exit(0)
+        emit_schema(GerberEnvelope)
 
     if not args.directory:
         parser.error("the following arguments are required: directory")
