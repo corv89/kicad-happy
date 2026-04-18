@@ -950,6 +950,7 @@ def main():
         'elapsed_s': round(elapsed, 3),
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,
+        'assessments': [],
         'trust_summary': compute_trust_summary(findings),
     }
 

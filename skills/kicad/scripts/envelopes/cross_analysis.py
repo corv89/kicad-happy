@@ -39,7 +39,7 @@ _PARENT = os.path.dirname(_HERE)
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from analyzer_envelope import TrustSummary, Finding, BySeverity  # noqa: E402
+from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
 
 
 @dataclass
@@ -76,14 +76,9 @@ class CrossAnalysisEnvelope:
     summary: CrossAnalysisSummary = field(metadata={
         "description": "Roll-up summary (total + by_severity)."})
     findings: list[Finding] = field(metadata={
-        "description": "All cross-analysis findings (flat, rich-finding "
-                       "format). Rule IDs: CC-001 (connector current), "
-                       "EG-001 (ESD coverage gap), DA-001 (decoupling "
-                       "adequacy), XV-001..003 (schematic/PCB cross-"
-                       "validation), NR-001 (critical net routing), "
-                       "RP-002 (return path), TW-001 (trace width), "
-                       "PS-002 (plane split), VS-002 (via stitching "
-                       "density), DP-005 (differential pair quality)."})
+        "description": "All cross-domain findings."})
+    assessments: list[Assessment] = field(metadata={
+        "description": "Informational assessments (empty for cross-analysis at v1.4)."})
     trust_summary: TrustSummary = field(metadata={
         "description": "Trust posture rollup (confidence + evidence source)."})
 

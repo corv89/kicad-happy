@@ -44,7 +44,7 @@ _KICAD_SCRIPTS = os.path.abspath(os.path.join(_HERE, "..", "..", "kicad", "scrip
 if _KICAD_SCRIPTS not in sys.path:
     sys.path.insert(0, _KICAD_SCRIPTS)
 
-from analyzer_envelope import TrustSummary, Finding, BySeverity  # noqa: E402
+from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
 
 
 @dataclass
@@ -242,7 +242,9 @@ class EMCEnvelope:
     summary: EMCSummary = field(metadata={
         "description": "EMC roll-up summary (counts + risk score)."})
     findings: list[Finding] = field(metadata={
-        "description": "All EMC findings. 18 categories, 44+ rule IDs."})
+        "description": "All EMC findings."})
+    assessments: list[Assessment] = field(metadata={
+        "description": "Informational assessments (empty for EMC at v1.4)."})
     trust_summary: TrustSummary = field(metadata={
         "description": "Trust posture rollup (confidence + evidence source)."})
     elapsed_s: float = field(metadata={

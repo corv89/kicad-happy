@@ -3181,6 +3181,7 @@ def parse_legacy_schematic(path: str) -> dict:
         "nets": nets,
         "subcircuits": subcircuits,
         "findings": findings,
+        "assessments": [],
         "design_analysis": design_analysis,
         "labels": all_labels,
         "no_connects": all_no_connects,
@@ -8881,6 +8882,7 @@ def analyze_schematic(path: str, project_root: str | None = None,
         "title_block": root_title_block,
         "statistics": stats,
         "findings": findings,
+        "assessments": [],
         "bom": bom,
         "components": [
             {k: v for k, v in c.items() if k != "pins"}

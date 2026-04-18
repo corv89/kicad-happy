@@ -41,7 +41,7 @@ _PARENT = os.path.dirname(_HERE)
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from analyzer_envelope import TrustSummary, Finding, BySeverity  # noqa: E402
+from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
 
 
 @dataclass
@@ -275,10 +275,9 @@ class GerberEnvelope:
     pad_summary: PadSummary = field(metadata={
         "description": "Aperture-function rollup (SMD / via / TH / heatsink)."})
     findings: list[Finding] = field(metadata={
-        "description": "All gerber findings (flat, rich-finding format): "
-                       "GR-001 (missing layers), GR-002 (alignment), "
-                       "GR-003 (drill), GR-004 (paste apertures), "
-                       "GR-005 (open board outline)."})
+        "description": "All gerber findings (flat list)."})
+    assessments: list[Assessment] = field(metadata={
+        "description": "Informational assessments (empty for gerber at v1.4)."})
     board_dimensions: BoardDimensions = field(metadata={
         "description": "Physical board dimensions (from gbrjob or edge cuts)."})
     generator: Optional[str] = field(default=None, metadata={

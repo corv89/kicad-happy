@@ -1008,35 +1008,11 @@ def main():
             **board,
         },
         "findings": findings,
-        "thermal_assessments": assessments,
+        "assessments": assessments,
         "elapsed_s": round(elapsed, 3),
     }
     if missing_info:
         result["missing_info"] = missing_info
-
-    # Merge thermal_assessments into findings (TH-DET entries)
-    result["findings"] = result.get("findings", []) + result.pop("thermal_assessments", [])
-
-    # Recompute summary from the merged findings list — the earlier
-    # `counts` block only saw rule findings, not the TH-DET assessments
-    # we just appended. Keep the envelope consistent with findings[].
-    _merged = result.get("findings", [])
-    _merged_counts = {"error": 0, "warning": 0, "info": 0}
-    _merged_suppressed = 0
-    for _f in _merged:
-        if not isinstance(_f, dict):
-            continue
-        _s = str(_f.get("severity", "info")).lower()
-        if _s in _merged_counts:
-            _merged_counts[_s] += 1
-        else:
-            _merged_counts["info"] += 1
-        if _f.get("suppressed"):
-            _merged_suppressed += 1
-    result["summary"]["total_findings"] = len(_merged)
-    result["summary"]["by_severity"] = _merged_counts
-    result["summary"]["active"] = len(_merged) - _merged_suppressed
-    result["summary"]["suppressed"] = _merged_suppressed
 
     from finding_schema import compute_trust_summary
     result["trust_summary"] = compute_trust_summary(result["findings"])

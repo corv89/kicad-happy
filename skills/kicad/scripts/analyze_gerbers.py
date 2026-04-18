@@ -1354,6 +1354,7 @@ def analyze_gerbers(directory: str, full: bool = False) -> dict:
         completeness, alignment, drill_classification,
         gerber_summary, drill_summary, result["statistics"])
     result["findings"] = findings
+    result["assessments"] = []
 
     sev_counts = {}
     for f in findings:

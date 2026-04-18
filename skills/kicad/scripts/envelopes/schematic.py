@@ -30,7 +30,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 from analyzer_envelope import (  # noqa: E402
-    TrustSummary, Finding, BySeverity, TitleBlock,
+    TrustSummary, Finding, Assessment, BySeverity, TitleBlock,
 )
 
 
@@ -196,6 +196,9 @@ class SchematicEnvelope:
         "description": "Component, net, and coverage counts."})
     findings: list[Finding] = field(metadata={
         "description": "All findings (flat, rich-finding format)."})
+    assessments: list[Assessment] = field(metadata={
+        "description": "Informational assessments (empty for schematic at v1.4; "
+                       "reserved for future measurement-style records)."})
     bom: list[BomEntry] = field(metadata={
         "description": "Deduplicated BOM rows."})
     components: list[dict] = field(metadata={

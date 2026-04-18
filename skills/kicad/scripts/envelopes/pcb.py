@@ -40,7 +40,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 from analyzer_envelope import (  # noqa: E402
-    TrustSummary, Finding, BySeverity,
+    TrustSummary, Finding, Assessment, BySeverity,
 )
 
 
@@ -220,9 +220,9 @@ class PCBEnvelope:
     file_version: str = field(metadata={
         "description": "KiCad file format version string (e.g. '20241228')."})
     findings: list[Finding] = field(metadata={
-        "description": "All PCB findings (flat, rich-finding format): "
-                       "FD-001/TE-001/OR-001/SK-001/VP-001/BV-001/KO-001 "
-                       "plus CC-DET and assessments."})
+        "description": "All PCB findings (flat list)."})
+    assessments: list[Assessment] = field(metadata={
+        "description": "Informational assessments (empty for PCB at v1.4)."})
     statistics: PCBStatistics = field(metadata={
         "description": "Board/component/net counts and routing rollup."})
     setup: PCBSetup = field(metadata={

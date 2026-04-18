@@ -6391,6 +6391,7 @@ def analyze_pcb(path: str, *, proximity: bool = False,
     sort_findings(findings)
 
     result['findings'] = findings
+    result['assessments'] = []
     result['trust_summary'] = compute_trust_summary(findings)
 
     # Build summary

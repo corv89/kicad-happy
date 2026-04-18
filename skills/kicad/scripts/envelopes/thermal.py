@@ -13,7 +13,7 @@ _PARENT = os.path.dirname(_HERE)
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from analyzer_envelope import TrustSummary, Finding, BySeverity  # noqa: E402
+from analyzer_envelope import TrustSummary, Finding, Assessment, BySeverity  # noqa: E402
 
 
 @dataclass
@@ -75,7 +75,10 @@ class ThermalEnvelope:
     summary: ThermalSummary = field(metadata={
         "description": "Roll-up summary of thermal analysis."})
     findings: list[Finding] = field(metadata={
-        "description": "All thermal findings: TS-001..005, TP-001..002, TH-DET assessments."})
+        "description": "All thermal findings: TS-001..005, TP-001..002."})
+    assessments: list[Assessment] = field(metadata={
+        "description": "TH-DET entries — per-component junction-temperature "
+                       "estimates. Informational (not findings)."})
     trust_summary: TrustSummary = field(metadata={
         "description": "Trust posture rollup."})
     elapsed_s: float = field(metadata={

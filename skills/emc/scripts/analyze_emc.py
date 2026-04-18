@@ -481,6 +481,7 @@ def main():
         },
         'target_standard': args.standard,
         'findings': findings,
+        'assessments': [],
         'per_net_scores': per_net,
         'test_plan': test_plan,
         'regulatory_coverage': regulatory,
