@@ -249,7 +249,10 @@ class SchematicEnvelope:
     placement_analysis: dict = field(metadata={
         "description": "Placement stats: bounding_box, clusters, grid_size."})
     property_issues: dict = field(metadata={
-        "description": "Property validation issues bag."})
+        "description": "Property validation issues: missing/mismatched "
+                       "symbol properties (MPN, footprint, datasheet, value), "
+                       "blank description fields, non-ASCII character "
+                       "warnings. Keyed by issue category."})
     sourcing_audit: dict = field(metadata={
         "description": "Sourcing audit: missing_mpn/digikey/lcsc lists, "
                        "mpn_coverage, mpn_percent, total_bom_components."})
@@ -334,6 +337,9 @@ class SchematicEnvelope:
         "description": "Protocol compliance checks (I2C/SPI/UART/etc.)."})
 
     # --- Warnings / notices ---
+    # TODO(v1.5): tighten these bare `list` fields to list[TypedItem] once
+    # runtime shapes are finalized. Holding at `list` for v1.4 since items
+    # are heterogeneous dicts with inconsistent keys across detector paths.
     text_annotations: Optional[list] = field(default=None, metadata={
         "description": "Text annotations extracted from the schematic."})
     alternate_pin_summary: Optional[dict] = field(default=None, metadata={

@@ -129,6 +129,7 @@ class Finding:
         "description": "Component references involved (e.g. ['R1', 'U3'])."})
     nets: Optional[list[str]] = field(default=None, metadata={
         "description": "Net names involved."})
+    # TODO(v1.5): tighten to list[PinRef] once detectors emit consistent shape.
     pins: Optional[list] = field(default=None, metadata={
         "description": "Pins involved. Items may be dicts "
                        "({component, pin_number, pin_name}) or shorthand "
