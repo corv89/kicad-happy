@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from finding_schema import make_finding, compute_trust_summary
 from kicad_utils import build_net_id_map as _build_net_id_map
+from envelopes.cross_analysis import CrossAnalysisEnvelope
+from schema_codec import emit_schema
 
 
 # ---------------------------------------------------------------------------
@@ -912,22 +914,7 @@ def main():
     args = parser.parse_args()
 
     if args.schema:
-        schema = {
-            'analyzer_type': "string — always 'cross_analysis'",
-            'schema_version': "string — semver (currently '1.3.0')",
-            'elapsed_s': 'float — analysis wall-clock time',
-            'summary': {'total_findings': 'int', 'by_severity': {'error': 'int', 'warning': 'int', 'info': 'int'}},
-            'findings': '[{detector, rule_id, category, severity, confidence, evidence_source, summary, description, components, nets, pins, recommendation, fix_params, report_context}]',
-            'trust_summary': {
-                'total_findings': 'int',
-                'trust_level': "'high' | 'mixed' | 'low'",
-                'by_confidence': '{deterministic: int, heuristic: int, datasheet-backed: int}',
-                'by_evidence_source': '{datasheet|topology|heuristic_rule|symbol_footprint|bom|geometry|api_lookup: int}',
-                'provenance_coverage_pct': 'float',
-            },
-        }
-        print(json.dumps(schema, indent=2))
-        sys.exit(0)
+        emit_schema(CrossAnalysisEnvelope)
 
     if not args.schematic:
         parser.error('--schematic is required')
@@ -959,7 +946,7 @@ def main():
 
     result = {
         'analyzer_type': 'cross_analysis',
-        'schema_version': '1.3.0',
+        'schema_version': '1.4.0',
         'elapsed_s': round(elapsed, 3),
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,
