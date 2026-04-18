@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 CLAUDE.md
 /TODO-*
+/LOG-*
 .claude/
 .codex/
 test-output/
