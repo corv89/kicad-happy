@@ -40,6 +40,7 @@ Output of `python3 skills/kicad/scripts/analyze_schematic.py <file>.kicad_sch`.
 | `title_block` | `TitleBlock` | yes | KiCad title block (title/date/rev/company/comments). |
 | `statistics` | `Statistics` | yes | Component, net, and coverage counts. |
 | `findings` | `list[Finding]` | yes | All findings (flat, rich-finding format). |
+| `assessments` | `list[Assessment]` | yes | Informational assessments (empty for schematic at v1.4; reserved for future measurement-style records). |
 | `bom` | `list[BomEntry]` | yes | Deduplicated BOM rows. |
 | `components` | `list[dict]` | yes | Every non-power component as a dict. Shape is effectively open: reference/value/lib_id/footprint/datasheet/description/mpn/manufacturer/distributor SKUs/geometry/uuid/type/parsed_value plus internal bookkeeping (_sheet, pin_nets, pin_uuids). Tightens to a typed Component in v1.5. |
 | `nets` | `dict[str, NetEntry]` | yes | Net connectivity map keyed by net name. |
@@ -109,7 +110,8 @@ Output of `python3 skills/kicad/scripts/analyze_pcb.py <file>.kicad_pcb`.
 | `file` | `string` | yes | Resolved absolute path of the analyzed .kicad_pcb. |
 | `kicad_version` | `string` | yes | KiCad generator version string, e.g. '9.0'. |
 | `file_version` | `string` | yes | KiCad file format version string (e.g. '20241228'). |
-| `findings` | `list[Finding]` | yes | All PCB findings (flat, rich-finding format): FD-001/TE-001/OR-001/SK-001/VP-001/BV-001/KO-001 plus CC-DET and assessments. |
+| `findings` | `list[Finding]` | yes | All PCB findings (flat list). |
+| `assessments` | `list[Assessment]` | yes | Informational assessments (empty for PCB at v1.4). |
 | `statistics` | `PCBStatistics` | yes | Board/component/net counts and routing rollup. |
 | `setup` | `PCBSetup` | yes | Board setup block (thickness, soldermask, etc.). |
 | `board_outline` | `BoardOutline` | yes | Edge.Cuts outline geometry + bounding box. |
@@ -166,7 +168,8 @@ Output of `python3 skills/kicad/scripts/analyze_gerbers.py <gerber_dir>/`.
 | `alignment` | `Alignment` | yes | Cross-layer alignment report. |
 | `drill_classification` | `DrillClassification` | yes | Vias / component / mounting hole breakdown. |
 | `pad_summary` | `PadSummary` | yes | Aperture-function rollup (SMD / via / TH / heatsink). |
-| `findings` | `list[Finding]` | yes | All gerber findings (flat, rich-finding format): GR-001 (missing layers), GR-002 (alignment), GR-003 (drill), GR-004 (paste apertures), GR-005 (open board outline). |
+| `findings` | `list[Finding]` | yes | All gerber findings (flat list). |
+| `assessments` | `list[Assessment]` | yes | Informational assessments (empty for gerber at v1.4). |
 | `board_dimensions` | `BoardDimensions` | yes | Physical board dimensions (from gbrjob or edge cuts). |
 | `generator` | `string \| null` | no | Generator string (e.g. 'Pcbnew 10.0.1-...'); null if no GenerationSoftware tag and no gbrjob info. |
 | `gerbers` | `list[dict]` | no | Per-gerber-file summary. Each item: {filename, layer_type, units, aperture_count, draw_count, flash_count, region_count, x2_attributes, x2_component_count, x2_net_count, x2_pin_count, aperture_analysis}. |
@@ -189,7 +192,8 @@ Output of `python3 skills/kicad/scripts/analyze_thermal.py --schematic ... --pcb
 | `analyzer_type` | `string` | yes | Always 'thermal'. |
 | `schema_version` | `string` | yes | Schema semver. Value: '1.4.0' at Track 1.1 landing. |
 | `summary` | `ThermalSummary` | yes | Roll-up summary of thermal analysis. |
-| `findings` | `list[Finding]` | yes | All thermal findings: TS-001..005, TP-001..002, TH-DET assessments. |
+| `findings` | `list[Finding]` | yes | All thermal findings: TS-001..005, TP-001..002. |
+| `assessments` | `list[Assessment]` | yes | TH-DET entries — per-component junction-temperature estimates. Informational (not findings). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup. |
 | `elapsed_s` | `float` | yes | Wall-clock analysis time in seconds. |
 | `missing_info` | `ThermalMissingInfo \| null` | no | Emitted when any component used default thermal params. |
@@ -204,7 +208,8 @@ Output of `python3 skills/emc/scripts/analyze_emc.py --schematic ... --pcb ...`.
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `target_standard` | `string` | yes | Target EMC standard key (e.g. 'fcc-class-b', 'cispr-class-b', 'cispr-25'). |
 | `summary` | `EMCSummary` | yes | EMC roll-up summary (counts + risk score). |
-| `findings` | `list[Finding]` | yes | All EMC findings. 18 categories, 44+ rule IDs. |
+| `findings` | `list[Finding]` | yes | All EMC findings. |
+| `assessments` | `list[Assessment]` | yes | Informational assessments (empty for EMC at v1.4). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source). |
 | `elapsed_s` | `float` | yes | Analysis wall-clock time in seconds. |
 | `per_net_scores` | `list[PerNetScore]` | yes | Per-net EMC risk score rollup, sorted worst-first. |
@@ -225,7 +230,8 @@ Output of `python3 skills/kicad/scripts/cross_analysis.py --schematic ... --pcb 
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `elapsed_s` | `float` | yes | Analysis wall-clock time in seconds. |
 | `summary` | `CrossAnalysisSummary` | yes | Roll-up summary (total + by_severity). |
-| `findings` | `list[Finding]` | yes | All cross-analysis findings (flat, rich-finding format). Rule IDs: CC-001 (connector current), EG-001 (ESD coverage gap), DA-001 (decoupling adequacy), XV-001..003 (schematic/PCB cross-validation), NR-001 (critical net routing), RP-002 (return path), TW-001 (trace width), PS-002 (plane split), VS-002 (via stitching density), DP-005 (differential pair quality). |
+| `findings` | `list[Finding]` | yes | All cross-domain findings. |
+| `assessments` | `list[Assessment]` | yes | Informational assessments (empty for cross-analysis at v1.4). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source). |
 | `audience_summary` | `dict \| null` | no | Designer/reviewer/manager summary views. Added by apply_output_filters whenever findings[] is non-empty. |
 | `stage_filter` | `dict \| null` | no | Stage-filtered findings rollup. Present only when --stage is passed. |

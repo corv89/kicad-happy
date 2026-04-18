@@ -6,11 +6,34 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ---
 
-## v1.4-dev (in progress) — Track 1.1: Typed Analyzer Envelope SOT
+## v1.4-dev (in progress)
+
+### Track 1.2 — Findings / Assessments separation
+
+**Theme: Distinguish informational measurements from actionable warnings.**
+
+New shared primitive `Assessment` (Finding-shaped minus `severity` and `recommendation`) added to `analyzer_envelope.py`. Every envelope gains a top-level `assessments: list[Assessment]` field alongside `findings: list[Finding]`.
+
+Thermal analyzer TH-DET entries (per-component junction-temperature estimates) migrated from `findings[]` to `assessments[]`. Other analyzers emit `assessments: []` — reserved for future measurement-style records.
+
+#### Breaking changes
+- `thermal.findings[]` no longer contains TH-DET entries. `thermal.summary.total_findings` drops correspondingly (counts rule findings only).
+- `thermal.trust_summary` rolls up findings only — assessments are not trust-summarized (they are factual measurements, not judgments).
+- Consumers that want the union of findings + assessments must read both lists.
+
+#### Consumer updates
+- `summarize_findings.py` reports an Assessments section alongside findings (rule_id + count, no severity column).
+- `diff_analysis.py` diffs assessments (added / removed / unchanged). Thermal analyzer newly included in the diff dispatch.
+- `analyze_thermal.py` result dict: renamed `thermal_assessments` → `assessments`; removed the merge-and-recompute block that previously folded TH-DET into findings.
+
+#### Unblocks
+- Track 3 (Layer 2 LLM review) operates on `findings[]` only — the separation gives it a stable interface free of informational clutter.
+
+### Track 1.1 — Typed Analyzer Envelope SOT
 
 **Theme: Single Source of Truth for Analyzer Output** — Python dataclasses replace hand-maintained `_get_schema()` dicts across 6 analyzers. One typed definition now drives `--schema` emission (as real JSON Schema Draft 2020-12), generated reference docs, and contract-test validation of live runtime output.
 
-### Typed envelope source of truth
+#### Typed envelope source of truth
 
 Every analyzer's output shape is now declared as a Python dataclass with field metadata for descriptions and JSON name mapping. The same definition:
 
@@ -19,7 +42,7 @@ Every analyzer's output shape is now declared as a Python dataclass with field m
 - Generates `skills/kicad/references/output-schema.md` via `gen_output_schema_md.py`
 - Runs in CI via the new `schema-contract` job
 
-### Breaking changes
+#### Breaking changes
 
 - **`--schema` output shape** — all six analyzers (schematic, PCB, gerber, thermal, EMC, cross_analysis) now emit JSON Schema Draft 2020-12. Prior format was a descriptive-string dict keyed by field name. Any external consumer parsing `--schema` output as the old dict shape will break.
 - **`schema_version` bumped 1.3.0 → 1.4.0** on every analyzer.
@@ -28,11 +51,11 @@ Every analyzer's output shape is now declared as a Python dataclass with field m
 - **`ThermalSummary`** now declares 6 previously-undeclared board-level fields: `total_board_dissipation_w`, `hottest_component`, and four related board-thermal rollup fields.
 - **Schematic envelope optional fields** — `_redirected_from` and `_stale_file_warning` moved to declared optional fields (via `field(metadata={"json_name": ...})`) rather than implicit runtime additions.
 
-### Closed issues
+#### Closed issues
 
 - **KH-323** — `pin_coverage_warnings` now a declared OPTIONAL field on `SchematicEnvelope`. Harness can remove the `_KNOWN_UNDOCUMENTED['schematic']` allow-list entry.
 
-### Added modules
+#### Added modules
 
 - `skills/kicad/scripts/schema_codec.py` — dataclass → JSON Schema Draft 2020-12 converter. Stdlib-only. `dataclass_to_json_schema(cls)` + `emit_schema(cls)` CLI helper. Honors `field(metadata={"description": ..., "const": ..., "json_name": ...})`.
 - `skills/kicad/scripts/analyzer_envelope.py` — shared envelope primitives (TrustSummary, Finding, BySeverity, TitleBlock, BomCoverage, ByConfidence, ByEvidenceSource).
@@ -40,15 +63,15 @@ Every analyzer's output shape is now declared as a Python dataclass with field m
 - `skills/emc/scripts/emc_envelope.py` — EMC envelope dataclass.
 - `skills/kicad/scripts/gen_output_schema_md.py` — regenerates `skills/kicad/references/output-schema.md` from dataclass introspection.
 
-### Test infrastructure
+#### Test infrastructure
 
 - `tests/contract/` — pytest contract tests validating `--schema` output (Draft 2020-12 conformance) and live analyzer output against its declared schema. Uses `tests/fixtures/simple-project/`.
 - `requirements-dev.txt` — dev deps (`pytest`, `jsonschema`).
 - `schema-contract` CI job runs `pytest tests/contract/` on every PR.
 
-### Forward pointer
+#### Forward pointer
 
-Track 1.2 (findings/assessments separation) and Track 1.3 (structured provenance block) build on this typed SOT foundation.
+Track 1.3 (structured provenance block) builds on this typed SOT foundation.
 
 ---
 
