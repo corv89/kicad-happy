@@ -39,7 +39,9 @@ def test_thermal_output_matches_schema(tmp_path):
 
 
 def test_thermal_schema_version_is_1_4():
-    # Just check the --schema declares 1.4.0 somewhere recognizable.
+    # Now that schema_codec supports const metadata, check the discriminator
+    # fields strictly — analyzer_type must be const "thermal" and
+    # schema_version must be const "1.4.0".
     schema = json.loads(_run([str(THERMAL), "--schema"]))
-    sv = schema["properties"]["schema_version"]
-    assert sv.get("const") == "1.4.0" or "1.4.0" in sv.get("description", "")
+    assert schema["properties"]["schema_version"]["const"] == "1.4.0"
+    assert schema["properties"]["analyzer_type"]["const"] == "thermal"

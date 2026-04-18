@@ -379,7 +379,7 @@ def _compute_trust_posture(sch, pcb, thermal_data, emc_data):
         'by_confidence': {
             'deterministic': det,
             'heuristic': heu,
-            'datasheet-backed': ds_backed,
+            'datasheet_backed': ds_backed,
         },
         'provenance_coverage_pct': avg_prov,
         'per_analyzer': {name: ts.get('trust_level', '?') for name, ts in sources},

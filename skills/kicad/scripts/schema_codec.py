@@ -16,6 +16,9 @@ Rules:
     - dict[str, T] -> {"type": "object", "additionalProperties": <T>}
     - bare dict / dict[str, Any] -> {"type": "object"} (no constraints)
     - bare list -> {"type": "array"} (no item constraints)
+    - field(metadata={"const": <value>}) adds "const": <value> to the
+      emitted schema fragment — useful for discriminator fields like
+      analyzer_type or schema_version that must carry a fixed value.
 """
 from __future__ import annotations
 
@@ -59,6 +62,8 @@ def _object_schema_for(cls: type) -> dict:
                 f"{cls.__name__}.{f.name}: {e}"
             ) from e
         field_schema["description"] = meta["description"]
+        if "const" in meta:
+            field_schema["const"] = meta["const"]
         props[f.name] = field_schema
         if f.default is MISSING and f.default_factory is MISSING:
             required.append(f.name)

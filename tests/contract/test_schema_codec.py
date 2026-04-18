@@ -188,3 +188,15 @@ def test_default_factory_field_is_optional():
     _schema_is_valid(schema)
     assert schema["required"] == []
     assert schema["properties"]["items"]["type"] == "array"
+
+
+def test_const_metadata_emits_const_constraint():
+    @dataclass
+    class Discriminated:
+        kind: str = field(metadata={"description": "k", "const": "widget"})
+
+    schema = dataclass_to_json_schema(Discriminated)
+    _schema_is_valid(schema)
+    assert schema["properties"]["kind"]["const"] == "widget"
+    assert schema["properties"]["kind"]["type"] == "string"
+    assert schema["properties"]["kind"]["description"] == "k"
