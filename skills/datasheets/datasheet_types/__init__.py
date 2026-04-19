@@ -51,4 +51,21 @@ __all__ = [
     "Regulator",
     "StabilityConditions",
     "Sequencing",
+    "lookup",
 ]
+
+
+# Lazy re-export of lookup() from the sibling scripts/ module. Kept lazy
+# so `import datasheet_types` does not require skills/datasheets/scripts/
+# on sys.path. Consumers that access datasheet_types.lookup get it on
+# first touch.
+def __getattr__(name: str):
+    if name == "lookup":
+        import sys
+        from pathlib import Path
+        scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from datasheet_lookup import lookup  # noqa: E402
+        return lookup
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

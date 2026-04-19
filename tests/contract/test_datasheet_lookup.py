@@ -300,3 +300,21 @@ def test_lookup_full_happy_path_fresh_cache_with_matching_pdf(tmp_path: Path) ->
     assert facts.source.mpn == "LM2596-ADJ"
     assert facts.base.pinout.find(name="EN").numbers == ["5"]
     assert facts.regulator.topology == "buck"
+
+
+# ---------------------------------------------------------------------------
+# Public API surface — datasheet_types.lookup re-export
+# ---------------------------------------------------------------------------
+
+def test_lookup_is_reexported_from_datasheet_types() -> None:
+    """Spec §11 consumer pattern: `from datasheet_types import lookup`
+    should resolve to the same callable as datasheet_lookup.lookup."""
+    import datasheet_types
+
+    assert hasattr(datasheet_types, "lookup"), (
+        "datasheet_types must re-export lookup for the spec §11 consumer pattern"
+    )
+    from datasheet_lookup import lookup as lookup_direct
+    assert datasheet_types.lookup is lookup_direct
+    # __all__ should include it too for `from datasheet_types import *`.
+    assert "lookup" in datasheet_types.__all__
