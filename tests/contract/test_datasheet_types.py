@@ -483,3 +483,86 @@ def test_base_block_absolute_max_required() -> None:
 
     with pytest.raises(KeyError):
         from_dict(BaseBlock, bad)
+
+
+# ---------------------------------------------------------------------------
+# Regulator + StabilityConditions + Sequencing
+# ---------------------------------------------------------------------------
+
+def test_stability_conditions_roundtrip() -> None:
+    from datasheet_types.regulator import StabilityConditions
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "cap_types_allowed": ["tantalum", "electrolytic", "polymer"],
+        "esr_range": [
+            {"min": 0.05, "typ": None, "max": 0.5, "unit": "Ω",
+             "condition": None, "notes": None,
+             "evidence": {"page": 15, "section": "Output Capacitor Selection",
+                          "confidence": "medium", "method": "prose"}},
+        ],
+        "notes": "Pure ceramic caps may cause instability.",
+        "evidence": {"page": 15, "section": "Output Capacitor Selection",
+                     "confidence": "medium", "method": "prose"},
+    }
+    obj = from_dict(StabilityConditions, raw)
+    assert obj.cap_types_allowed == ["tantalum", "electrolytic", "polymer"]
+    assert obj.esr_range[0].min == 0.05
+    assert obj.esr_range[0].max == 0.5
+    assert obj.evidence.page == 15
+    assert to_dict(obj) == raw
+
+
+def test_sequencing_roundtrip() -> None:
+    from datasheet_types.regulator import Sequencing
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "must_rise_after": ["VDD_IO"],
+        "must_rise_before": [],
+        "max_inter_rail_delay": None,
+        "notes": None,
+        "evidence": None,
+    }
+    obj = from_dict(Sequencing, raw)
+    assert obj.must_rise_after == ["VDD_IO"]
+    assert obj.must_rise_before == []
+    assert obj.max_inter_rail_delay is None
+    assert to_dict(obj) == raw
+
+
+def test_regulator_from_fixture() -> None:
+    """Full round-trip of the LM2596-ADJ fixture's regulator section."""
+    from datasheet_types.regulator import Regulator
+    from datasheet_types.codec import from_dict, to_dict
+
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    reg_raw = fixture["regulator"]
+    obj = from_dict(Regulator, reg_raw)
+
+    assert obj.topology == "buck"
+    assert obj.feedback_pin == "4"
+    assert obj.enable_pin == "5"
+    assert obj.compensation_pin is None
+    assert obj.power_good_pin is None
+    # Canonical SI checked.
+    assert obj.switching_freq[0].typ == 150000  # Hz, not 150 kHz
+    assert obj.cin_min[0].min == 4.7e-4        # F, not 470 µF
+    assert obj.inductor_range[0].min == 3.3e-5  # H, not 33 µH
+    # Nested block access.
+    assert obj.stability_conditions.cap_types_allowed == ["tantalum", "electrolytic", "polymer"]
+    assert obj.stability_conditions.esr_range[0].max == 0.5
+    # Sequencing absent on this part.
+    assert obj.sequencing is None
+    # Round-trip.
+    emitted = to_dict(obj)
+    assert emitted == reg_raw
+
+
+def test_regulator_topology_required() -> None:
+    """topology is the only required regulator field."""
+    from datasheet_types.regulator import Regulator
+    from datasheet_types.codec import from_dict
+
+    with pytest.raises(KeyError):
+        from_dict(Regulator, {})

@@ -143,6 +143,7 @@
     "switching_freq": [
       {"min": null, "typ": 150000, "max": null, "unit": "Hz", "condition": "fixed, internal oscillator", "notes": "150 kHz", "evidence": {"page": 5, "section": "Electrical Characteristics", "confidence": "high", "method": "table"}}
     ],
+    "dropout": null,
     "psrr": null,
     "line_regulation": null,
     "load_regulation": null,
