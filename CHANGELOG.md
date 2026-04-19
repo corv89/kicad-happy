@@ -8,6 +8,38 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 2.3 — Consumer API lookup() Facade (2026-04-19)
+
+**Theme: Read-only MPN → DatasheetFacts entry point per spec §11.**
+
+New module `skills/datasheets/scripts/datasheet_lookup.py`:
+
+- `lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]` — the consumer API entry point. Resolves `cache_dir / <sanitize_mpn(mpn)>.json`, parses the JSON via Track 2.2's codec into a `DatasheetFacts`, attaches a `CacheContext` with staleness metadata, and returns the instance. Returns `None` on cache-dir missing / cache-file missing / malformed JSON / wrong shape. Pure read — never writes, extracts, or triggers LLM calls (spec §11 Rules 1 & 2).
+- `sanitize_mpn(mpn)` — MPN → filename component. Allows `[A-Za-z0-9_-]`, replaces everything else with `_`. Simpler than v1.3's sanitizer (no MD5 suffix), matches Track 2.1 fixture naming (`LM2596-ADJ.json`).
+- `cache_path_for(mpn, cache_dir)` — composes `cache_dir / f"{sanitize_mpn(mpn)}.json"`.
+- `CacheContext` — operational metadata attached to returned `DatasheetFacts`: `cache_path`, `pdf_path`, `is_stale`, `stale_reason` (`STALE_PDF_HASH_MISMATCH` / `STALE_PDF_MISSING` module constants or `None`).
+
+Staleness: `lookup()` hashes the PDF at `cache_dir.parent / source.local_path` (with a fallback to `cache_dir.parent.parent / source.local_path` for v1.3-style `"datasheets/..."` paths) and compares to `source.sha256`. Three outcomes: fresh (hash match), stale with `pdf_hash_mismatch`, stale with `pdf_missing` (file gone or `local_path is None`).
+
+`DatasheetFacts` gains three read-only `@property` methods:
+- `quality: Optional[int]` — passthrough to `extraction.quality_score`.
+- `stale: bool` — reads `_cache_context.is_stale`, defaults `False` when constructed outside `lookup()`.
+- `cache_path: Optional[Path]` — reads `_cache_context.cache_path`, defaults `None`.
+
+Properties are NOT dataclass fields — they don't participate in `from_dict` / `to_dict` / `__eq__`. Track 2.2's round-trip tests continue to pass unchanged.
+
+The `datasheet_types` package re-exports `lookup` lazily via module-level `__getattr__`, so `from datasheet_types import lookup` works alongside `from datasheet_lookup import lookup` without forcing `skills/datasheets/scripts/` onto sys.path at `import datasheet_types` time. `lookup` appears in `datasheet_types.__all__` (now 19 names).
+
+Tests: `tests/contract/test_datasheet_lookup.py` — 18 contract tests covering MPN sanitization (4), cache-path composition (1), cache-miss paths (4), happy path (3, including a full end-to-end happy path with fresh PDF + typed access), PDF staleness (4), cross-package re-export (1), plus 4 integration tests in `test_datasheet_types.py` for the `quality`/`stale`/`cache_path` properties. All tests are self-contained via `pytest.tmp_path` — no committed test cache or PDF files.
+
+#### Breaking changes
+None. Purely additive — new module + read-only property additions to `DatasheetFacts`.
+
+#### Unblocks
+- **Harness A3** — trust-gating tests with canned `DatasheetFacts` fixtures. A3 can now dispatch `lookup()` against an in-memory cache dir and assert on `.stale`, `.quality`, `.base.pinout.find(...)`, etc. Fixtures stay in-process via `tmp_path`.
+- Track 2.4 — trust-gating helpers `best()` / `trusted()` attach to existing dataclass types.
+- Track 2.5 — v1.3 compat wrappers (`get_regulator_features`, `get_mcu_features`, `get_pin_function`) can now rewrite over `lookup()` to get typed access + staleness for free.
+
 ### Track 2.2 — Typed Python Access Layer (2026-04-19)
 
 **Theme: Ergonomic typed access on top of the Track 2.1 JSON schemas.**
