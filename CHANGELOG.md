@@ -8,6 +8,41 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 2.4 — Trust-Gating Helpers (2026-04-19)
+
+**Theme: Per-field tri-state filtering of SpecValue lists by evidence confidence (spec §12).**
+
+New module `skills/datasheets/datasheet_types/trust_gating.py` with three module-level functions:
+
+- `has_data(specs) -> bool` — True when `specs` is a non-empty list. Distinguishes "field not extracted" (`None` or `[]`) from "field populated with values."
+- `best(specs, *, min_confidence) -> Optional[SpecValue]` — first `SpecValue` whose `evidence.confidence` meets the gate, or `None`. Preserves extractor-intended ordering (no library-side re-ranking by confidence, method, or any other field).
+- `trusted(specs, *, min_confidence) -> list[SpecValue]` — all `SpecValue`s meeting the gate, in input order.
+
+All three accept `Optional[list[SpecValue]]`, so consumers can pass `ds.regulator.vin_range` (nullable) or `ds.base.thermal.get("theta_ja")` (keyed-dict lookup) directly without `None` guards at the call site.
+
+The tri-state signal comes from **combining** `has_data` with `trusted`:
+- `has_data=False` → field not extracted
+- `has_data=True` and `trusted(specs, ...) == []` → field present but all values below gate
+- `has_data=True` and `trusted(specs, ...) == [v1, ...]` → field present and some values pass
+
+Addresses the Gemini-review concern that v1.3's `SpecValue | None` API conflated "missing" with "present-but-below-gate."
+
+`min_confidence` is keyword-only and **required** — detectors must declare their trust level explicitly per spec §12. Invalid values (anything other than `"low" | "medium" | "high"`) raise `ValueError` with a clear message.
+
+Module-level functions (not dataclass methods) work against any `Optional[list[SpecValue]]` without Track 2.2 type changes. Scales automatically to v1.5 category additions (mcu/opamp/diode/transistor/crystal). Slightly more verbose than spec §11's idealized `ds.base.thermal.best(...)` method form — consumers write `best(ds.base.thermal.get("theta_ja"), min_confidence="medium")` — but the functional surface is identical.
+
+`datasheet_types` public API now exports 22 names (19 + `best`, `trusted`, `has_data`). Eager re-export (not lazy `__getattr__`) since `trust_gating.py` is pure Python with no sys.path manipulation or scripts/ coupling.
+
+Tests: `tests/contract/test_trust_gating.py` — 16 contract tests (3 for `has_data`, 6 for `best`, 4 for `trusted`, 2 for ValueError, 1 for the package re-export). Self-contained — no Track 2.2 fixtures or filesystem setup needed.
+
+#### Breaking changes
+None. Purely additive — new module, new exports, no existing code modified.
+
+#### Unblocks
+- **Harness A3** — trust-gating tests with canned `DatasheetFacts` fixtures can now exercise `best()` / `trusted()` on synthetic-liar fixtures (wrong category, wrong Vref, low-score-correct-value) and assert that the gate correctly suppresses or downgrades them. A3 is now fully unblocked.
+- **Phase 4 detector upgrades** — PU-001, LR-001, XT-*, FS-001, VM-001, AM-001, OV-001, TJ-001, FT-001, PM-001, EX-001 detector implementations can now call `best()`/`trusted()` with their module-level `MIN_CONFIDENCE` constant.
+- Track 2.5 — v1.3 compat wrappers (`get_regulator_features` et al.) can use `trusted()` internally to apply a baseline trust gate during the v1.3 → v1.4 translation.
+
 ### Track 2.3 — Consumer API lookup() Facade (2026-04-19)
 
 **Theme: Read-only MPN → DatasheetFacts entry point per spec §11.**
