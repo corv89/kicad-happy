@@ -38,11 +38,12 @@
         "evidence": {
           "type": ["object", "null"],
           "required": ["page", "confidence", "method"],
+          "additionalProperties": false,
           "properties": {
-            "page": {"type": "integer", "minimum": 1},
-            "section": {"type": ["string", "null"]},
-            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-            "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"]}
+            "page": {"type": "integer", "minimum": 1, "description": "PDF page number (1-based) where the fact was sourced."},
+            "section": {"type": ["string", "null"], "description": "Datasheet section label (e.g. '6.4 Electrical Characteristics') when available."},
+            "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": "Extractor confidence in this fact. Pivots consumer trust gating."},
+            "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"], "description": "How the fact was captured. 'table' = parameter table. 'prose' = narrative text. 'curve' = read off a graph. 'calculated' / 'derived' = inferred from other facts."}
           }
         }
       }
@@ -81,6 +82,7 @@
     },
     "moisture_sensitivity": {
       "type": ["object", "null"],
+      "additionalProperties": false,
       "properties": {
         "msl": {
           "type": ["integer", "null"],
@@ -91,11 +93,12 @@
         "evidence": {
           "type": ["object", "null"],
           "required": ["page", "confidence", "method"],
+          "additionalProperties": false,
           "properties": {
-            "page": {"type": "integer", "minimum": 1},
-            "section": {"type": ["string", "null"]},
-            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-            "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"]}
+            "page": {"type": "integer", "minimum": 1, "description": "PDF page number (1-based) where the fact was sourced."},
+            "section": {"type": ["string", "null"], "description": "Datasheet section label (e.g. '6.4 Electrical Characteristics') when available."},
+            "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": "Extractor confidence in this fact. Pivots consumer trust gating."},
+            "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"], "description": "How the fact was captured. 'table' = parameter table. 'prose' = narrative text. 'curve' = read off a graph. 'calculated' / 'derived' = inferred from other facts."}
           }
         }
       }
@@ -119,11 +122,12 @@
           "evidence": {
             "type": ["object", "null"],
             "required": ["page", "confidence", "method"],
+            "additionalProperties": false,
             "properties": {
-              "page": {"type": "integer", "minimum": 1},
-              "section": {"type": ["string", "null"]},
-              "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-              "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"]}
+              "page": {"type": "integer", "minimum": 1, "description": "PDF page number (1-based) where the fact was sourced."},
+              "section": {"type": ["string", "null"], "description": "Datasheet section label (e.g. '6.4 Electrical Characteristics') when available."},
+              "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": "Extractor confidence in this fact. Pivots consumer trust gating."},
+              "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"], "description": "How the fact was captured. 'table' = parameter table. 'prose' = narrative text. 'curve' = read off a graph. 'calculated' / 'derived' = inferred from other facts."}
             }
           }
         }
@@ -143,6 +147,7 @@
         "properties": {
           "type": {
             "type": "string",
+            "description": "Relationship kind. Closed starter vocabulary for v1.4 — adding a new kind requires a minor schema bump (see schemas/CHANGELOG.md). Consumers should tolerate unknown kinds by ignoring the relationship, not erroring.",
             "enum": [
               "compensation_network", "matched_pair",
               "requires_pullup", "requires_pulldown",
@@ -160,11 +165,12 @@
           "evidence": {
             "type": ["object", "null"],
             "required": ["page", "confidence", "method"],
+            "additionalProperties": false,
             "properties": {
-              "page": {"type": "integer", "minimum": 1},
-              "section": {"type": ["string", "null"]},
-              "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-              "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"]}
+              "page": {"type": "integer", "minimum": 1, "description": "PDF page number (1-based) where the fact was sourced."},
+              "section": {"type": ["string", "null"], "description": "Datasheet section label (e.g. '6.4 Electrical Characteristics') when available."},
+              "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": "Extractor confidence in this fact. Pivots consumer trust gating."},
+              "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"], "description": "How the fact was captured. 'table' = parameter table. 'prose' = narrative text. 'curve' = read off a graph. 'calculated' / 'derived' = inferred from other facts."}
             }
           }
         }
