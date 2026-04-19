@@ -181,6 +181,76 @@ def test_trusted_invalid_min_confidence_raises_valueerror() -> None:
         trusted([_make_spec(1.0, "high")], min_confidence="extreme")
 
 
+def test_best_validates_min_confidence_even_when_specs_is_none() -> None:
+    """best() validates min_confidence BEFORE checking specs — a consumer
+    passing None specs with an invalid min_confidence gets ValueError
+    (not None). Stricter validation over permissive shortcut: detector
+    code that constructs min_confidence dynamically should fail fast."""
+    from datasheet_types.trust_gating import best
+
+    with pytest.raises(ValueError, match="min_confidence must be"):
+        best(None, min_confidence="extreme")
+
+
+def test_trusted_validates_min_confidence_even_when_specs_is_none() -> None:
+    """trusted() validates min_confidence BEFORE checking specs — parallel
+    invariant to best()."""
+    from datasheet_types.trust_gating import trusted
+
+    with pytest.raises(ValueError, match="min_confidence must be"):
+        trusted(None, min_confidence="extreme")
+
+
+def test_best_safely_handles_unknown_confidence_value_in_data() -> None:
+    """best() treats unknown evidence.confidence values as below any gate.
+
+    Defensive: schema is the authoritative validator, but runtime code
+    should not crash on a cache file with an unrecognized confidence
+    string (e.g. a new extractor scout writing 'very_high' before the
+    schema adds it). Behaves as if the value were below the lowest gate.
+    """
+    from datasheet_types.spec_value import SpecValue, Evidence
+    from datasheet_types.trust_gating import best
+
+    spec_unknown = SpecValue(
+        unit="V",
+        evidence=Evidence(page=1, confidence="very_high", method="table"),
+        typ=1.0,
+    )
+    spec_high = SpecValue(
+        unit="V",
+        evidence=Evidence(page=2, confidence="high", method="table"),
+        typ=2.0,
+    )
+    # Unknown confidence filtered out even at min_confidence='low'.
+    result = best([spec_unknown], min_confidence="low")
+    assert result is None
+    # Valid 'high' entry passes alongside ignored unknown.
+    result = best([spec_unknown, spec_high], min_confidence="high")
+    assert result is not None
+    assert result.typ == 2.0
+
+
+def test_trusted_safely_handles_unknown_confidence_value_in_data() -> None:
+    """trusted() treats unknown evidence.confidence as below any gate."""
+    from datasheet_types.spec_value import SpecValue, Evidence
+    from datasheet_types.trust_gating import trusted
+
+    spec_unknown = SpecValue(
+        unit="V",
+        evidence=Evidence(page=1, confidence="very_high", method="table"),
+        typ=1.0,
+    )
+    spec_medium = SpecValue(
+        unit="V",
+        evidence=Evidence(page=2, confidence="medium", method="table"),
+        typ=2.0,
+    )
+    # Unknown filtered; medium kept.
+    result = trusted([spec_unknown, spec_medium], min_confidence="medium")
+    assert [s.typ for s in result] == [2.0]
+
+
 # ---------------------------------------------------------------------------
 # Public API re-exports
 # ---------------------------------------------------------------------------

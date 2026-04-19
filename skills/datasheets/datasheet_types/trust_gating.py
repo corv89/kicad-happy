@@ -40,12 +40,12 @@ No module-level state. Functions are pure. Thread-safe.
 """
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, TypeAlias
 
 from .spec_value import SpecValue
 
 
-ConfidenceLevel = Literal["low", "medium", "high"]
+ConfidenceLevel: TypeAlias = Literal["low", "medium", "high"]
 
 # Internal order — consumers use the string literals, not these integers.
 _CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
@@ -99,7 +99,7 @@ def best(
     if not specs:
         return None
     for s in specs:
-        if _CONFIDENCE_ORDER[s.evidence.confidence] >= gate:
+        if _CONFIDENCE_ORDER.get(s.evidence.confidence, -1) >= gate:
             return s
     return None
 
@@ -122,4 +122,4 @@ def trusted(
     gate = _check_min_confidence(min_confidence)
     if not specs:
         return []
-    return [s for s in specs if _CONFIDENCE_ORDER[s.evidence.confidence] >= gate]
+    return [s for s in specs if _CONFIDENCE_ORDER.get(s.evidence.confidence, -1) >= gate]
