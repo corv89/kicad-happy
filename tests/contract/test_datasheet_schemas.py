@@ -300,3 +300,50 @@ def test_regulator_pin_references_are_strings() -> None:
     props = schema["properties"]
     for f in ("feedback_pin", "compensation_pin", "enable_pin", "power_good_pin"):
         assert props[f]["type"] == ["string", "null"]
+
+
+def test_regulator_stability_conditions_shape() -> None:
+    """stability_conditions is a closed object consumed by SV-001.
+
+    Verifies the nested block shape won't silently regress into a
+    loose dict when Tasks 5+ exercise it via the LM2596-ADJ fixture.
+    """
+    schema = _load_json(SCHEMA_DIR / "regulator.schema.json")
+    stab = schema["properties"]["stability_conditions"]
+    # Nullable object — datasheet may not publish stability constraints.
+    assert stab["type"] == ["object", "null"]
+    assert stab["additionalProperties"] is False
+
+    cap_types = stab["properties"]["cap_types_allowed"]
+    # Closed vocabulary at the items level, array at the field level.
+    assert cap_types["type"] == "array"
+    assert cap_types["items"]["type"] == "string"
+    # ceramic_c0g must be in the vocabulary — it's the Class 1
+    # temperature-stable dielectric that appears in LDO stability notes.
+    assert "ceramic_c0g" in cap_types["items"]["enum"]
+
+    esr = stab["properties"]["esr_range"]
+    assert esr["type"] == ["array", "null"]
+    assert "spec_value.schema.json" in esr["items"]["$ref"]
+
+
+def test_regulator_sequencing_shape() -> None:
+    """sequencing is a closed object consumed by ST-001.
+
+    must_rise_after / must_rise_before are arrays of rail-name strings;
+    max_inter_rail_delay is a nullable SpecValue[] for time constraints.
+    """
+    schema = _load_json(SCHEMA_DIR / "regulator.schema.json")
+    seq = schema["properties"]["sequencing"]
+    assert seq["type"] == ["object", "null"]
+    assert seq["additionalProperties"] is False
+
+    for rail_list_field in ("must_rise_after", "must_rise_before"):
+        prop = seq["properties"][rail_list_field]
+        assert prop["type"] == "array"
+        # Rail names, not integers.
+        assert prop["items"]["type"] == "string"
+
+    delay = seq["properties"]["max_inter_rail_delay"]
+    assert delay["type"] == ["array", "null"]
+    assert "spec_value.schema.json" in delay["items"]["$ref"]

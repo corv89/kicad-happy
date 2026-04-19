@@ -96,10 +96,12 @@
       "properties": {
         "cap_types_allowed": {
           "type": "array",
-          "items": {"type": "string", "enum": ["ceramic_x5r", "ceramic_x7r", "ceramic_x7s", "tantalum", "polymer", "electrolytic", "film"]}
+          "description": "Output-capacitor technology families this regulator is stable with. Closed vocabulary covers Class 1 (c0g/np0, temperature-stable), Class 2 ceramic (x5r/x7r/x7s), and bulk types. Adding a family requires a minor schema bump.",
+          "items": {"type": "string", "enum": ["ceramic_c0g", "ceramic_x5r", "ceramic_x7r", "ceramic_x7s", "tantalum", "polymer", "electrolytic", "film"]}
         },
         "esr_range": {
           "type": ["array", "null"],
+          "description": "Permitted output-capacitor ESR window for stable operation. null when datasheet doesn't publish an ESR constraint (modern ceramic-friendly LDOs).",
           "items": {"$ref": "https://kicad-happy.local/datasheets/schemas/spec_value.schema.json"}
         },
         "notes": {"type": ["string", "null"]},
@@ -128,10 +130,12 @@
         },
         "must_rise_before": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {"type": "string"},
+          "description": "Rail names this rail must come up before."
         },
         "max_inter_rail_delay": {
           "type": ["array", "null"],
+          "description": "Maximum allowed time gap between the rail this rail depends on and this rail coming into regulation. Consumed by ST-001 when the datasheet publishes an explicit max-delay constraint.",
           "items": {"$ref": "https://kicad-happy.local/datasheets/schemas/spec_value.schema.json"}
         },
         "notes": {"type": ["string", "null"]},
