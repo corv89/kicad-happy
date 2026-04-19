@@ -50,6 +50,7 @@ def _build_registry() -> Registry:
 SCHEMA_FILES = [
     "spec_value.schema.json",
     "pinout.schema.json",
+    "base.schema.json",
 ]
 
 
@@ -176,3 +177,74 @@ def test_pinout_still_calibrating_marker() -> None:
     # Custom annotation — non-normative, but documents the stability
     # promise so downstream readers know the schema may shift before v1.5.
     assert schema.get("x-still-calibrating") is True
+
+
+# ---------------------------------------------------------------------------
+# Base-block-specific shape assertions
+# ---------------------------------------------------------------------------
+
+def test_base_absolute_max_is_keyed_object() -> None:
+    """absolute_max, recommended_operating, esd are objects keyed by
+    parameter name (e.g. 'VIN_max') → SpecValue[], NOT flat lists.
+
+    This is the consumer-indexability shape from spec §4:
+    ds.base.absolute_max["VIN_max"] should Just Work.
+    """
+    schema = _load_json(SCHEMA_DIR / "base.schema.json")
+    amax = schema["properties"]["absolute_max"]
+    assert amax["type"] == "object"
+    # additionalProperties is the SpecValue array pattern — arbitrary
+    # parameter names keyed, values are SpecValue[].
+    add_props = amax["additionalProperties"]
+    assert add_props["type"] == "array"
+    assert "spec_value.schema.json" in add_props["items"]["$ref"]
+
+
+def test_base_recommended_and_esd_same_shape_as_absolute_max() -> None:
+    schema = _load_json(SCHEMA_DIR / "base.schema.json")
+    for key in ("recommended_operating", "esd"):
+        prop = schema["properties"][key]
+        # Both use the keyed-object pattern (param-name → SpecValue[]).
+        # recommended_operating is required/non-null; esd is nullable
+        # (many parts don't publish ESD ratings), so we check the type
+        # field contains "object" rather than requiring it to be exactly
+        # the string "object".
+        prop_type = prop["type"]
+        if isinstance(prop_type, list):
+            assert "object" in prop_type, f"{key} should include object in type"
+        else:
+            assert prop_type == "object", f"{key} should be keyed object"
+        assert prop["additionalProperties"]["type"] == "array"
+
+
+def test_base_pinout_refs_pinout_schema() -> None:
+    schema = _load_json(SCHEMA_DIR / "base.schema.json")
+    pinout = schema["properties"]["pinout"]
+    # Base doesn't inline the pin shape — it defers to pinout.schema.json
+    # so pinout can evolve independently.
+    assert "pinout.schema.json" in pinout["$ref"]
+
+
+def test_base_pin_relationships_vocabulary() -> None:
+    schema = _load_json(SCHEMA_DIR / "base.schema.json")
+    rels = schema["properties"]["pin_relationships"]
+    assert rels["type"] == "array"
+    rel_type = rels["items"]["properties"]["type"]
+    # Starter vocabulary from spec §6. Extensible with real-corpus usage.
+    expected = {
+        "compensation_network", "matched_pair",
+        "requires_pullup", "requires_pulldown",
+        "current_programming", "stacked_internal",
+        "exclusive_with", "timing_critical",
+    }
+    assert set(rel_type["enum"]) == expected
+
+
+def test_base_compliance_is_array_of_marks() -> None:
+    schema = _load_json(SCHEMA_DIR / "base.schema.json")
+    comp = schema["properties"]["compliance"]
+    assert comp["type"] == "array"
+    # Each entry is an object with mark + rating so detectors can filter
+    # (CM-001 reads compliance for AEC-Q100, IEC 62368, etc.).
+    item = comp["items"]
+    assert "mark" in item["properties"]
