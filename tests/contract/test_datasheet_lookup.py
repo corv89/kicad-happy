@@ -169,3 +169,106 @@ def test_lookup_quality_passthrough(tmp_path: Path) -> None:
     facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
     # LM2596-ADJ fixture has quality_score = 87.
     assert facts.quality == 87
+
+
+# ---------------------------------------------------------------------------
+# Staleness detection
+# ---------------------------------------------------------------------------
+
+def _write_cache_with_pdf(
+    tmp_path: Path,
+    *,
+    mpn: str = "LM2596-ADJ",
+    pdf_bytes: bytes = b"%PDF-1.4\n%%EOF\n",
+    pdf_sha_override: "Optional[str]" = None,
+) -> tuple[Path, Path]:
+    """Test helper: build a cache_dir + PDF + cache JSON and return paths.
+
+    The cache JSON's source.sha256 is computed from pdf_bytes UNLESS
+    pdf_sha_override is provided (used to simulate a stale cache).
+    Returns (cache_dir, pdf_path).
+    """
+    # datasheets/ is the parent; extracted/ is cache_dir; PDF sits in datasheets/.
+    datasheets_dir = tmp_path / "datasheets"
+    datasheets_dir.mkdir()
+    cache_dir = datasheets_dir / "extracted"
+    cache_dir.mkdir()
+
+    pdf_path = datasheets_dir / f"{mpn}.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    actual_sha = hashlib.sha256(pdf_bytes).hexdigest()
+    cached_sha = pdf_sha_override if pdf_sha_override is not None else actual_sha
+
+    # Use the LM2596-ADJ fixture as a template; override source.sha256
+    # and source.local_path to point at our test PDF.
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    fixture["source"]["mpn"] = mpn
+    fixture["source"]["sha256"] = f"sha256:{cached_sha}"
+    fixture["source"]["local_path"] = f"{mpn}.pdf"
+
+    (cache_dir / f"{mpn}.json").write_text(json.dumps(fixture))
+    return cache_dir, pdf_path
+
+
+def test_lookup_stale_false_when_pdf_hash_matches(tmp_path: Path) -> None:
+    """lookup returns facts.stale=False when PDF hash matches cached sha256."""
+    from datasheet_lookup import lookup
+
+    cache_dir, _ = _write_cache_with_pdf(tmp_path)
+    facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
+    assert facts is not None
+    assert facts.stale is False
+
+
+def test_lookup_stale_true_when_pdf_hash_mismatch(tmp_path: Path) -> None:
+    """lookup returns facts.stale=True when PDF on disk differs from cache."""
+    from datasheet_lookup import lookup
+
+    # Override with a bogus cached hash so it doesn't match the real PDF.
+    bogus_sha = "0" * 64
+    cache_dir, _ = _write_cache_with_pdf(tmp_path, pdf_sha_override=bogus_sha)
+
+    facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
+    assert facts is not None
+    assert facts.stale is True
+    # The CacheContext carries the reason too, accessible via the private attr.
+    ctx = facts._cache_context
+    assert ctx.stale_reason == "pdf_hash_mismatch"
+
+
+def test_lookup_stale_true_when_pdf_missing(tmp_path: Path) -> None:
+    """lookup returns facts.stale=True when source.local_path doesn't exist."""
+    from datasheet_lookup import lookup
+
+    cache_dir, pdf_path = _write_cache_with_pdf(tmp_path)
+    # Delete the PDF after cache setup to simulate a missing-file staleness.
+    pdf_path.unlink()
+
+    facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
+    assert facts is not None
+    assert facts.stale is True
+    ctx = facts._cache_context
+    assert ctx.stale_reason == "pdf_missing"
+
+
+def test_lookup_stale_true_when_source_local_path_is_none(tmp_path: Path) -> None:
+    """lookup returns facts.stale=True when source.local_path is None.
+
+    Without a local_path we can't verify freshness, so the safe default
+    is to mark the cache stale (consumer triggers re-extraction).
+    """
+    from datasheet_lookup import lookup
+
+    cache_dir, _ = _write_cache_with_pdf(tmp_path)
+    # Mutate the cached fixture to null out local_path.
+    cache_file = cache_dir / "LM2596-ADJ.json"
+    data = json.loads(cache_file.read_text())
+    data["source"]["local_path"] = None
+    cache_file.write_text(json.dumps(data))
+
+    facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
+    assert facts is not None
+    assert facts.stale is True
+    ctx = facts._cache_context
+    assert ctx.stale_reason == "pdf_missing"

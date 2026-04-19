@@ -21,6 +21,7 @@ Consumers import:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -95,6 +96,53 @@ class CacheContext:
 
 
 # ---------------------------------------------------------------------------
+# PDF staleness helpers
+# ---------------------------------------------------------------------------
+
+
+def _compute_pdf_sha256(pdf_path: Path) -> Optional[str]:
+    """Return 'sha256:<hex>' for the file at pdf_path, or None if missing.
+
+    Reads in 64KB chunks to avoid loading large PDFs into memory at once.
+    Any OSError (permission denied, IO error, etc.) returns None, which
+    the caller treats as 'PDF unavailable' → stale.
+    """
+    try:
+        h = hashlib.sha256()
+        with pdf_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return f"sha256:{h.hexdigest()}"
+    except OSError:
+        return None
+
+
+def _resolve_pdf_path(cache_dir: Path, source_local_path: Optional[str]) -> Optional[Path]:
+    """Resolve source.local_path against the parent of cache_dir.
+
+    The conventional layout is:
+        datasheets/
+            extracted/        <-- cache_dir
+                LM2596-ADJ.json
+            LM2596-ADJ.pdf    <-- source.local_path == "LM2596-ADJ.pdf"
+
+    So the PDF lives at cache_dir.parent / source.local_path.
+
+    Returns None when source_local_path is None (datasheet wasn't sourced
+    locally) — caller treats None as 'pdf_missing'.
+    """
+    if source_local_path is None:
+        return None
+    # local_path is stored relative; if it starts with "datasheets/" already
+    # (a v1.3 convention), treat it as relative to cache_dir.parent.parent.
+    base = cache_dir.parent
+    candidate = base / source_local_path
+    if not candidate.is_file() and source_local_path.startswith("datasheets/"):
+        candidate = base.parent / source_local_path
+    return candidate
+
+
+# ---------------------------------------------------------------------------
 # lookup — the consumer API entry point
 # ---------------------------------------------------------------------------
 
@@ -143,7 +191,37 @@ def lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]:
         # Missing required fields, wrong shape, invalid unit string, etc.
         return None
 
-    # Attach cache context. Staleness detection lands in Task 4 —
-    # for now is_stale stays at its CacheContext default (False).
-    facts._cache_context = CacheContext(cache_path=cache_file)
+    # Attach cache context with staleness detection.
+    pdf_path = _resolve_pdf_path(cache_dir, facts.source.local_path)
+    if pdf_path is None:
+        ctx = CacheContext(
+            cache_path=cache_file,
+            pdf_path=None,
+            is_stale=True,
+            stale_reason="pdf_missing",
+        )
+    else:
+        current_sha = _compute_pdf_sha256(pdf_path)
+        if current_sha is None:
+            ctx = CacheContext(
+                cache_path=cache_file,
+                pdf_path=pdf_path,
+                is_stale=True,
+                stale_reason="pdf_missing",
+            )
+        elif current_sha != facts.source.sha256:
+            ctx = CacheContext(
+                cache_path=cache_file,
+                pdf_path=pdf_path,
+                is_stale=True,
+                stale_reason="pdf_hash_mismatch",
+            )
+        else:
+            ctx = CacheContext(
+                cache_path=cache_file,
+                pdf_path=pdf_path,
+                is_stale=False,
+                stale_reason=None,
+            )
+    facts._cache_context = ctx
     return facts
