@@ -24,6 +24,66 @@ v1.4 schema-break notes:
 - `schema_version` bumped 1.3.0 → 1.4.0 on every analyzer.
 - `trust_summary.by_confidence` aggregate key renamed: `datasheet-backed` → `datasheet_backed`. Per-finding `confidence` VALUE stays `datasheet-backed`.
 
+## Contract Tiers
+
+Every analyzer envelope is organized into three tiers. Consumers can
+rely on Tier 1 shapes; Tier 2 is analyzer-specific and best read via
+the declared dataclass types; Tier 3 is compatibility residue slated
+for removal and should not be written against in new code.
+
+### Tier 1 — Standardized envelope (stable across v1.4)
+
+Present on every analyzer output. Shape locked by the shared primitives
+in `analyzer_envelope.py`. Breaking changes bump the analyzer's
+`schema_version`.
+
+- `analyzer_type` — `const` string discriminator naming the analyzer.
+- `schema_version` — `const` string matching the semver.
+- `summary` — per-analyzer roll-up (`total_findings`, `by_severity`,
+  analyzer-specific counts). Inner shape is analyzer-specific but the
+  top-level key is Tier 1.
+- `trust_summary` — trust posture: `total_findings`, `trust_level`,
+  `by_confidence`, `by_evidence_source`, `provenance_coverage_pct`,
+  `bom_coverage` (schematic only).
+- `findings` — `list[Finding]`. Actionable items with severity +
+  recommendation.
+- `assessments` — `list[Assessment]`. Informational measurements (no
+  severity, no recommendation). Empty on analyzers with no assessment
+  content today.
+- `inputs` — `InputsBlock`. `source_files`, `source_hashes`, `run_id`,
+  `config_hash`, `upstream_artifacts`.
+- `compat` — `CompatBlock`. `minimum_consumer_version`,
+  `deprecated_fields`, `experimental_fields`.
+
+### Tier 2 — Analyzer-specific body
+
+Everything emitted by a given analyzer that is not listed in Tier 1.
+Shape is declared by the per-analyzer envelope in `envelopes/*.py` or
+`emc_envelope.py`. Typical Tier 2 keys include `statistics`,
+`components`, `nets`, `bom`, `ic_pin_analysis`, `design_analysis`,
+`bus_topology`, `placement_analysis`, `power_net_routing`,
+`connectivity_graph`, EMC `test_plan` / `regulatory_coverage`, thermal
+`thermal_score`, gerber `layers` / `drills` / `completeness`, etc.
+
+Several Tier 2 fields are currently typed as loose `dict` or
+`list[dict]` with `TODO(v1.5)` markers. Consumers that need stable
+shapes from these should wait for the v1.5 per-rule_id tightening pass.
+
+### Tier 3 — Compatibility residue
+
+Empty for v1.4. The v1.4 clean break removed prior residue:
+
+- `schematic.file`, `pcb.file` — removed; use `inputs.source_files[0]`.
+- `thermal.thermal_assessments` — renamed to `thermal.assessments`
+  (sibling to `findings`, not inside it).
+- Descriptive-string `--schema` output — replaced by real JSON Schema
+  Draft 2020-12.
+- `trust_summary.by_confidence.datasheet-backed` key — renamed to
+  `datasheet_backed` (hyphen removed only for the aggregate-count key;
+  the per-finding `confidence` VALUE still uses `datasheet-backed`).
+- Deprecated `summary.critical` / `.high` / `.medium` / `.low` / `.info`
+  keys on thermal — removed in v1.4.
+
 ## SchematicEnvelope
 
 Output of `python3 skills/kicad/scripts/analyze_schematic.py <file>.kicad_sch`.
@@ -33,6 +93,7 @@ Output of `python3 skills/kicad/scripts/analyze_schematic.py <file>.kicad_sch`.
 | `analyzer_type` | `string` | yes | Always 'schematic'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `inputs` | `InputsBlock` | yes | Source files, hashes, run_id, config_hash, upstream artifacts for this run. |
+| `compat` | `CompatBlock` | yes | Schema compatibility metadata: minimum consumer version + deprecated/experimental field lists. |
 | `summary` | `SchematicSummary` | yes | Roll-up summary (total + by_severity). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source + optional BOM coverage). |
 | `kicad_version` | `string` | yes | KiCad generator version string, e.g. '9.0' or '5 (legacy)'. |
@@ -106,6 +167,7 @@ Output of `python3 skills/kicad/scripts/analyze_pcb.py <file>.kicad_pcb`.
 | `analyzer_type` | `string` | yes | Always 'pcb'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `inputs` | `InputsBlock` | yes | Source files, hashes, run_id, config_hash, upstream artifacts for this run. |
+| `compat` | `CompatBlock` | yes | Schema compatibility metadata: minimum consumer version + deprecated/experimental field lists. |
 | `summary` | `PCBSummary` | yes | Roll-up summary (total + by_severity). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source). |
 | `kicad_version` | `string` | yes | KiCad generator version string, e.g. '9.0'. |
@@ -160,6 +222,7 @@ Output of `python3 skills/kicad/scripts/analyze_gerbers.py <gerber_dir>/`.
 | `analyzer_type` | `string` | yes | Always 'gerber'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `inputs` | `InputsBlock` | yes | Source files, hashes, run_id, config_hash, upstream artifacts for this run. |
+| `compat` | `CompatBlock` | yes | Schema compatibility metadata: minimum consumer version + deprecated/experimental field lists. |
 | `summary` | `GerberSummary` | yes | Roll-up summary (total + by_severity). |
 | `trust_summary` | `TrustSummary` | yes | Trust posture rollup (confidence + evidence source). |
 | `directory` | `string` | yes | Resolved absolute path of the scanned gerber directory. |
@@ -193,6 +256,7 @@ Output of `python3 skills/kicad/scripts/analyze_thermal.py --schematic ... --pcb
 | `analyzer_type` | `string` | yes | Always 'thermal'. |
 | `schema_version` | `string` | yes | Schema semver. Value: '1.4.0' at Track 1.1 landing. |
 | `inputs` | `InputsBlock` | yes | Source JSON inputs, sha256s, run_id, plus upstream artifact metadata (schematic, pcb). |
+| `compat` | `CompatBlock` | yes | Schema compatibility metadata: minimum consumer version + deprecated/experimental field lists. |
 | `summary` | `ThermalSummary` | yes | Roll-up summary of thermal analysis. |
 | `findings` | `list[Finding]` | yes | All thermal findings: TS-001..005, TP-001..002. |
 | `assessments` | `list[Assessment]` | yes | TH-DET entries — per-component junction-temperature estimates. Informational (not findings). |
@@ -209,6 +273,7 @@ Output of `python3 skills/emc/scripts/analyze_emc.py --schematic ... --pcb ...`.
 | `analyzer_type` | `string` | yes | Always 'emc'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `inputs` | `InputsBlock` | yes | Source JSON inputs, sha256s, run_id, plus upstream artifact metadata (schematic, pcb). |
+| `compat` | `CompatBlock` | yes | Schema compatibility metadata: minimum consumer version + deprecated/experimental field lists. |
 | `target_standard` | `string` | yes | Target EMC standard key (e.g. 'fcc-class-b', 'cispr-class-b', 'cispr-25'). |
 | `summary` | `EMCSummary` | yes | EMC roll-up summary (counts + risk score). |
 | `findings` | `list[Finding]` | yes | All EMC findings. |
@@ -232,6 +297,7 @@ Output of `python3 skills/kicad/scripts/cross_analysis.py --schematic ... --pcb 
 | `analyzer_type` | `string` | yes | Always 'cross_analysis'. |
 | `schema_version` | `string` | yes | Semver. Value: '1.4.0' at Track 1.1 landing. |
 | `inputs` | `InputsBlock` | yes | Source JSON inputs, sha256s, run_id, plus upstream artifact metadata (schematic, pcb). |
+| `compat` | `CompatBlock` | yes | Schema compatibility metadata: minimum consumer version + deprecated/experimental field lists. |
 | `elapsed_s` | `float` | yes | Analysis wall-clock time in seconds. |
 | `summary` | `CrossAnalysisSummary` | yes | Roll-up summary (total + by_severity). |
 | `findings` | `list[Finding]` | yes | All cross-domain findings. |
