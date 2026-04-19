@@ -8,6 +8,36 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 2.2 — Typed Python Access Layer (2026-04-19)
+
+**Theme: Ergonomic typed access on top of the Track 2.1 JSON schemas.**
+
+Seven new Python modules under `skills/datasheets/datasheet_types/` mirror the Track 2.1 schema files. Stdlib-only dict ↔ dataclass codec. Package name is `datasheet_types` (not `types`) to avoid shadowing stdlib.
+
+- `spec_value.py` — `SpecValue` + `Evidence` primitives.
+- `pinout.py` — `AltFunction` + `Pin` dataclasses + `Pinout` wrapper class (non-dataclass, exposes `.find(pin=...)`, `.find(name=...)`, `.in_domain(rail)`, `__iter__`, `__len__`, `__eq__`). Serializes to/from a bare list matching `pinout.schema.json`'s root-array shape.
+- `base_block.py` — `BaseBlock` plus `Package`, `BodyMm`, `MoistureSensitivity`, `ComplianceMark`, `PinRelationship`. Ratings dicts typed as `dict[str, list[SpecValue]]` (keyed-object shape from spec §4).
+- `regulator.py` — `Regulator` plus `StabilityConditions` and `Sequencing`. Only `topology` required; all electrical params are `Optional[list[SpecValue]]`.
+- `extraction.py` — `DatasheetFacts` top-level envelope + `Source` + `ExtractionMeta` + `SchemaVersion`.
+- `codec.py` — stdlib-only `from_dict(cls, data)` / `to_dict(obj)`. Handles nested dataclasses, `Optional[T]`, `list[T]`, `dict[str, T]`, the Pinout wrapper special case, and an `omit_if_none` field-metadata opt-in for category sibling fields so `DatasheetFacts.regulator` serializes as "absent key" (not `null`) when None — preserves the Track 2.1 contract that regulator is "either valid object or absent key."
+
+`skills/datasheets/datasheet_types/__init__.py` re-exports the 18 public names consumers need: `DatasheetFacts`, `SpecValue`, `Evidence`, `Pin`, `AltFunction`, `Pinout`, `BaseBlock`, `Package`, `BodyMm`, `MoistureSensitivity`, `ComplianceMark`, `PinRelationship`, `Regulator`, `StabilityConditions`, `Sequencing`, `Source`, `ExtractionMeta`, `SchemaVersion`.
+
+Tests: `tests/contract/test_datasheet_types.py` — 35 contract tests covering per-type round-trip, canonical-SI value preservation, Pinout lookup helpers, codec type-guards (non-list / non-dict inputs raise TypeError), `omit_if_none` policy, and full end-to-end round-trip of both Track 2.1 fixtures (LM2596-ADJ + minimal) with schema re-validation. `to_dict(from_dict(DatasheetFacts, fixture))` matches each fixture byte-for-byte.
+
+The JSON schemas remain source of truth. The dataclasses are NOT derived from them — parity is enforced by fixture round-trip tests, not by code generation. Schema constraints richer than dataclass reflection can express (`patternProperties`, closed enums, `x-*` annotations) stay in the JSON.
+
+During implementation, the LM2596-ADJ and minimal fixtures were completed with explicit null/empty values for previously-absent optional fields (`package.pitch_mm`, `package.body_mm`, `base.moisture_sensitivity`, `base.compliance`, `regulator.dropout`, plus an expanded minimal fixture). Each addition is schema-valid + semantically neutral (absent-key ≡ null for optional nullable scalars, absent-key ≡ empty for optional lists). The fixture modifications are captured in the `test_base_block_from_fixture` docstring for future maintainers.
+
+#### Breaking changes
+None. This track is purely additive — new package, no changes to existing analyzer or detector code.
+
+#### Unblocks
+- Track 2.3 — `lookup(mpn) -> DatasheetFacts | None` facade can now return a typed instance.
+- Track 2.4 — trust-gating helpers (`best()`, `trusted()`) attach to existing dataclass types.
+- Track 2.5 — v1.3 compat wrappers can build dicts from `DatasheetFacts` instances via `to_dict()`.
+- Harness A3 (trust-gating tests with canned `DatasheetFacts` fixtures) — Track 2.2 provides the shape; A3 unblocks fully at Track 2.3 when `lookup()` is in place.
+
 ### Track 2.1 — Datasheet v2 JSON Schemas (2026-04-19)
 
 **Theme: Canonical schema infrastructure for datasheet extraction v2.**
