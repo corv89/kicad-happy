@@ -427,7 +427,21 @@ def test_pin_relationship_roundtrip() -> None:
 
 
 def test_base_block_from_fixture() -> None:
-    """Full round-trip of the LM2596-ADJ fixture's base section."""
+    """Full round-trip of the LM2596-ADJ fixture's base section.
+
+    This test's `to_dict(obj) == base_raw` byte-equality assertion
+    requires the fixture to include every optional field — absent
+    keys must appear as explicit nulls/empty-lists — because the
+    codec's to_dict emits all declared fields. Track 2.1's original
+    fixture was completed in Task 3 (package.pitch_mm, body_mm;
+    base.moisture_sensitivity, compliance) to satisfy this invariant.
+
+    Alternative considered: loosen the assertion to subset-equality
+    on keys present in base_raw. Rejected because byte-equality is
+    a stronger contract and the fixture additions are schema-valid +
+    semantically neutral (null for optional scalars, [] for optional
+    arrays, both accepted by base.schema.json).
+    """
     from datasheet_types.base_block import BaseBlock
     from datasheet_types.codec import from_dict, to_dict
 

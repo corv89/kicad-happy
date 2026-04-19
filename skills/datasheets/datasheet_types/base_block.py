@@ -4,6 +4,17 @@ Mirrors base.schema.json. The ratings dicts (absolute_max,
 recommended_operating, esd, thermal) are keyed by parameter name
 (e.g. 'VIN_max') → list[SpecValue], matching the consumer-indexability
 shape from spec §4.
+
+Field-ordering note: Python dataclass syntax requires every required
+field (no default) to precede every optional field (with default). The
+JSON schema property order for BaseBlock puts `description` second
+(optional) ahead of `absolute_max` (required) — Python forbids this.
+BaseBlock resolves the tension by grouping all 5 required fields first
+(family, package, absolute_max, recommended_operating, pinout), then
+all 6 optional fields in schema order. `to_dict` output key order
+therefore deviates from schema property order but remains stable
+across runs. Consumers should not rely on either — dict key order
+is not part of the contract.
 """
 from __future__ import annotations
 
@@ -73,7 +84,12 @@ class PinRelationship:
     stacked_internal, exclusive_with, timing_critical.
     """
     type: str = field(metadata={
-        "description": "Relationship kind (closed enum — see base.schema.json)."})
+        "description": "Relationship kind. Closed enum in base.schema.json — 8 values: "
+                       "compensation_network, matched_pair, requires_pullup, "
+                       "requires_pulldown, current_programming, stacked_internal, "
+                       "exclusive_with, timing_critical. The dataclass stores any "
+                       "string; enum enforcement happens at JSON-schema validation "
+                       "(cache-write time), not at dataclass construction."})
     pins: list[str] = field(metadata={
         "description": "Pin numbers involved in this relationship."})
     notes: Optional[str] = field(default=None, metadata={
