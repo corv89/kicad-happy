@@ -54,3 +54,13 @@ def test_gerber_inputs_block_populated():
     for p in inputs["source_files"]:
         assert len(inputs["source_hashes"][p]) == 64
     assert inputs["upstream_artifacts"] == {}
+
+
+def test_gerber_compat_block_v1_4_defaults():
+    """Track 1.4: every envelope emits a CompatBlock with v1.4 defaults."""
+    out = _run([str(GERBER), str(FIXTURE)])
+    result = json.loads(out)
+    compat = result["compat"]
+    assert compat["minimum_consumer_version"] == "1.4.0"
+    assert compat["deprecated_fields"] == []
+    assert compat["experimental_fields"] == []

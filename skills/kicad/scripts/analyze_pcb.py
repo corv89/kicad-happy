@@ -40,7 +40,7 @@ from pcb_connectivity import build_connectivity_graph
 from finding_schema import compute_trust_summary, sort_findings
 from envelopes.pcb import PCBEnvelope
 from schema_codec import emit_schema
-from inputs_builder import build_inputs
+from inputs_builder import build_inputs, build_compat
 
 
 # ---------------------------------------------------------------------------
@@ -6480,6 +6480,7 @@ def main():
         source_files=[_pcb_path],
         config_path=_cfg_path,
     )
+    compat = build_compat()
 
     schematic_data = None
     if args.schematic:
@@ -6504,6 +6505,7 @@ def main():
     # Inject provenance and drop legacy 'file' key (already removed from
     # internal result assembly, but belt-and-suspenders).
     result["inputs"] = inputs
+    result["compat"] = compat
     result.pop("file", None)
 
     # GP-001 debug: write per-sample diagnostics to disk and strip from output

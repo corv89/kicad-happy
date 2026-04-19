@@ -127,7 +127,7 @@ from validation_detectors import (
 from finding_schema import compute_trust_summary, sort_findings
 from envelopes.schematic import SchematicEnvelope
 from schema_codec import emit_schema
-from inputs_builder import build_inputs
+from inputs_builder import build_inputs, build_compat
 
 
 # ---------------------------------------------------------------------------
@@ -9094,6 +9094,7 @@ def main():
         source_files=[_sch_path],
         config_path=_cfg_path,
     )
+    compat = build_compat()
 
     result = analyze_schematic(args.schematic,
                                project_root=args.project_root,
@@ -9101,6 +9102,7 @@ def main():
     # Inject provenance and drop the legacy 'file' key (already removed
     # from internal result assembly, but belt-and-suspenders).
     result["inputs"] = inputs
+    result["compat"] = compat
     result.pop("file", None)
 
     # Attach project config summary to output for downstream consumers

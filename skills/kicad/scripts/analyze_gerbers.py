@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from envelopes.gerber import GerberEnvelope  # noqa: E402
 from schema_codec import emit_schema  # noqa: E402
-from inputs_builder import build_inputs  # noqa: E402
+from inputs_builder import build_inputs, build_compat  # noqa: E402
 
 
 _POWER_KEYWORDS_GERBER = {"vcc", "vdd", "gnd", "agnd", "dgnd", "gndref",
@@ -1589,10 +1589,12 @@ def main():
             elif p.suffix.lower() == ".txt" and _is_excellon_file(p):
                 _gerber_files.append(p)
     inputs = build_inputs(source_files=_gerber_files)
+    compat = build_compat()
 
     result = analyze_gerbers(args.directory, full=args.full)
     # Inject provenance.
     result["inputs"] = inputs
+    result["compat"] = compat
 
     from output_filters import apply_output_filters
     apply_output_filters(result, args.stage, args.audience)

@@ -40,7 +40,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 from analyzer_envelope import (  # noqa: E402
-    TrustSummary, Finding, Assessment, BySeverity, InputsBlock,
+    TrustSummary, Finding, Assessment, BySeverity, InputsBlock, CompatBlock,
 )
 
 
@@ -212,6 +212,9 @@ class PCBEnvelope:
     inputs: InputsBlock = field(metadata={
         "description": "Source files, hashes, run_id, config_hash, upstream "
                        "artifacts for this run."})
+    compat: CompatBlock = field(metadata={
+        "description": "Schema compatibility metadata: minimum consumer "
+                       "version + deprecated/experimental field lists."})
 
     # --- Universal core ---
     summary: PCBSummary = field(metadata={

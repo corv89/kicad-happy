@@ -82,3 +82,13 @@ def test_schematic_legacy_file_field_removed():
         "Legacy 'file' field must be removed from schematic envelope. "
         "Consumers must read inputs.source_files[0]."
     )
+
+
+def test_schematic_compat_block_v1_4_defaults():
+    """Track 1.4: every envelope emits a CompatBlock with v1.4 defaults."""
+    out = _run([str(SCHEMATIC), str(FIXTURE)])
+    result = json.loads(out)
+    compat = result["compat"]
+    assert compat["minimum_consumer_version"] == "1.4.0"
+    assert compat["deprecated_fields"] == []
+    assert compat["experimental_fields"] == []

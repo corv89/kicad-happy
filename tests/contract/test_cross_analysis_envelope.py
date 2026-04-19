@@ -68,3 +68,18 @@ def test_cross_analysis_inputs_upstream_artifacts_populated(tmp_path):
     assert "pcb" in upstream
     assert upstream["schematic"]["schema_version"] == "1.4.0"
     assert upstream["pcb"]["schema_version"] == "1.4.0"
+
+
+def test_cross_analysis_compat_block_v1_4_defaults(tmp_path):
+    """Track 1.4: every envelope emits a CompatBlock with v1.4 defaults."""
+    sch_json = tmp_path / "sch.json"
+    pcb_json = tmp_path / "pcb.json"
+    sch_json.write_text(_run([str(SCHEMATIC), str(FIXTURE / "simple.kicad_sch")]))
+    pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
+    result = json.loads(_run([
+        str(CROSS), "--schematic", str(sch_json), "--pcb", str(pcb_json)
+    ]))
+    compat = result["compat"]
+    assert compat["minimum_consumer_version"] == "1.4.0"
+    assert compat["deprecated_fields"] == []
+    assert compat["experimental_fields"] == []

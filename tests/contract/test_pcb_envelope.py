@@ -56,3 +56,13 @@ def test_pcb_inputs_block_populated():
 def test_pcb_legacy_file_field_removed():
     schema = json.loads(_run([str(PCB), "--schema"]))
     assert "file" not in schema["properties"]
+
+
+def test_pcb_compat_block_v1_4_defaults():
+    """Track 1.4: every envelope emits a CompatBlock with v1.4 defaults."""
+    out = _run([str(PCB), str(FIXTURE)])
+    result = json.loads(out)
+    compat = result["compat"]
+    assert compat["minimum_consumer_version"] == "1.4.0"
+    assert compat["deprecated_fields"] == []
+    assert compat["experimental_fields"] == []

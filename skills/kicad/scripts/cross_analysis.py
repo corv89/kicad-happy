@@ -27,7 +27,7 @@ from finding_schema import make_finding, compute_trust_summary
 from kicad_utils import build_net_id_map as _build_net_id_map
 from envelopes.cross_analysis import CrossAnalysisEnvelope
 from schema_codec import emit_schema
-from inputs_builder import build_inputs, build_upstream_artifact
+from inputs_builder import build_inputs, build_upstream_artifact, build_compat
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +950,7 @@ def main():
         source_files=_source_files,
         upstream_artifacts=_upstream_artifacts,
     )
+    compat = build_compat()
 
     findings = run_all_checks(schematic, pcb)
     elapsed = time.time() - t0
@@ -963,6 +964,7 @@ def main():
         'analyzer_type': 'cross_analysis',
         'schema_version': '1.4.0',
         'inputs': inputs,
+        'compat': compat,
         'elapsed_s': round(elapsed, 3),
         'summary': {'total_findings': len(findings), 'by_severity': sev_counts},
         'findings': findings,

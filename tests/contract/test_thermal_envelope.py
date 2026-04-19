@@ -112,3 +112,18 @@ def test_thermal_inputs_upstream_artifacts_populated(tmp_path):
     # source_files should list both JSON paths.
     assert str(sch_json) in inputs["source_files"]
     assert str(pcb_json) in inputs["source_files"]
+
+
+def test_thermal_compat_block_v1_4_defaults(tmp_path):
+    """Track 1.4: every envelope emits a CompatBlock with v1.4 defaults."""
+    sch_json = tmp_path / "sch.json"
+    pcb_json = tmp_path / "pcb.json"
+    sch_json.write_text(_run([str(SCHEMATIC), str(FIXTURE / "simple.kicad_sch")]))
+    pcb_json.write_text(_run([str(PCB), str(FIXTURE / "simple.kicad_pcb")]))
+    result = json.loads(_run([
+        str(THERMAL), "--schematic", str(sch_json), "--pcb", str(pcb_json)
+    ]))
+    compat = result["compat"]
+    assert compat["minimum_consumer_version"] == "1.4.0"
+    assert compat["deprecated_fields"] == []
+    assert compat["experimental_fields"] == []

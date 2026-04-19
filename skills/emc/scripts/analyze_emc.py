@@ -32,7 +32,7 @@ from emc_formulas import STANDARDS, MARKET_STANDARDS
 from finding_schema import compute_trust_summary
 from emc_envelope import EMCEnvelope
 from schema_codec import emit_schema
-from inputs_builder import build_inputs, build_upstream_artifact
+from inputs_builder import build_inputs, build_upstream_artifact, build_compat
 
 # Shared severity weights — used by both risk score and per-net scoring.
 # Keyed on the v1.3 envelope vocabulary (error/warning/info); legacy
@@ -425,6 +425,7 @@ def main():
         upstream_artifacts=_upstream_artifacts,
         config_path=_cfg_path,
     )
+    compat = build_compat()
 
     # Run analysis
     t0 = time.time()
@@ -493,6 +494,7 @@ def main():
         'analyzer_type': 'emc',
         'schema_version': '1.4.0',
         'inputs': inputs,
+        'compat': compat,
         'summary': {
             'total_findings': len(findings),
             'categories_checked': len(category_summary),

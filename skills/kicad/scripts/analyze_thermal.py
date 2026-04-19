@@ -26,7 +26,7 @@ import time
 
 from envelopes.thermal import ThermalEnvelope
 from schema_codec import emit_schema
-from inputs_builder import build_inputs, build_upstream_artifact
+from inputs_builder import build_inputs, build_upstream_artifact, build_compat
 
 
 # ---------------------------------------------------------------------------
@@ -956,6 +956,7 @@ def main():
         upstream_artifacts=_upstream_artifacts,
         config_path=_cfg_path,
     )
+    compat = build_compat()
 
     t0 = time.monotonic()
 
@@ -1015,6 +1016,7 @@ def main():
         "analyzer_type": "thermal",
         "schema_version": "1.4.0",
         "inputs": inputs,
+        "compat": compat,
         "summary": {
             "total_findings": len(findings),
             "components_assessed": len(assessments),

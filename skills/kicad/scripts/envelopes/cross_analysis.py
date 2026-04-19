@@ -40,7 +40,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 from analyzer_envelope import (  # noqa: E402
-    TrustSummary, Finding, Assessment, BySeverity, InputsBlock,
+    TrustSummary, Finding, Assessment, BySeverity, InputsBlock, CompatBlock,
 )
 
 
@@ -76,6 +76,9 @@ class CrossAnalysisEnvelope:
     inputs: InputsBlock = field(metadata={
         "description": "Source JSON inputs, sha256s, run_id, plus upstream "
                        "artifact metadata (schematic, pcb)."})
+    compat: CompatBlock = field(metadata={
+        "description": "Schema compatibility metadata: minimum consumer "
+                       "version + deprecated/experimental field lists."})
 
     # --- Universal core ---
     elapsed_s: float = field(metadata={

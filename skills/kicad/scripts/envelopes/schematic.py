@@ -30,7 +30,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 from analyzer_envelope import (  # noqa: E402
-    TrustSummary, Finding, Assessment, BySeverity, TitleBlock, InputsBlock,
+    TrustSummary, Finding, Assessment, BySeverity, TitleBlock, InputsBlock, CompatBlock,
 )
 
 
@@ -182,6 +182,9 @@ class SchematicEnvelope:
     inputs: InputsBlock = field(metadata={
         "description": "Source files, hashes, run_id, config_hash, upstream "
                        "artifacts for this run."})
+    compat: CompatBlock = field(metadata={
+        "description": "Schema compatibility metadata: minimum consumer "
+                       "version + deprecated/experimental field lists."})
 
     # --- Universal core ---
     summary: SchematicSummary = field(metadata={
