@@ -723,7 +723,7 @@ def test_datasheet_facts_from_minimal_fixture() -> None:
 def test_public_api_exports() -> None:
     """__init__.py must re-export every name consumers rely on.
 
-    Exhaustively checks all 19 public names in __all__ so a regression
+    Exhaustively checks all 22 public names in __all__ so a regression
     that accidentally drops one of them from the re-export block or
     __all__ is caught immediately.
     """
@@ -756,6 +756,10 @@ def test_public_api_exports() -> None:
         "Sequencing",
         # Consumer API entry point (lazy re-export from scripts/)
         "lookup",
+        # Track 2.4 trust gating
+        "best",
+        "trusted",
+        "has_data",
     }
     for name in expected_names:
         assert hasattr(ds_types, name), f"public API missing export: {name}"

@@ -179,3 +179,33 @@ def test_trusted_invalid_min_confidence_raises_valueerror() -> None:
 
     with pytest.raises(ValueError, match="min_confidence must be"):
         trusted([_make_spec(1.0, "high")], min_confidence="extreme")
+
+
+# ---------------------------------------------------------------------------
+# Public API re-exports
+# ---------------------------------------------------------------------------
+
+def test_trust_gating_reexported_from_datasheet_types() -> None:
+    """datasheet_types re-exports best, trusted, has_data at package level.
+
+    Spec §11/§12 consumer pattern:
+        from datasheet_types import best, trusted, has_data
+    """
+    import datasheet_types
+    from datasheet_types.trust_gating import (
+        best as best_direct,
+        trusted as trusted_direct,
+        has_data as has_data_direct,
+    )
+
+    assert hasattr(datasheet_types, "best")
+    assert hasattr(datasheet_types, "trusted")
+    assert hasattr(datasheet_types, "has_data")
+    # Identity equality — same callable, not a copy.
+    assert datasheet_types.best is best_direct
+    assert datasheet_types.trusted is trusted_direct
+    assert datasheet_types.has_data is has_data_direct
+    # __all__ includes them so `from datasheet_types import *` pulls them in.
+    assert "best" in datasheet_types.__all__
+    assert "trusted" in datasheet_types.__all__
+    assert "has_data" in datasheet_types.__all__

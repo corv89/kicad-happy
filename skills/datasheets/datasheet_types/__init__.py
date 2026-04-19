@@ -9,15 +9,19 @@ Public API:
     Pin, AltFunction, Pinout — pinout types
     BaseBlock, Package, ComplianceMark, PinRelationship — base block types
     Regulator, StabilityConditions, Sequencing — regulator category
+    lookup — resolve MPN to DatasheetFacts (lazy re-export from scripts/)
+    best, trusted, has_data — trust-gating helpers (Track 2.4)
 
 Consumers import:
     from datasheet_types.extraction import DatasheetFacts
     from datasheet_types.codec import from_dict, to_dict
     facts = from_dict(DatasheetFacts, json.load(open('cache/LM2596-ADJ.json')))
 
-lookup() (resolving an MPN to a DatasheetFacts) and trust-gating
-helpers (.best(), .trusted()) are NOT in this package — they land in
-Tracks 2.3 and 2.4 respectively.
+    # Trust-gating pattern (spec §11/§12):
+    from datasheet_types import best, trusted, has_data, lookup
+    ds = lookup("LM2596-ADJ", cache_dir=...)
+    if has_data(ds.regulator.vin_range):
+        v = best(ds.regulator.vin_range, min_confidence="medium")
 """
 from .spec_value import SpecValue, Evidence
 from .pinout import Pin, AltFunction, Pinout
@@ -31,6 +35,7 @@ from .base_block import (
 )
 from .regulator import Regulator, StabilityConditions, Sequencing
 from .extraction import DatasheetFacts, Source, ExtractionMeta, SchemaVersion
+from .trust_gating import best, trusted, has_data
 
 __all__ = [
     "DatasheetFacts",
@@ -52,6 +57,9 @@ __all__ = [
     "StabilityConditions",
     "Sequencing",
     "lookup",
+    "best",
+    "trusted",
+    "has_data",
 ]
 
 
