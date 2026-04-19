@@ -340,3 +340,132 @@ def test_pinout_roundtrip_through_codec() -> None:
     assert isinstance(emitted, list)
     assert emitted[0]["name"] == "VIN"
     assert emitted[1]["name"] == "GND"
+
+
+# ---------------------------------------------------------------------------
+# BaseBlock + Package + ComplianceMark + PinRelationship + MoistureSensitivity
+# ---------------------------------------------------------------------------
+
+def test_package_roundtrip() -> None:
+    from datasheet_types.base_block import Package
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "code": "TO-263-5",
+        "pin_count": 5,
+        "pitch_mm": None,
+        "body_mm": None,
+        "thermal_pad": True,
+        "evidence": {"page": 1, "section": "Features", "confidence": "high", "method": "prose"},
+    }
+    obj = from_dict(Package, raw)
+    assert obj.code == "TO-263-5"
+    assert obj.pin_count == 5
+    assert obj.thermal_pad is True
+    assert obj.evidence.page == 1
+    assert to_dict(obj) == raw
+
+
+def test_body_mm_roundtrip() -> None:
+    from datasheet_types.base_block import BodyMm
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {"length": 9.9, "width": 5.1, "height": 4.57}
+    obj = from_dict(BodyMm, raw)
+    assert obj.length == 9.9
+    assert obj.width == 5.1
+    assert obj.height == 4.57
+    assert to_dict(obj) == raw
+
+
+def test_moisture_sensitivity_roundtrip() -> None:
+    from datasheet_types.base_block import MoistureSensitivity
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "msl": 3,
+        "peak_reflow_c": 260.0,
+        "evidence": {"page": 8, "section": "Package Markings", "confidence": "high", "method": "table"},
+    }
+    obj = from_dict(MoistureSensitivity, raw)
+    assert obj.msl == 3
+    assert obj.peak_reflow_c == 260.0
+    assert to_dict(obj) == raw
+
+
+def test_compliance_mark_roundtrip() -> None:
+    from datasheet_types.base_block import ComplianceMark
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "mark": "AEC-Q100",
+        "rating": "Grade 1",
+        "evidence": {"page": 1, "section": "Features", "confidence": "high", "method": "prose"},
+    }
+    obj = from_dict(ComplianceMark, raw)
+    assert obj.mark == "AEC-Q100"
+    assert obj.rating == "Grade 1"
+    assert to_dict(obj) == raw
+
+
+def test_pin_relationship_roundtrip() -> None:
+    from datasheet_types.base_block import PinRelationship
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "type": "requires_pullup",
+        "pins": ["5"],
+        "notes": "Tie EN to VIN via 10k if unused",
+        "evidence": None,
+    }
+    obj = from_dict(PinRelationship, raw)
+    assert obj.type == "requires_pullup"
+    assert obj.pins == ["5"]
+    assert obj.notes == "Tie EN to VIN via 10k if unused"
+    assert obj.evidence is None
+    assert to_dict(obj) == raw
+
+
+def test_base_block_from_fixture() -> None:
+    """Full round-trip of the LM2596-ADJ fixture's base section."""
+    from datasheet_types.base_block import BaseBlock
+    from datasheet_types.codec import from_dict, to_dict
+
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    base_raw = fixture["base"]
+    obj = from_dict(BaseBlock, base_raw)
+
+    # Sanity-check typed access.
+    assert obj.family == "step-down switching regulator"
+    assert obj.package.code == "TO-263-5"
+    assert obj.package.thermal_pad is True
+    # Keyed-object shape: absolute_max["VIN_max"] is list[SpecValue].
+    assert obj.absolute_max["VIN_max"][0].max == 45
+    assert obj.absolute_max["VIN_max"][0].unit == "V"
+    # Thermal uses compound units.
+    assert obj.thermal["theta_ja"][0].unit == "°C/W"
+    assert obj.thermal["theta_ja"][0].typ == 50
+    # Pinout access via wrapper.
+    assert len(obj.pinout) == 5
+    fb = obj.pinout.find(name="FB")
+    assert fb is not None
+    assert fb.numbers == ["4"]
+    # pin_relationships empty list on this fixture.
+    assert obj.pin_relationships == []
+    # Round-trip matches the original shape byte-for-byte.
+    emitted = to_dict(obj)
+    assert emitted == base_raw
+
+
+def test_base_block_absolute_max_required() -> None:
+    """absolute_max is required — raises if missing."""
+    from datasheet_types.base_block import BaseBlock
+    from datasheet_types.codec import from_dict
+
+    # Start from a valid minimal base and strip the required key.
+    fixture = _load_json(FIXTURE_DIR / "minimal.example.json")
+    bad = dict(fixture["base"])
+    del bad["absolute_max"]
+
+    with pytest.raises(KeyError):
+        from_dict(BaseBlock, bad)

@@ -27,6 +27,8 @@
     "package": {
       "code": "TO-263-5",
       "pin_count": 5,
+      "pitch_mm": null,
+      "body_mm": null,
       "thermal_pad": true,
       "evidence": {"page": 1, "section": "Features", "confidence": "high", "method": "prose"}
     },
@@ -106,6 +108,8 @@
         "evidence": {"page": 2, "section": "Pin Configuration and Functions", "confidence": "high", "method": "table"}
       }
     ],
+    "moisture_sensitivity": null,
+    "compliance": [],
     "pin_relationships": []
   },
   "categories": ["regulator"],
