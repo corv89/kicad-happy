@@ -23,7 +23,7 @@ Seven new Python modules under `skills/datasheets/datasheet_types/` mirror the T
 
 `skills/datasheets/datasheet_types/__init__.py` re-exports the 18 public names consumers need: `DatasheetFacts`, `SpecValue`, `Evidence`, `Pin`, `AltFunction`, `Pinout`, `BaseBlock`, `Package`, `BodyMm`, `MoistureSensitivity`, `ComplianceMark`, `PinRelationship`, `Regulator`, `StabilityConditions`, `Sequencing`, `Source`, `ExtractionMeta`, `SchemaVersion`.
 
-Tests: `tests/contract/test_datasheet_types.py` — 35 contract tests covering per-type round-trip, canonical-SI value preservation, Pinout lookup helpers, codec type-guards (non-list / non-dict inputs raise TypeError), `omit_if_none` policy, and full end-to-end round-trip of both Track 2.1 fixtures (LM2596-ADJ + minimal) with schema re-validation. `to_dict(from_dict(DatasheetFacts, fixture))` matches each fixture via Python dict equality (key-value-equivalent, order-independent); JSON text byte-equality does not hold for lm2596-adj due to required-first Python dataclass ordering vs schema property order — cache rewrites are semantically idempotent but not text-idempotent.
+Tests: `tests/contract/test_datasheet_types.py` — 34 contract tests covering per-type round-trip, canonical-SI value preservation, Pinout lookup helpers, codec type-guards (non-list / non-dict inputs raise TypeError), `omit_if_none` policy, and full end-to-end round-trip of both Track 2.1 fixtures (LM2596-ADJ + minimal) with schema re-validation. `to_dict(from_dict(DatasheetFacts, fixture))` matches each fixture via Python dict equality (key-value-equivalent, order-independent); JSON text byte-equality does not hold for lm2596-adj due to required-first Python dataclass ordering vs schema property order — cache rewrites are semantically idempotent but not text-idempotent.
 
 The JSON schemas remain source of truth. The dataclasses are NOT derived from them — parity is enforced by fixture round-trip tests, not by code generation. Schema constraints richer than dataclass reflection can express (`patternProperties`, closed enums, `x-*` annotations) stay in the JSON.
 
@@ -53,7 +53,7 @@ Six Draft 2020-12 schemas land under `skills/datasheets/schemas/` — the founda
 
 Alongside the schemas:
 - `fixtures/lm2596-adj.example.json`, `fixtures/minimal.example.json`, `fixtures/manifest.example.json` — round-trip fixtures covering realistic and minimal-valid shapes. LM2596-ADJ exercises the full `$ref` chain (extraction → base → pinout + spec_value, extraction → regulator → spec_value).
-- `tests/contract/test_datasheet_schemas.py` — validates Draft 2020-12 conformance + fixture → schema round-trip via `referencing.Registry`. 35 tests total.
+- `tests/contract/test_datasheet_schemas.py` — validates Draft 2020-12 conformance + fixture → schema round-trip via `referencing.Registry`. 36 tests total.
 - `schemas/CHANGELOG.md` — per-schema semver-lite rules (additive within minor, breaking = major, stale-one-section-only).
 
 No runtime code changes. Consumer API (`lookup()`), typed access layer (`DatasheetFacts`, `SpecValue`, `Pin` dataclasses), trust gating helpers (`best()`, `trusted()`), and v1.3 compat wrappers land in sub-tracks 2.2–2.6.
