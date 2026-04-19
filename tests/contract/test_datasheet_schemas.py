@@ -428,3 +428,27 @@ def test_manifest_preserves_legacy_extractions_section() -> None:
     the compat layer works without a data migration step."""
     schema = _load_json(SCHEMA_DIR / "manifest.schema.json")
     assert "extractions" in schema["properties"]
+
+
+# ---------------------------------------------------------------------------
+# SpecValue unit enum — negative (rejection) tests
+# ---------------------------------------------------------------------------
+
+def test_spec_value_rejects_prefixed_units() -> None:
+    """Extraction must convert prefixed units (mV, kHz, µF, ...) to
+    canonical SI before caching. Negative test: a fixture with any
+    prefixed unit must fail validation.
+
+    This locks the canonical-SI contract so a future enum expansion
+    can't accidentally open it without a deliberate test change.
+    """
+    schema = _load_json(SCHEMA_DIR / "spec_value.schema.json")
+    registry = _build_registry()
+    validator = Draft202012Validator(schema, registry=registry)
+    for bad_unit in ("mV", "kHz", "µF", "mA", "kΩ", "nF", "uF", "MΩ"):
+        bad = {
+            "unit": bad_unit,
+            "evidence": {"page": 1, "confidence": "high", "method": "table"},
+        }
+        errors = list(validator.iter_errors(bad))
+        assert errors, f"unit {bad_unit!r} should have been rejected"

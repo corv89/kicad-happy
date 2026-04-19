@@ -28,10 +28,11 @@
         "pitch_mm": {"type": ["number", "null"], "minimum": 0},
         "body_mm": {
           "type": ["object", "null"],
+          "additionalProperties": false,
           "properties": {
-            "length": {"type": "number"},
-            "width": {"type": "number"},
-            "height": {"type": "number"}
+            "length": {"type": "number", "description": "Body length in millimeters along the longest axis."},
+            "width": {"type": "number", "description": "Body width in millimeters along the perpendicular-to-length axis."},
+            "height": {"type": "number", "description": "Body height in millimeters (package thickness / standoff direction)."}
           }
         },
         "thermal_pad": {"type": ["boolean", "null"]},
