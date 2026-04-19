@@ -49,6 +49,7 @@ def _build_registry() -> Registry:
 
 SCHEMA_FILES = [
     "spec_value.schema.json",
+    "pinout.schema.json",
 ]
 
 
@@ -113,3 +114,65 @@ def test_spec_value_numeric_fields_are_nullable_numbers() -> None:
         # Each may be a number or null (datasheet doesn't always publish
         # all three). Consumers check for None explicitly.
         assert props[key]["type"] == ["number", "null"]
+
+
+# ---------------------------------------------------------------------------
+# Pinout-specific shape assertions
+# ---------------------------------------------------------------------------
+
+def test_pinout_pin_object_shape() -> None:
+    schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
+    pin = schema["$defs"]["Pin"]
+    required = set(pin["required"])
+    # numbers, name, type are the minimum any pin record must carry.
+    # Everything else is null/optional until extraction populates it.
+    assert required == {"numbers", "name", "type"}
+
+
+def test_pinout_numbers_is_array_of_strings() -> None:
+    schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
+    pin = schema["$defs"]["Pin"]
+    numbers = pin["properties"]["numbers"]
+    # Always an array even for single-pin records. Strings to handle BGA
+    # grids ("A1"), LGA, stacked internal pins (["3","4","5"]), etc.
+    assert numbers["type"] == "array"
+    assert numbers["items"]["type"] == "string"
+    assert numbers["minItems"] == 1
+
+
+def test_pinout_type_uses_kicad_erc_vocabulary() -> None:
+    schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
+    pin_type = schema["$defs"]["Pin"]["properties"]["type"]
+    # Vocabulary mirrors KiCad's ERC pin-type matrix so detectors can
+    # cross-reference against symbol pin types directly.
+    assert set(pin_type["enum"]) == {
+        "input", "output", "bidirectional", "tri_state", "passive",
+        "open_collector", "open_emitter", "power_in", "power_out",
+        "not_connected", "unspecified",
+    }
+
+
+def test_pinout_alt_function_shape() -> None:
+    schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
+    alt = schema["$defs"]["AltFunction"]
+    required = set(alt["required"])
+    assert "name" in required
+    # peripheral is required because detectors filter by peripheral family
+    # (e.g. PM-001 "does this pin support UART?").
+    assert "peripheral" in required
+
+
+def test_pinout_top_level_is_array_of_pins() -> None:
+    schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
+    # The schema exposes two top-level types: Pin (via $defs) and
+    # Pinout (via the root type), letting base.schema.json use either.
+    assert schema["type"] == "array"
+    assert schema["items"]["$ref"] == "#/$defs/Pin"
+
+
+def test_pinout_still_calibrating_marker() -> None:
+    """Pin schema is additive-only-calibrating through v1.4 per spec §5."""
+    schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
+    # Custom annotation — non-normative, but documents the stability
+    # promise so downstream readers know the schema may shift before v1.5.
+    assert schema.get("x-still-calibrating") is True
