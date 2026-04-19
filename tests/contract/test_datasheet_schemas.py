@@ -51,6 +51,7 @@ SCHEMA_FILES = [
     "spec_value.schema.json",
     "pinout.schema.json",
     "base.schema.json",
+    "regulator.schema.json",
 ]
 
 
@@ -248,3 +249,54 @@ def test_base_compliance_is_array_of_marks() -> None:
     # (CM-001 reads compliance for AEC-Q100, IEC 62368, etc.).
     item = comp["items"]
     assert "mark" in item["properties"]
+
+
+# ---------------------------------------------------------------------------
+# Regulator-specific shape assertions
+# ---------------------------------------------------------------------------
+
+def test_regulator_topology_enum() -> None:
+    schema = _load_json(SCHEMA_DIR / "regulator.schema.json")
+    topo = schema["properties"]["topology"]
+    # Flat vocabulary per spec §7. subtype lives inside the 'topology'
+    # enum directly — no nested category/subtype split.
+    expected = {
+        "ldo", "buck", "boost", "buck_boost",
+        "sepic", "flyback", "charge_pump", "isolated",
+    }
+    assert set(topo["enum"]) == expected
+
+
+def test_regulator_required_fields() -> None:
+    schema = _load_json(SCHEMA_DIR / "regulator.schema.json")
+    required = set(schema["required"])
+    # topology is the only hard-required field — every regulator knows its
+    # own topology. Every other field is optional because datasheet
+    # coverage varies (LDOs rarely publish inductor range; boost converters
+    # don't have dropout specs, etc.).
+    assert required == {"topology"}
+
+
+def test_regulator_spec_value_array_fields() -> None:
+    schema = _load_json(SCHEMA_DIR / "regulator.schema.json")
+    props = schema["properties"]
+    # All electrical parameters are optional SpecValue[].
+    spec_value_fields = [
+        "vin_range", "vout_range", "iout_max", "reference_voltage",
+        "cin_min", "cout_min", "inductor_range", "switching_freq",
+        "dropout", "psrr", "line_regulation", "load_regulation",
+    ]
+    for f in spec_value_fields:
+        prop = props[f]
+        # Nullable array of SpecValue.
+        assert prop["type"] == ["array", "null"], f"{f} wrong type shape"
+        assert "spec_value.schema.json" in prop["items"]["$ref"]
+
+
+def test_regulator_pin_references_are_strings() -> None:
+    """feedback_pin, compensation_pin, enable_pin, power_good_pin are
+    pin number references — must resolve to base.pinout[*].numbers."""
+    schema = _load_json(SCHEMA_DIR / "regulator.schema.json")
+    props = schema["properties"]
+    for f in ("feedback_pin", "compensation_pin", "enable_pin", "power_good_pin"):
+        assert props[f]["type"] == ["string", "null"]
