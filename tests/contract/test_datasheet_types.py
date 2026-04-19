@@ -21,8 +21,7 @@ from referencing import Registry, Resource
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = REPO_ROOT / "skills" / "datasheets" / "schemas"
-FIXTURE_DIR = SCHEMA_DIR / "fixtures"
-TYPES_DIR = REPO_ROOT / "skills" / "datasheets" / "datasheet_types"
+FIXTURE_DIR = SCHEMA_DIR / "fixtures"  # Used by fixture round-trip tests in Tasks 3 and 5.
 
 # Make skills/datasheets/datasheet_types/ importable as a top-level 'datasheet_types' package.
 sys.path.insert(0, str(REPO_ROOT / "skills" / "datasheets"))
@@ -127,3 +126,23 @@ def test_evidence_nullable_section_preserved() -> None:
     obj = from_dict(Evidence, raw)
     assert obj.section is None
     assert to_dict(obj) == raw
+
+
+def test_codec_list_field_rejects_non_list() -> None:
+    """from_dict raises TypeError when a list-typed field gets a non-list value.
+
+    Guards against silent string-iteration bugs that would confuse
+    downstream dict[str, list[T]] consumers (Task 3's BaseBlock).
+    """
+    from datasheet_types.codec import _from_value
+
+    with pytest.raises(TypeError, match="Expected list"):
+        _from_value(list[str], "not-a-list")
+
+
+def test_codec_dict_field_rejects_non_dict() -> None:
+    """from_dict raises TypeError when a dict-typed field gets a non-dict value."""
+    from datasheet_types.codec import _from_value
+
+    with pytest.raises(TypeError, match="Expected dict"):
+        _from_value(dict[str, int], [1, 2, 3])

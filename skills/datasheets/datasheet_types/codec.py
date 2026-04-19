@@ -20,7 +20,6 @@ Stdlib only.
 """
 from __future__ import annotations
 
-import dataclasses
 import types as _types
 import typing
 from dataclasses import MISSING, fields, is_dataclass
@@ -97,11 +96,19 @@ def _from_value(hint, value):
     # list[T]
     if origin is list:
         (item_type,) = args
+        if not isinstance(value, list):
+            raise TypeError(
+                f"Expected list for {hint!r}, got {type(value).__name__}: {value!r}"
+            )
         return [_from_value(item_type, item) for item in value]
 
     # dict[str, T]
     if origin is dict:
         _, value_type = args
+        if not isinstance(value, dict):
+            raise TypeError(
+                f"Expected dict for {hint!r}, got {type(value).__name__}: {value!r}"
+            )
         return {k: _from_value(value_type, v) for k, v in value.items()}
 
     # Dataclass or Pinout
