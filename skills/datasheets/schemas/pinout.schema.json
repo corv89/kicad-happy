@@ -102,10 +102,25 @@
           "required": ["page", "confidence", "method"],
           "additionalProperties": false,
           "properties": {
-            "page": {"type": "integer", "minimum": 1},
-            "section": {"type": ["string", "null"]},
-            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-            "method": {"type": "string", "enum": ["table", "prose", "curve", "calculated", "derived"]}
+            "page": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "PDF page number (1-based) where the pin entry was sourced."
+            },
+            "section": {
+              "type": ["string", "null"],
+              "description": "Datasheet section label (e.g. 'Pin Configuration and Functions') when available."
+            },
+            "confidence": {
+              "type": "string",
+              "enum": ["high", "medium", "low"],
+              "description": "Extractor confidence in this pin entry. Pivots consumer trust gating."
+            },
+            "method": {
+              "type": "string",
+              "enum": ["table", "prose", "curve", "calculated", "derived"],
+              "description": "How the pin entry was captured. 'table' = pinout table. 'prose' = narrative text. 'curve' = pinout diagram. 'calculated' / 'derived' = inferred from other datasheet facts."
+            }
           },
           "description": "Provenance for this pin entry. null only for derived/internal entries."
         }

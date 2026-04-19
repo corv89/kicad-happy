@@ -156,10 +156,10 @@ def test_pinout_alt_function_shape() -> None:
     schema = _load_json(SCHEMA_DIR / "pinout.schema.json")
     alt = schema["$defs"]["AltFunction"]
     required = set(alt["required"])
-    assert "name" in required
-    # peripheral is required because detectors filter by peripheral family
-    # (e.g. PM-001 "does this pin support UART?").
-    assert "peripheral" in required
+    # Only name + peripheral are required; role and af_code are optional
+    # because many fixed-peripheral alt functions don't publish a role.
+    # Detectors filter on peripheral (e.g. PM-001 "does this pin support UART?").
+    assert required == {"name", "peripheral"}
 
 
 def test_pinout_top_level_is_array_of_pins() -> None:
