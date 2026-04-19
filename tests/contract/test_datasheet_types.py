@@ -711,14 +711,41 @@ def test_datasheet_facts_from_minimal_fixture() -> None:
 
 
 def test_public_api_exports() -> None:
-    """__init__.py must re-export the consumer-facing types."""
-    import datasheet_types as ds_types  # the skills/datasheets/datasheet_types package
-    # Public API surface per the spec §11 consumer pattern.
-    assert hasattr(ds_types, "DatasheetFacts")
-    assert hasattr(ds_types, "SpecValue")
-    assert hasattr(ds_types, "Evidence")
-    assert hasattr(ds_types, "Pin")
-    assert hasattr(ds_types, "AltFunction")
-    assert hasattr(ds_types, "Pinout")
-    assert hasattr(ds_types, "BaseBlock")
-    assert hasattr(ds_types, "Regulator")
+    """__init__.py must re-export every name consumers rely on.
+
+    Exhaustively checks all 18 public names in __all__ so a regression
+    that accidentally drops one of them from the re-export block or
+    __all__ is caught immediately.
+    """
+    import datasheet_types as ds_types
+
+    expected_names = {
+        # Top-level facade
+        "DatasheetFacts",
+        # Envelope sub-types
+        "SchemaVersion",
+        "Source",
+        "ExtractionMeta",
+        # Base block + sub-types
+        "BaseBlock",
+        "Package",
+        "BodyMm",
+        "MoistureSensitivity",
+        "ComplianceMark",
+        "PinRelationship",
+        # Pinout types
+        "Pinout",
+        "Pin",
+        "AltFunction",
+        # Primitives
+        "SpecValue",
+        "Evidence",
+        # Regulator category
+        "Regulator",
+        "StabilityConditions",
+        "Sequencing",
+    }
+    for name in expected_names:
+        assert hasattr(ds_types, name), f"public API missing export: {name}"
+    # __all__ agrees with what's importable.
+    assert set(ds_types.__all__) == expected_names

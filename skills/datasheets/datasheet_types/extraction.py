@@ -7,6 +7,25 @@ extensions.
 lookup() itself is NOT in this module — Track 2.3 lands that alongside
 cache-path resolution + staleness detection. Track 2.2 delivers only
 the typed shape.
+
+Field-ordering note (same rationale as BaseBlock in base_block.py):
+Python dataclass syntax requires every required field (no default) to
+precede every optional field (with default). The JSON schema property
+order puts required fields interleaved with optionals — e.g. Source's
+sha256 is required (position 7 in schema) but datasheet_revision /
+datasheet_date / source_url / local_path at positions 3-6 are optional.
+Python forbids sha256 appearing after them. Source and ExtractionMeta
+therefore group all required fields first, then all optional fields
+in schema order. to_dict output key ordering diverges from schema
+property order but matches schema values — consumers should not rely
+on JSON key order (dict equality is value-based, the round-trip tests
+pass via value equality).
+
+Category-sibling fields (DatasheetFacts.regulator today; v1.5 adds
+mcu/opamp/diode/transistor/crystal) carry metadata={"omit_if_none":
+True}. The codec skips these when None rather than emitting explicit
+null — so "absent key" is canonical for "no category," and the JSON
+cache doesn't carry null placeholders for inactive categories.
 """
 from __future__ import annotations
 
@@ -80,6 +99,13 @@ class DatasheetFacts:
     MCU, opamp, diode, transistor, crystal).
 
     Consumers obtain instances via Track 2.3's lookup(mpn) facade.
+
+    v1.5 expansion note: adding a new category (e.g. `mcu: Optional[Mcu]
+    = field(default=None, metadata={"omit_if_none": True, ...})`) works
+    mechanically without any codec changes — the omit_if_none policy
+    documented in codec.to_dict generalizes to any category sibling.
+    A v1.4 consumer loading a v1.5 cache file will silently drop
+    unknown category sibling keys; this is scoped behavior, not a bug.
     """
     schema_version: SchemaVersion = field(metadata={
         "description": "Per-section schema versions."})
