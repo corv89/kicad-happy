@@ -21,10 +21,24 @@ Consumers import:
 """
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+
+# datasheet_types is a sibling package under skills/datasheets/.
+# The consumer is expected to add skills/datasheets/ to sys.path so
+# `import datasheet_types` resolves — but in case this module is loaded
+# directly (e.g. from scripts dir only), add the parent dir once.
+_TYPES_PARENT = str(Path(__file__).resolve().parent.parent)
+if _TYPES_PARENT not in sys.path:
+    sys.path.insert(0, _TYPES_PARENT)
+
+from datasheet_types.codec import from_dict  # noqa: E402
+from datasheet_types.extraction import DatasheetFacts  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -78,3 +92,58 @@ class CacheContext:
     pdf_path: Optional[Path] = None
     is_stale: bool = False
     stale_reason: Optional[str] = None  # "pdf_hash_mismatch" | "pdf_missing" | None
+
+
+# ---------------------------------------------------------------------------
+# lookup — the consumer API entry point
+# ---------------------------------------------------------------------------
+
+
+def lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]:
+    """Read-only MPN → DatasheetFacts lookup.
+
+    Resolves `cache_dir / <sanitize_mpn(mpn)>.json`, parses it into a
+    typed DatasheetFacts via the Track 2.2 codec, attaches a CacheContext
+    (staleness detection comes in Task 4), and returns the instance.
+
+    Returns None when:
+        - cache_dir does not exist
+        - cache file for this MPN does not exist
+        - cache file contains malformed JSON
+        - cache file is JSON but does not satisfy DatasheetFacts shape
+          (required fields missing)
+
+    Per spec §11: pure read — never writes, never extracts, never
+    triggers an LLM call. On cache miss, caller is responsible for
+    triggering `datasheets sync` or equivalent.
+
+    Args:
+        mpn: Manufacturer part number. Sanitized for filename lookup.
+        cache_dir: Path to the datasheets/extracted/ directory.
+
+    Returns:
+        A DatasheetFacts instance with attached _cache_context, or None.
+    """
+    cache_dir = Path(cache_dir)
+    if not cache_dir.is_dir():
+        return None
+
+    cache_file = cache_path_for(mpn, cache_dir)
+    if not cache_file.is_file():
+        return None
+
+    try:
+        data = json.loads(cache_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    try:
+        facts = from_dict(DatasheetFacts, data)
+    except (KeyError, TypeError, ValueError):
+        # Missing required fields, wrong shape, invalid unit string, etc.
+        return None
+
+    # Attach cache context. Staleness detection lands in Task 4 —
+    # for now is_stale stays at its CacheContext default (False).
+    facts._cache_context = CacheContext(cache_path=cache_file)
+    return facts
