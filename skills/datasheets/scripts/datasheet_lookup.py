@@ -190,7 +190,7 @@ def lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]:
         return None
 
     try:
-        data = json.loads(cache_file.read_text())
+        data = json.loads(cache_file.read_bytes())
     except (json.JSONDecodeError, OSError):
         return None
 

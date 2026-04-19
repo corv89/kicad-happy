@@ -132,10 +132,13 @@ class DatasheetFacts:
     @property
     def quality(self) -> Optional[int]:
         """Overall extraction quality score (0–100). Passthrough to
-        extraction.quality_score. None when the extraction wasn't scored
-        or lookup context isn't populated.
+        extraction.quality_score — returns whatever the cached extraction
+        stored there. None when the extraction wasn't scored.
 
-        Spec §11 usage: `if ds.quality < 60: ...`
+        This property works identically regardless of whether _cache_context
+        is populated — it does not read cache context at all.
+
+        Spec §11 usage: `if ds.quality is not None and ds.quality < 60: ...`
         """
         return self.extraction.quality_score
 
@@ -157,13 +160,16 @@ class DatasheetFacts:
         return ctx.is_stale
 
     @property
-    def cache_path(self):
+    def cache_path(self) -> "Optional[Path]":
         """Path to the cache JSON this DatasheetFacts was loaded from,
         or None if constructed outside lookup(). Useful for debugging
         and cache-management tooling.
 
-        Return type is Optional[pathlib.Path]; typed as any to avoid
-        importing pathlib at module level (CacheContext owns the type).
+        Return type expressed as a string-literal annotation so we don't
+        need to import pathlib.Path at this module's load time — CacheContext
+        (in datasheet_lookup.py) is the authoritative owner of the Path type.
+        from __future__ import annotations (already in scope) makes the
+        literal resolve at type-checker time only.
         """
         ctx = getattr(self, "_cache_context", None)
         if ctx is None:

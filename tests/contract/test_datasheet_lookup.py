@@ -110,6 +110,20 @@ def test_lookup_returns_none_when_cache_json_malformed(tmp_path: Path) -> None:
     assert lookup("BROKEN", cache_dir=cache_dir) is None
 
 
+def test_lookup_returns_none_when_cache_file_binary_corrupt(tmp_path: Path) -> None:
+    """lookup returns None (not an exception) when the cache file is
+    non-UTF-8 binary garbage — guards against read_text raising
+    UnicodeDecodeError that would otherwise propagate to the caller.
+    """
+    from datasheet_lookup import lookup
+
+    cache_dir = tmp_path / "extracted"
+    cache_dir.mkdir()
+    # Write invalid UTF-8 bytes (0xff 0xfe is not a valid UTF-8 sequence).
+    (cache_dir / "CORRUPT.json").write_bytes(b"\xff\xfe\x00\x01not-json")
+    assert lookup("CORRUPT", cache_dir=cache_dir) is None
+
+
 def test_lookup_returns_none_when_cache_violates_shape(tmp_path: Path) -> None:
     """lookup returns None when the cache file parses as JSON but is
     missing required DatasheetFacts fields."""

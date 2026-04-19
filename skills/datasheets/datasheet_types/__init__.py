@@ -67,5 +67,6 @@ def __getattr__(name: str):
         if str(scripts_dir) not in sys.path:
             sys.path.insert(0, str(scripts_dir))
         from datasheet_lookup import lookup  # noqa: E402
+        globals()["lookup"] = lookup  # Cache so subsequent accesses skip __getattr__.
         return lookup
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
