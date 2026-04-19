@@ -566,3 +566,128 @@ def test_regulator_topology_required() -> None:
 
     with pytest.raises(KeyError):
         from_dict(Regulator, {})
+
+
+# ---------------------------------------------------------------------------
+# DatasheetFacts + Source + ExtractionMeta + SchemaVersion
+# (plus full end-to-end round-trip of both fixtures)
+# ---------------------------------------------------------------------------
+
+def test_schema_version_roundtrip() -> None:
+    from datasheet_types.extraction import SchemaVersion
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {"base": "1.0", "categories": {"regulator": "0.3"}}
+    obj = from_dict(SchemaVersion, raw)
+    assert obj.base == "1.0"
+    assert obj.categories == {"regulator": "0.3"}
+    assert to_dict(obj) == raw
+
+
+def test_source_roundtrip() -> None:
+    from datasheet_types.extraction import Source
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "manufacturer": "Texas Instruments",
+        "mpn": "LM2596-ADJ",
+        "datasheet_revision": "Rev M",
+        "datasheet_date": "2022-08",
+        "source_url": "https://www.ti.com/lit/ds/symlink/lm2596.pdf",
+        "local_path": "datasheets/LM2596-ADJ.pdf",
+        "sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "page_count": 32,
+        "family_ref": None,
+    }
+    obj = from_dict(Source, raw)
+    assert obj.manufacturer == "Texas Instruments"
+    assert obj.mpn == "LM2596-ADJ"
+    assert obj.sha256.startswith("sha256:")
+    assert obj.family_ref is None
+    assert to_dict(obj) == raw
+
+
+def test_extraction_meta_roundtrip() -> None:
+    from datasheet_types.extraction import ExtractionMeta
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "extracted_at": "2026-04-19T12:00:00Z",
+        "extractor_scout": "tier-B",
+        "extractor_schema_version": "1.0",
+        "quality_score": 87,
+        "plan_ref": "LM2596-ADJ.plan.json",
+    }
+    obj = from_dict(ExtractionMeta, raw)
+    assert obj.extracted_at == "2026-04-19T12:00:00Z"
+    assert obj.quality_score == 87
+    assert to_dict(obj) == raw
+
+
+def test_datasheet_facts_from_lm2596_fixture() -> None:
+    """End-to-end: load LM2596-ADJ fixture → DatasheetFacts → to_dict → re-validate."""
+    from datasheet_types.extraction import DatasheetFacts
+    from datasheet_types.codec import from_dict, to_dict
+
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    facts = from_dict(DatasheetFacts, fixture)
+
+    # Typed access across the full composition.
+    assert facts.source.mpn == "LM2596-ADJ"
+    assert facts.schema_version.base == "1.0"
+    assert facts.schema_version.categories["regulator"] == "0.3"
+    assert facts.base.family == "step-down switching regulator"
+    assert facts.base.package.code == "TO-263-5"
+    assert facts.categories == ["regulator"]
+    assert facts.regulator is not None
+    assert facts.regulator.topology == "buck"
+    # Pinout access across the stack.
+    en = facts.base.pinout.find(name="EN")
+    assert en is not None
+    assert en.numbers == ["5"]
+
+    # Round-trip byte-for-byte.
+    emitted = to_dict(facts)
+    assert emitted == fixture
+
+    # And re-validate against the extraction.schema.json.
+    schema = _load_json(SCHEMA_DIR / "extraction.schema.json")
+    registry = _build_registry()
+    validator = Draft202012Validator(schema, registry=registry)
+    errors = list(validator.iter_errors(emitted))
+    assert errors == [], "\n".join(str(e.message) for e in errors)
+
+
+def test_datasheet_facts_from_minimal_fixture() -> None:
+    """Minimal fixture — only required fields — round-trips cleanly."""
+    from datasheet_types.extraction import DatasheetFacts
+    from datasheet_types.codec import from_dict, to_dict
+
+    fixture = _load_json(FIXTURE_DIR / "minimal.example.json")
+    facts = from_dict(DatasheetFacts, fixture)
+
+    assert facts.source.mpn == "ACME-TEST-001"
+    assert facts.regulator is None  # optional, absent in minimal
+    assert facts.categories == []   # default_factory applies — absent field gets empty list
+
+    emitted = to_dict(facts)
+
+    schema = _load_json(SCHEMA_DIR / "extraction.schema.json")
+    registry = _build_registry()
+    validator = Draft202012Validator(schema, registry=registry)
+    errors = list(validator.iter_errors(emitted))
+    assert errors == [], "\n".join(str(e.message) for e in errors)
+
+
+def test_public_api_exports() -> None:
+    """__init__.py must re-export the consumer-facing types."""
+    import datasheet_types as ds_types  # the skills/datasheets/datasheet_types package
+    # Public API surface per the spec §11 consumer pattern.
+    assert hasattr(ds_types, "DatasheetFacts")
+    assert hasattr(ds_types, "SpecValue")
+    assert hasattr(ds_types, "Evidence")
+    assert hasattr(ds_types, "Pin")
+    assert hasattr(ds_types, "AltFunction")
+    assert hasattr(ds_types, "Pinout")
+    assert hasattr(ds_types, "BaseBlock")
+    assert hasattr(ds_types, "Regulator")
