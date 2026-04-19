@@ -273,11 +273,13 @@ Or `git pull` for symlink installs.
 
 ### Install
 
+Install the skills globally to `~/.gemini/skills/`:
+
 ```bash
 gemini skills install https://github.com/aklofas/kicad-happy.git
 ```
 
-This installs to `~/.gemini/skills/` (user scope) by default. For repo-local:
+For repo-local (workspace) installation:
 
 ```bash
 gemini skills install https://github.com/aklofas/kicad-happy.git --scope workspace
@@ -285,25 +287,29 @@ gemini skills install https://github.com/aklofas/kicad-happy.git --scope workspa
 
 ### Install (manual symlinks)
 
-Gemini CLI discovers skills from `~/.gemini/skills/` or `~/.agents/skills/`:
+Gemini CLI discovers skills from `~/.gemini/skills/` or `~/.agents/skills/`. The `gemini skills link` command is the standard way to set up a development environment:
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 cd kicad-happy
-mkdir -p ~/.gemini/skills
-for skill in kicad spice emc datasheets bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
-  ln -sf "$(pwd)/skills/$skill" ~/.gemini/skills/$skill
-done
+gemini skills link .
 ```
 
-### Management
+### Management & Interactive Mode
 
-```bash
-gemini skills list
-gemini skills enable <name>
-gemini skills disable <name>
-gemini skills uninstall <name>
-```
+You can manage skills from the terminal or interactively using slash commands:
+
+*   **`gemini skills list`** / **`/skills list`**: List all discovered skills.
+*   **`gemini skills enable/disable <name>`** / **`/skills enable/disable <name>`**: Toggle a skill.
+*   **`/skills reload`**: Refresh the skill registry (use after editing `SKILL.md` or scripts).
+*   **`/skills link <path>`**: Link local skills during an active session.
+
+### Skill Tier Precedence
+
+Gemini CLI discovers skills in three tiers with the following precedence:
+1.  **Workspace Tier**: `.gemini/skills/` or `.agents/skills/` in the project root.
+2.  **User Tier**: `~/.gemini/skills/` or `~/.agents/skills/`.
+3.  **Extension Tier**: Bundled within installed extensions.
 
 ### Upgrade
 
@@ -312,15 +318,13 @@ gemini skills uninstall kicad-happy
 gemini skills install https://github.com/aklofas/kicad-happy.git
 ```
 
-Or `git pull` for symlink installs.
+For linked installs, simply `git pull` in the cloned repository and run `/skills reload`.
 
 ### Known issues
 
-- Skills support is relatively new (v0.23.0+). The `gemini skills` commands are
-  still evolving.
-- `gemini skills link` (symlink-based install, like `gemini extensions link`) is
-  an open feature request
-  ([google-gemini/gemini-cli#18294](https://github.com/google-gemini/gemini-cli/issues/18294)).
+- Skill discovery is most stable in v0.25.0+. Ensure your CLI is up to date by running:
+  `npm install -g @google/gemini-cli@latest`
+- Large skill directories may take a moment to index during initial startup.
 
 ### Gemini-specific notes
 
