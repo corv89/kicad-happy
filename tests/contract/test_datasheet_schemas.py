@@ -53,12 +53,14 @@ SCHEMA_FILES = [
     "base.schema.json",
     "regulator.schema.json",
     "extraction.schema.json",
+    "manifest.schema.json",
 ]
 
 FIXTURE_TARGETS = [
     # (fixture_filename, schema_filename)
     ("minimal.example.json", "extraction.schema.json"),
     ("lm2596-adj.example.json", "extraction.schema.json"),
+    ("manifest.example.json", "manifest.schema.json"),
 ]
 
 
@@ -389,3 +391,40 @@ def test_extraction_schema_version_is_split_base_plus_categories() -> None:
     assert "categories" in sv["properties"]
     # categories is a keyed object (regulator → "0.3", mcu → "1.0", …)
     assert sv["properties"]["categories"]["type"] == "object"
+
+
+# ---------------------------------------------------------------------------
+# Manifest (datasheets/manifest.json) shape assertions
+# ---------------------------------------------------------------------------
+
+def test_manifest_pdfs_section_keyed_by_sha256() -> None:
+    schema = _load_json(SCHEMA_DIR / "manifest.schema.json")
+    pdfs = schema["properties"]["pdfs"]
+    # Tier 1 SHA dedup — outer key is sha256, value is {path, mpns[]}.
+    assert pdfs["type"] == "object"
+    # Key pattern enforces sha256: prefix so readers can dedup by hash
+    # without parsing the value.
+    pattern_key = list(pdfs["patternProperties"].keys())[0]
+    assert "sha256:" in pattern_key
+    entry = pdfs["patternProperties"][pattern_key]
+    entry_req = set(entry["required"])
+    assert {"path", "mpns"} <= entry_req
+
+
+def test_manifest_pdfs_entry_mpns_is_non_empty_list() -> None:
+    schema = _load_json(SCHEMA_DIR / "manifest.schema.json")
+    pdfs = schema["properties"]["pdfs"]
+    entry = next(iter(pdfs["patternProperties"].values()))
+    mpns = entry["properties"]["mpns"]
+    assert mpns["type"] == "array"
+    # At least one MPN per PDF — a PDF without any MPN pointer would be
+    # orphaned and subject to retention-policy sweep.
+    assert mpns["minItems"] == 1
+    assert mpns["items"]["type"] == "string"
+
+
+def test_manifest_preserves_legacy_extractions_section() -> None:
+    """v1.3 consumers read the 'extractions' section — v1.4 keeps it so
+    the compat layer works without a data migration step."""
+    schema = _load_json(SCHEMA_DIR / "manifest.schema.json")
+    assert "extractions" in schema["properties"]
