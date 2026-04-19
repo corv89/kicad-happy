@@ -33,7 +33,10 @@
               "items": {"type": "string"},
               "description": "All MPNs represented by this PDF. Grows as new parts from the same family are pulled."
             },
-            "source_url": {"type": ["string", "null"]},
+            "source_url": {
+              "type": ["string", "null"],
+              "description": "Origin URL the PDF was downloaded from (e.g. a manufacturer product page or direct datasheet URL). null for offline or locally-sourced PDFs."
+            },
             "is_family": {
               "type": ["boolean", "null"],
               "description": "True when scout flags this as a catalog-style datasheet. Reserved for v1.5 Tier 2 family extraction; always null in v1.4."
@@ -48,6 +51,7 @@
       "description": "Legacy v1.3 cache index. Retained for backward compatibility — the v1.3->v1.4 consumer API wrappers read this section. New writes prefer the per-MPN <MPN>.json files referenced via the 'pdfs' section.",
       "additionalProperties": {
         "type": "object",
+        "required": ["file", "mpn"],
         "properties": {
           "file": {"type": "string"},
           "mpn": {"type": "string"},
