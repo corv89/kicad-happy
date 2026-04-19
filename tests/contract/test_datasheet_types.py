@@ -148,6 +148,37 @@ def test_codec_dict_field_rejects_non_dict() -> None:
         _from_value(dict[str, int], [1, 2, 3])
 
 
+def test_codec_omits_fields_marked_omit_if_none() -> None:
+    """to_dict skips fields with metadata={'omit_if_none': True} when None.
+
+    Used for DatasheetFacts category siblings (regulator, future mcu/...)
+    so 'absent' signals 'no category' rather than emitting explicit nulls.
+    """
+    from dataclasses import dataclass, field
+    from typing import Optional
+    from datasheet_types.codec import to_dict
+
+    @dataclass
+    class Host:
+        name: str = field(metadata={"description": "Required name."})
+        sibling: Optional[str] = field(default=None, metadata={
+            "description": "Absent when not needed.",
+            "omit_if_none": True,
+        })
+        regular: Optional[str] = field(default=None, metadata={
+            "description": "Emits null when not set."})
+
+    # Both optional fields None.
+    obj = Host(name="x")
+    emitted = to_dict(obj)
+    assert "sibling" not in emitted          # omitted entirely
+    assert emitted["regular"] is None        # still emitted as null
+    # When the omit-field has a value, it's present as normal.
+    obj2 = Host(name="x", sibling="y")
+    emitted2 = to_dict(obj2)
+    assert emitted2["sibling"] == "y"
+
+
 # ---------------------------------------------------------------------------
 # Pin + AltFunction + Pinout wrapper
 # ---------------------------------------------------------------------------

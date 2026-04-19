@@ -86,12 +86,6 @@
       "items": {"type": "string"},
       "description": "List of active category extensions for this MPN (e.g. ['regulator'] or ['regulator', 'supervisor'] for a PMIC). Each entry must match a sibling key carrying that category's extension payload."
     },
-    "regulator": {
-      "anyOf": [
-        {"$ref": "https://kicad-happy.local/datasheets/schemas/regulator.schema.json"},
-        {"type": "null"}
-      ],
-      "description": "Regulator category extension. Null when 'regulator' is not in categories."
-    }
+    "regulator": {"$ref": "https://kicad-happy.local/datasheets/schemas/regulator.schema.json"}
   }
 }

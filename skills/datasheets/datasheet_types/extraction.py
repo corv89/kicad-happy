@@ -93,4 +93,6 @@ class DatasheetFacts:
         "description": "List of active category extensions (e.g. ['regulator']). Each entry "
                        "should correspond to a sibling field carrying that category's payload."})
     regulator: Optional[Regulator] = field(default=None, metadata={
-        "description": "Regulator category extension. None when 'regulator' not in categories."})
+        "description": "Regulator category extension. None when 'regulator' not in categories.",
+        "omit_if_none": True,
+    })

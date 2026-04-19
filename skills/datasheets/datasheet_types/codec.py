@@ -59,8 +59,12 @@ def from_dict(cls, data):
 def to_dict(obj):
     """Convert a dataclass instance (or Pinout) back to a plain dict.
 
-    Inverse of from_dict. Emits None for optional fields that are None;
-    caller decides whether to strip them downstream.
+    Inverse of from_dict. Emits None for optional fields that are None,
+    UNLESS the field declares metadata={"omit_if_none": True} — those
+    fields are omitted entirely when their value is None. Used on
+    DatasheetFacts category siblings (regulator, future mcu/opamp/...)
+    so "absent" is the canonical signal for "no category" and the JSON
+    cache doesn't carry null placeholders for inactive categories.
     """
     if obj is None:
         return None
@@ -70,6 +74,8 @@ def to_dict(obj):
         out = {}
         for f in fields(obj):
             value = getattr(obj, f.name)
+            if value is None and (f.metadata or {}).get("omit_if_none"):
+                continue
             out[f.name] = _to_value(value)
         return out
     return obj
