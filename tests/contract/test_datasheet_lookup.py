@@ -272,3 +272,31 @@ def test_lookup_stale_true_when_source_local_path_is_none(tmp_path: Path) -> Non
     assert facts.stale is True
     ctx = facts._cache_context
     assert ctx.stale_reason == "pdf_missing"
+
+
+def test_lookup_full_happy_path_fresh_cache_with_matching_pdf(tmp_path: Path) -> None:
+    """End-to-end happy path: fresh PDF + cache hash match + typed access.
+
+    Stronger invariant than the Task 3 test_lookup_returns_datasheet_facts_for_valid_cache
+    (which didn't create a PDF and so implicitly landed in pdf_missing stale
+    state). Exercises: stale=False, quality passthrough, cache_path attach,
+    typed access across base.pinout and the regulator category extension.
+    """
+    from datasheet_lookup import lookup
+
+    cache_dir, pdf_path = _write_cache_with_pdf(tmp_path)
+    facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
+
+    assert facts is not None
+    # Staleness: PDF hash matches cache.
+    assert facts.stale is False
+    assert facts._cache_context.stale_reason is None
+    assert facts._cache_context.pdf_path == pdf_path
+    # Quality passthrough.
+    assert facts.quality == 87
+    # Cache path attached.
+    assert facts.cache_path == cache_dir / "LM2596-ADJ.json"
+    # Typed access across the full composition (Track 2.2).
+    assert facts.source.mpn == "LM2596-ADJ"
+    assert facts.base.pinout.find(name="EN").numbers == ["5"]
+    assert facts.regulator.topology == "buck"

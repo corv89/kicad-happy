@@ -52,6 +52,13 @@ from datasheet_types.extraction import DatasheetFacts  # noqa: E402
 # collisions) — the MPN character set is narrow enough in practice.
 _UNSAFE_CHAR = re.compile(r"[^A-Za-z0-9_\-]")
 
+# Stale-reason enum values — consumed by Track 2.4 trust gating and by
+# consumers that want to display a human-readable reason. Kept as module
+# constants (not a real Enum) so CacheContext.stale_reason stays a plain
+# string in the JSON/dataclass shape.
+STALE_PDF_MISSING = "pdf_missing"
+STALE_PDF_HASH_MISMATCH = "pdf_hash_mismatch"
+
 
 def sanitize_mpn(mpn: str) -> str:
     """Convert an MPN to a filename-safe component.
@@ -92,7 +99,7 @@ class CacheContext:
     cache_path: Path
     pdf_path: Optional[Path] = None
     is_stale: bool = False
-    stale_reason: Optional[str] = None  # "pdf_hash_mismatch" | "pdf_missing" | None
+    stale_reason: Optional[str] = None  # STALE_PDF_HASH_MISMATCH | STALE_PDF_MISSING | None
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +158,10 @@ def lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]:
     """Read-only MPN → DatasheetFacts lookup.
 
     Resolves `cache_dir / <sanitize_mpn(mpn)>.json`, parses it into a
-    typed DatasheetFacts via the Track 2.2 codec, attaches a CacheContext
-    (staleness detection comes in Task 4), and returns the instance.
+    typed DatasheetFacts via the Track 2.2 codec, verifies PDF staleness
+    by comparing sha256 of the on-disk PDF against cached source.sha256,
+    attaches a CacheContext carrying (cache_path, pdf_path, is_stale,
+    stale_reason), and returns the instance.
 
     Returns None when:
         - cache_dir does not exist
@@ -198,7 +207,7 @@ def lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]:
             cache_path=cache_file,
             pdf_path=None,
             is_stale=True,
-            stale_reason="pdf_missing",
+            stale_reason=STALE_PDF_MISSING,
         )
     else:
         current_sha = _compute_pdf_sha256(pdf_path)
@@ -207,14 +216,14 @@ def lookup(mpn: str, *, cache_dir: Path) -> Optional[DatasheetFacts]:
                 cache_path=cache_file,
                 pdf_path=pdf_path,
                 is_stale=True,
-                stale_reason="pdf_missing",
+                stale_reason=STALE_PDF_MISSING,
             )
         elif current_sha != facts.source.sha256:
             ctx = CacheContext(
                 cache_path=cache_file,
                 pdf_path=pdf_path,
                 is_stale=True,
-                stale_reason="pdf_hash_mismatch",
+                stale_reason=STALE_PDF_HASH_MISMATCH,
             )
         else:
             ctx = CacheContext(
