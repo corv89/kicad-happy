@@ -95,3 +95,23 @@ def test_build_upstream_artifact_missing_fields(tmp_path):
     art = build_upstream_artifact(p, {})
     assert art["schema_version"] == ""
     assert art["run_id"] == ""
+
+
+def test_build_compat_defaults_v1_4():
+    from inputs_builder import build_compat
+    compat = build_compat()
+    assert compat["minimum_consumer_version"] == "1.4.0"
+    assert compat["deprecated_fields"] == []
+    assert compat["experimental_fields"] == []
+
+
+def test_build_compat_accepts_overrides():
+    from inputs_builder import build_compat
+    compat = build_compat(
+        minimum_consumer_version="1.5.0",
+        deprecated_fields=["trust_summary.by_confidence.datasheet-backed"],
+        experimental_fields=["compat.capability_mode_ref"],
+    )
+    assert compat["minimum_consumer_version"] == "1.5.0"
+    assert compat["deprecated_fields"] == ["trust_summary.by_confidence.datasheet-backed"]
+    assert compat["experimental_fields"] == ["compat.capability_mode_ref"]

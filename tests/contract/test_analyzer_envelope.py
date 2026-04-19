@@ -19,6 +19,7 @@ from analyzer_envelope import (  # noqa: E402
     Assessment,
     UpstreamArtifact,
     InputsBlock,
+    CompatBlock,
 )
 from jsonschema import Draft202012Validator  # noqa: E402
 
@@ -135,10 +136,33 @@ def test_inputs_block_upstream_artifacts_is_dict_of_upstream_artifact():
     assert ua_required == {"path", "sha256", "schema_version", "run_id"}
 
 
+def test_compat_block_required_fields():
+    schema = _assert_valid(CompatBlock)
+    required = set(schema["required"])
+    # All three fields are required at v1.4 — consumers rely on their
+    # presence even when the lists are empty.
+    assert required == {
+        "minimum_consumer_version",
+        "deprecated_fields",
+        "experimental_fields",
+    }
+
+
+def test_compat_block_list_fields_are_str_arrays():
+    schema = _assert_valid(CompatBlock)
+    props = schema["properties"]
+    # deprecated_fields / experimental_fields are simple lists of
+    # dotted-path strings identifying envelope keys.
+    assert props["deprecated_fields"]["type"] == "array"
+    assert props["deprecated_fields"]["items"] == {"type": "string"}
+    assert props["experimental_fields"]["type"] == "array"
+    assert props["experimental_fields"]["items"] == {"type": "string"}
+
+
 @pytest.mark.parametrize("cls", [
     ByConfidence, ByEvidenceSource, BySeverity, BomCoverage,
     TrustSummary, TitleBlock, Finding, Assessment,
-    UpstreamArtifact, InputsBlock,
+    UpstreamArtifact, InputsBlock, CompatBlock,
 ])
 def test_all_primitives_round_trip_through_codec(cls):
     """Every shared primitive must produce a valid Draft 2020-12 schema."""

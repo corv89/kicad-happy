@@ -257,3 +257,31 @@ class InputsBlock:
     config_hash: Optional[str] = field(default=None, metadata={
         "description": "SHA-256 of the resolved .kicad-happy.json config file, "
                        "or null when no project config was loaded."})
+
+
+@dataclass
+class CompatBlock:
+    """Schema compatibility metadata.
+
+    Surfaces which consumer version is required to safely read this
+    envelope, plus structured deprecation state. For v1.4 all envelopes
+    emit ``minimum_consumer_version="1.4.0"`` with empty deprecation and
+    experimental lists — the v1.4 clean break removed prior residue. As
+    fields are scheduled for removal in v1.5+ or introduced as
+    experimental, they accumulate here.
+
+    Dotted-path strings identify envelope keys (e.g.
+    ``"trust_summary.by_confidence.datasheet-backed"``).
+    """
+    minimum_consumer_version: str = field(metadata={
+        "description": "Minimum consumer library/CLI version required to "
+                       "safely read this envelope. Typically matches the "
+                       "analyzer's schema_version."})
+    deprecated_fields: list[str] = field(metadata={
+        "description": "Dotted-path names of envelope keys scheduled for "
+                       "removal in a future minor/major release. Consumers "
+                       "should log or refuse reads that rely on these."})
+    experimental_fields: list[str] = field(metadata={
+        "description": "Dotted-path names of envelope keys whose shape may "
+                       "change without a schema_version bump. Consumers "
+                       "should treat them as best-effort."})

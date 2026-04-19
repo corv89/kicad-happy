@@ -77,3 +77,21 @@ def build_upstream_artifact(path: Path | str, parsed: dict) -> dict:
         "schema_version": parsed.get("schema_version", ""),
         "run_id": parsed.get("inputs", {}).get("run_id", ""),
     }
+
+
+def build_compat(
+    minimum_consumer_version: str = "1.4.0",
+    deprecated_fields: list[str] | None = None,
+    experimental_fields: list[str] | None = None,
+) -> dict:
+    """Build a dict matching the ``CompatBlock`` envelope shape.
+
+    Defaults reflect v1.4 state: the clean break removed prior residue so
+    both lists start empty. Bump ``minimum_consumer_version`` when the
+    envelope shape breaks in ways a consumer needs to detect.
+    """
+    return {
+        "minimum_consumer_version": minimum_consumer_version,
+        "deprecated_fields": list(deprecated_fields) if deprecated_fields else [],
+        "experimental_fields": list(experimental_fields) if experimental_fields else [],
+    }
