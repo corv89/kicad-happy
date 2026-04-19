@@ -84,7 +84,10 @@ class Pinout:
     def find(self, *, pin: Optional[str] = None, name: Optional[str] = None) -> Optional[Pin]:
         """Find a pin by number OR name. Returns None if not found.
 
-        When both `pin` and `name` are supplied, matches on either.
+        When both `pin` and `name` are supplied, matches on either — first
+        match in list order wins, with no priority between number and name.
+        The ambiguous case (both args matching different pins) is a misuse
+        of the API; prefer passing exactly one.
         """
         if pin is None and name is None:
             return None
@@ -107,3 +110,8 @@ class Pinout:
 
     def __repr__(self) -> str:
         return f"Pinout(pins={len(self.pins)} pins)"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Pinout):
+            return NotImplemented
+        return self.pins == other.pins

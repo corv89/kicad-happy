@@ -219,6 +219,44 @@ def test_pin_roundtrip_full() -> None:
     assert to_dict(obj) == raw
 
 
+def test_pin_with_populated_spec_value_lists() -> None:
+    """Optional[list[SpecValue]] fields round-trip when populated.
+
+    The first exercise of the codec's Optional[list[nested_dataclass]]
+    path — a regression in that path would silently break base block's
+    dict[str, list[SpecValue]] shape in Task 3.
+    """
+    from datasheet_types.pinout import Pin
+    from datasheet_types.codec import from_dict, to_dict
+
+    ev = {"page": 5, "section": "Electrical Characteristics",
+          "confidence": "high", "method": "table"}
+    raw = {
+        "numbers": ["PA9"], "name": "PA9", "type": "bidirectional",
+        "subtype": None, "description": None, "power_domain": None,
+        "alt_functions": [],
+        "is_5v_tolerant": None,
+        "absolute_max": [{
+            "min": None, "typ": None, "max": 5.5,
+            "unit": "V", "condition": None, "notes": None, "evidence": ev,
+        }],
+        "recommended": None,
+        "drive_strength": None,
+        "notes": None,
+        "evidence": None,
+    }
+    obj = from_dict(Pin, raw)
+    assert obj.absolute_max is not None
+    assert len(obj.absolute_max) == 1
+    assert obj.absolute_max[0].max == 5.5
+    assert obj.absolute_max[0].unit == "V"
+    assert obj.absolute_max[0].evidence.page == 5
+    assert obj.recommended is None
+    assert obj.drive_strength is None
+    # Round-trip preserves the populated-list shape.
+    assert to_dict(obj) == raw
+
+
 def test_pinout_find_by_number_and_name() -> None:
     from datasheet_types.pinout import Pin, Pinout
 
@@ -239,6 +277,8 @@ def test_pinout_find_by_number_and_name() -> None:
     # Missing
     assert pinout.find(pin="99") is None
     assert pinout.find(name="DOESNOTEXIST") is None
+    # Calling find() with no arguments returns None (documented behavior).
+    assert pinout.find() is None
 
 
 def test_pinout_in_domain() -> None:
@@ -266,6 +306,22 @@ def test_pinout_iter_and_len() -> None:
     assert len(pinout) == 2
     names = [p.name for p in pinout]
     assert names == ["A", "B"]
+
+
+def test_pinout_equality() -> None:
+    """Pinout compares by content, not identity — behaves as a value type."""
+    from datasheet_types.pinout import Pin, Pinout
+
+    p1 = Pin(numbers=["1"], name="VIN", type="power_in")
+    p2 = Pin(numbers=["2"], name="GND", type="power_in")
+    a = Pinout(pins=[p1, p2])
+    b = Pinout(pins=[Pin(numbers=["1"], name="VIN", type="power_in"),
+                     Pin(numbers=["2"], name="GND", type="power_in")])
+    c = Pinout(pins=[p2, p1])  # different order
+
+    assert a == b                # same content → equal
+    assert a != c                # different order → not equal
+    assert a != "not-a-pinout"   # different type → not equal (NotImplemented falls back)
 
 
 def test_pinout_roundtrip_through_codec() -> None:
