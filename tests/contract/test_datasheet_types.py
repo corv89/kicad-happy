@@ -146,3 +146,141 @@ def test_codec_dict_field_rejects_non_dict() -> None:
 
     with pytest.raises(TypeError, match="Expected dict"):
         _from_value(dict[str, int], [1, 2, 3])
+
+
+# ---------------------------------------------------------------------------
+# Pin + AltFunction + Pinout wrapper
+# ---------------------------------------------------------------------------
+
+def test_alt_function_roundtrip() -> None:
+    from datasheet_types.pinout import AltFunction
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {"name": "USART1_TX", "peripheral": "USART1", "role": "TX", "af_code": "AF7"}
+    obj = from_dict(AltFunction, raw)
+    assert obj.name == "USART1_TX"
+    assert obj.peripheral == "USART1"
+    assert obj.role == "TX"
+    assert obj.af_code == "AF7"
+    assert to_dict(obj) == raw
+
+
+def test_pin_roundtrip_minimal() -> None:
+    """Pin with only required fields — numbers, name, type."""
+    from datasheet_types.pinout import Pin
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {"numbers": ["1"], "name": "VIN", "type": "power_in"}
+    obj = from_dict(Pin, raw)
+    assert obj.numbers == ["1"]
+    assert obj.name == "VIN"
+    assert obj.type == "power_in"
+    # Optional fields default to None.
+    assert obj.subtype is None
+    assert obj.evidence is None
+    assert obj.alt_functions == []  # default_factory list
+    # to_dict emits every field (including Nones).
+    emitted = to_dict(obj)
+    assert emitted["numbers"] == ["1"]
+    assert emitted["name"] == "VIN"
+    assert emitted["type"] == "power_in"
+    assert emitted["subtype"] is None
+    assert emitted["evidence"] is None
+    assert emitted["alt_functions"] == []
+
+
+def test_pin_roundtrip_full() -> None:
+    """Pin with all optional fields populated — BGA-style."""
+    from datasheet_types.pinout import Pin
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = {
+        "numbers": ["A1"],
+        "name": "PA9",
+        "type": "bidirectional",
+        "subtype": "open_drain",
+        "description": "GPIO Port A bit 9",
+        "power_domain": "VDDIO_1",
+        "alt_functions": [
+            {"name": "USART1_TX", "peripheral": "USART1", "role": "TX", "af_code": "AF7"},
+        ],
+        "is_5v_tolerant": True,
+        "absolute_max": None,
+        "recommended": None,
+        "drive_strength": None,
+        "notes": None,
+        "evidence": {"page": 10, "section": "Pinout", "confidence": "high", "method": "table"},
+    }
+    obj = from_dict(Pin, raw)
+    assert obj.numbers == ["A1"]
+    assert obj.alt_functions[0].peripheral == "USART1"
+    assert obj.is_5v_tolerant is True
+    assert obj.evidence.page == 10
+    assert to_dict(obj) == raw
+
+
+def test_pinout_find_by_number_and_name() -> None:
+    from datasheet_types.pinout import Pin, Pinout
+
+    pins = [
+        Pin(numbers=["1"], name="VIN", type="power_in"),
+        Pin(numbers=["2"], name="OUT", type="output"),
+        Pin(numbers=["3"], name="GND", type="power_in"),
+    ]
+    pinout = Pinout(pins=pins)
+    # Find by pin number
+    p = pinout.find(pin="2")
+    assert p is not None
+    assert p.name == "OUT"
+    # Find by name
+    p = pinout.find(name="VIN")
+    assert p is not None
+    assert p.numbers == ["1"]
+    # Missing
+    assert pinout.find(pin="99") is None
+    assert pinout.find(name="DOESNOTEXIST") is None
+
+
+def test_pinout_in_domain() -> None:
+    from datasheet_types.pinout import Pin, Pinout
+
+    pins = [
+        Pin(numbers=["1"], name="VDDIO1", type="power_in", power_domain="VDDIO_1"),
+        Pin(numbers=["2"], name="VDDIO2", type="power_in", power_domain="VDDIO_1"),
+        Pin(numbers=["3"], name="VDDCORE", type="power_in", power_domain="VDDCORE"),
+        Pin(numbers=["4"], name="GND", type="power_in"),
+    ]
+    pinout = Pinout(pins=pins)
+    matches = pinout.in_domain("VDDIO_1")
+    assert len(matches) == 2
+    assert {p.name for p in matches} == {"VDDIO1", "VDDIO2"}
+
+
+def test_pinout_iter_and_len() -> None:
+    from datasheet_types.pinout import Pin, Pinout
+
+    pinout = Pinout(pins=[
+        Pin(numbers=["1"], name="A", type="input"),
+        Pin(numbers=["2"], name="B", type="output"),
+    ])
+    assert len(pinout) == 2
+    names = [p.name for p in pinout]
+    assert names == ["A", "B"]
+
+
+def test_pinout_roundtrip_through_codec() -> None:
+    """Pinout serializes as a bare list (root-array shape)."""
+    from datasheet_types.pinout import Pinout
+    from datasheet_types.codec import from_dict, to_dict
+
+    raw = [
+        {"numbers": ["1"], "name": "VIN", "type": "power_in"},
+        {"numbers": ["2"], "name": "GND", "type": "power_in"},
+    ]
+    pinout = from_dict(Pinout, raw)
+    assert len(pinout) == 2
+    # to_dict emits back to a bare list (NOT a dict with a 'pins' key).
+    emitted = to_dict(pinout)
+    assert isinstance(emitted, list)
+    assert emitted[0]["name"] == "VIN"
+    assert emitted[1]["name"] == "GND"
