@@ -134,8 +134,11 @@ description: One paragraph describing what this skill does and when to use it. I
 
 2. Add any scripts to `skills/<name>/scripts/`
 3. Add a symlink in `.agents/skills/`: `ln -s ../../skills/<name> .agents/skills/<name>`
+    *   **Gemini CLI:** Use `gemini skills link . --scope workspace` to link the whole repo.
 4. Update the manual install lists in `README.md` (both Claude Code and Codex sections)
-5. Validate: `claude plugin validate .`
+5. Validate:
+    *   **Claude Code:** `claude plugin validate .`
+    *   **Gemini CLI:** Run `/skills reload` in an active session to verify discovery.
 
 Keep SKILL.md language agent-neutral — use "the agent" instead of "Claude", "use web search" instead of "WebSearch", etc.
 

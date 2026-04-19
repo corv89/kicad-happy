@@ -1,10 +1,17 @@
 # kicad-happy
 
-AI-powered electronics design review skills for KiCad 5-10. This repo provides structured Python analysis scripts and skill definitions for AI coding agents.
+AI-powered electronics design review skills for KiCad 5-10. This document is auto-loaded into the Gemini CLI context and carries project-specific guidance for agents working in this repo.
+
+## Agent guidelines
+
+1. **Skill activation**: invoke `activate_skill` before running the Python scripts in this repo. Each skill's `SKILL.md` carries procedural guidance, triggers, and constraints that aren't in the main system prompt.
+2. **Context efficiency**:
+    - **Search first**: use `grep_search` to find points of interest in `.kicad_sch` and `.kicad_pcb` files — they routinely exceed 10,000 lines.
+    - **Targeted reads**: avoid reading whole schematic/PCB files. Use line numbers from `grep_search` for surgical `read_file` calls.
+    - **Trust analyzer output**: the Python analysis scripts are the source of truth for design data. Don't guess circuit behavior from raw S-expressions when a detector already covers it.
+3. **Validation**: a change isn't done until the relevant `analyze_*.py` script has been re-run and produces no new warnings or regressions.
 
 ## Skills
-
-Each skill is defined in `skills/<name>/SKILL.md` with usage instructions and triggers. Read the relevant SKILL.md before using a skill.
 
 | Skill | Purpose |
 |-------|---------|
@@ -39,7 +46,7 @@ python3 skills/emc/scripts/analyze_emc.py --schematic sch.json --pcb pcb.json
 python3 skills/kicad/scripts/analyze_gerbers.py <gerber_dir>/
 ```
 
-All scripts are zero-dependency (Python 3.8+ stdlib only). No pip install needed.
+All scripts are zero-dependency (Python 3.10+ stdlib only). No `pip install` needed.
 
 ## Code structure
 
@@ -55,7 +62,7 @@ All scripts are zero-dependency (Python 3.8+ stdlib only). No pip install needed
 - `skills/kicad/references/` — 19 deep methodology guides
 - `skills/datasheets/` — Extraction pipeline with 4 reference guides (schema, field-extraction, scoring, consumer API)
 
-## Key docs
+## Documentation reference
 
 - `CONTRIBUTING.md` — How detectors work, how to add skills, test harness usage
 - `VALIDATION.md` — Test methodology and corpus statistics
