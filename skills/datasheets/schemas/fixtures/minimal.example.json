@@ -1,0 +1,45 @@
+{
+  "schema_version": {
+    "base": "1.0"
+  },
+  "source": {
+    "manufacturer": "Acme Semiconductor",
+    "mpn": "ACME-TEST-001",
+    "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "extraction": {
+    "extracted_at": "2026-04-19T00:00:00Z",
+    "extractor_schema_version": "1.0"
+  },
+  "base": {
+    "family": "test part",
+    "package": {"code": "SOIC-8"},
+    "absolute_max": {
+      "VIN_max": [
+        {
+          "typ": null, "min": null, "max": 20,
+          "unit": "V",
+          "condition": null, "notes": null,
+          "evidence": {"page": 1, "section": null, "confidence": "high", "method": "table"}
+        }
+      ]
+    },
+    "recommended_operating": {
+      "VIN": [
+        {
+          "min": 4.5, "typ": null, "max": 18,
+          "unit": "V",
+          "condition": null, "notes": null,
+          "evidence": {"page": 1, "section": null, "confidence": "high", "method": "table"}
+        }
+      ]
+    },
+    "pinout": [
+      {
+        "numbers": ["1"],
+        "name": "VIN",
+        "type": "power_in"
+      }
+    ]
+  }
+}

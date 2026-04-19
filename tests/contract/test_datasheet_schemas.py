@@ -52,6 +52,13 @@ SCHEMA_FILES = [
     "pinout.schema.json",
     "base.schema.json",
     "regulator.schema.json",
+    "extraction.schema.json",
+]
+
+FIXTURE_TARGETS = [
+    # (fixture_filename, schema_filename)
+    ("minimal.example.json", "extraction.schema.json"),
+    ("lm2596-adj.example.json", "extraction.schema.json"),
 ]
 
 
@@ -347,3 +354,38 @@ def test_regulator_sequencing_shape() -> None:
     delay = seq["properties"]["max_inter_rail_delay"]
     assert delay["type"] == ["array", "null"]
     assert "spec_value.schema.json" in delay["items"]["$ref"]
+
+
+# ---------------------------------------------------------------------------
+# Extraction envelope — round-trip fixture validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture_filename,schema_filename", FIXTURE_TARGETS)
+def test_fixture_validates_against_schema(fixture_filename: str, schema_filename: str) -> None:
+    fixture_path = FIXTURE_DIR / fixture_filename
+    schema_path = SCHEMA_DIR / schema_filename
+    assert fixture_path.exists(), f"Missing fixture: {fixture_path}"
+    fixture = _load_json(fixture_path)
+    schema = _load_json(schema_path)
+    registry = _build_registry()
+    validator = Draft202012Validator(schema, registry=registry)
+    errors = sorted(validator.iter_errors(fixture), key=lambda e: list(e.absolute_path))
+    assert errors == [], "\n".join(
+        f"{list(e.absolute_path)}: {e.message}" for e in errors
+    )
+
+
+def test_extraction_top_level_required_fields() -> None:
+    schema = _load_json(SCHEMA_DIR / "extraction.schema.json")
+    required = set(schema["required"])
+    # These four define a minimally-reconstructable cache entry.
+    assert required == {"schema_version", "source", "extraction", "base"}
+
+
+def test_extraction_schema_version_is_split_base_plus_categories() -> None:
+    schema = _load_json(SCHEMA_DIR / "extraction.schema.json")
+    sv = schema["properties"]["schema_version"]
+    assert "base" in sv["properties"]
+    assert "categories" in sv["properties"]
+    # categories is a keyed object (regulator → "0.3", mcu → "1.0", …)
+    assert sv["properties"]["categories"]["type"] == "object"

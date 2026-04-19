@@ -1,0 +1,155 @@
+{
+  "schema_version": {
+    "base": "1.0",
+    "categories": {"regulator": "0.3"}
+  },
+  "source": {
+    "manufacturer": "Texas Instruments",
+    "mpn": "LM2596-ADJ",
+    "datasheet_revision": "Rev M",
+    "datasheet_date": "2022-08",
+    "source_url": "https://www.ti.com/lit/ds/symlink/lm2596.pdf",
+    "local_path": "datasheets/LM2596-ADJ.pdf",
+    "sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "page_count": 32,
+    "family_ref": null
+  },
+  "extraction": {
+    "extracted_at": "2026-04-19T12:00:00Z",
+    "extractor_scout": "tier-B",
+    "extractor_schema_version": "1.0",
+    "quality_score": 87,
+    "plan_ref": "LM2596-ADJ.plan.json"
+  },
+  "base": {
+    "family": "step-down switching regulator",
+    "description": "3A, 150 kHz adjustable buck regulator",
+    "package": {
+      "code": "TO-263-5",
+      "pin_count": 5,
+      "thermal_pad": true,
+      "evidence": {"page": 1, "section": "Features", "confidence": "high", "method": "prose"}
+    },
+    "thermal": {
+      "theta_ja": [
+        {"min": null, "typ": 50, "max": null, "unit": "°C/W", "condition": "TO-263, 1oz Cu, 2in² pour", "notes": "θJA", "evidence": {"page": 3, "section": "Thermal Information", "confidence": "high", "method": "table"}}
+      ],
+      "theta_jc": [
+        {"min": null, "typ": 2, "max": null, "unit": "°C/W", "condition": "TO-263 case", "notes": "θJC", "evidence": {"page": 3, "section": "Thermal Information", "confidence": "high", "method": "table"}}
+      ]
+    },
+    "absolute_max": {
+      "VIN_max": [
+        {"min": null, "typ": null, "max": 45, "unit": "V", "condition": null, "notes": null, "evidence": {"page": 3, "section": "Absolute Maximum Ratings", "confidence": "high", "method": "table"}}
+      ],
+      "TJ_max": [
+        {"min": null, "typ": null, "max": 150, "unit": "°C", "condition": null, "notes": null, "evidence": {"page": 3, "section": "Absolute Maximum Ratings", "confidence": "high", "method": "table"}}
+      ]
+    },
+    "recommended_operating": {
+      "VIN": [
+        {"min": 4.5, "typ": null, "max": 40, "unit": "V", "condition": null, "notes": null, "evidence": {"page": 4, "section": "Recommended Operating Conditions", "confidence": "high", "method": "table"}}
+      ],
+      "TA": [
+        {"min": -40, "typ": null, "max": 125, "unit": "°C", "condition": null, "notes": null, "evidence": {"page": 4, "section": "Recommended Operating Conditions", "confidence": "high", "method": "table"}}
+      ]
+    },
+    "esd": {
+      "HBM": [
+        {"min": null, "typ": 2000, "max": null, "unit": "V", "condition": null, "notes": null, "evidence": {"page": 3, "section": "ESD Ratings", "confidence": "high", "method": "table"}}
+      ]
+    },
+    "pinout": [
+      {
+        "numbers": ["1"], "name": "VIN", "type": "power_in", "subtype": null,
+        "description": "Input voltage", "power_domain": "VIN",
+        "alt_functions": [],
+        "is_5v_tolerant": null,
+        "absolute_max": null, "recommended": null, "drive_strength": null,
+        "notes": null,
+        "evidence": {"page": 2, "section": "Pin Configuration and Functions", "confidence": "high", "method": "table"}
+      },
+      {
+        "numbers": ["2"], "name": "OUT", "type": "output", "subtype": "switching",
+        "description": "Switching output", "power_domain": null,
+        "alt_functions": [],
+        "is_5v_tolerant": null,
+        "absolute_max": null, "recommended": null, "drive_strength": null,
+        "notes": "Inductor connects here",
+        "evidence": {"page": 2, "section": "Pin Configuration and Functions", "confidence": "high", "method": "table"}
+      },
+      {
+        "numbers": ["3"], "name": "GND", "type": "power_in", "subtype": null,
+        "description": "Ground", "power_domain": null,
+        "alt_functions": [],
+        "is_5v_tolerant": null,
+        "absolute_max": null, "recommended": null, "drive_strength": null,
+        "notes": null,
+        "evidence": {"page": 2, "section": "Pin Configuration and Functions", "confidence": "high", "method": "table"}
+      },
+      {
+        "numbers": ["4"], "name": "FB", "type": "input", "subtype": null,
+        "description": "Feedback input", "power_domain": null,
+        "alt_functions": [],
+        "is_5v_tolerant": null,
+        "absolute_max": null, "recommended": null, "drive_strength": null,
+        "notes": "Resistor divider to VOUT sets output voltage",
+        "evidence": {"page": 2, "section": "Pin Configuration and Functions", "confidence": "high", "method": "table"}
+      },
+      {
+        "numbers": ["5"], "name": "EN", "type": "input", "subtype": null,
+        "description": "Enable input; tie high to enable.", "power_domain": null,
+        "alt_functions": [],
+        "is_5v_tolerant": null,
+        "absolute_max": null, "recommended": null, "drive_strength": null,
+        "notes": null,
+        "evidence": {"page": 2, "section": "Pin Configuration and Functions", "confidence": "high", "method": "table"}
+      }
+    ],
+    "pin_relationships": []
+  },
+  "categories": ["regulator"],
+  "regulator": {
+    "topology": "buck",
+    "vin_range": [
+      {"min": 4.5, "typ": null, "max": 40, "unit": "V", "condition": null, "notes": null, "evidence": {"page": 4, "section": "Recommended Operating Conditions", "confidence": "high", "method": "table"}}
+    ],
+    "vout_range": [
+      {"min": 1.23, "typ": null, "max": 37, "unit": "V", "condition": null, "notes": "Adjustable via FB divider", "evidence": {"page": 1, "section": "Features", "confidence": "high", "method": "prose"}}
+    ],
+    "iout_max": [
+      {"min": null, "typ": null, "max": 3, "unit": "A", "condition": "TA≤85°C with adequate heatsinking", "notes": null, "evidence": {"page": 1, "section": "Features", "confidence": "high", "method": "prose"}}
+    ],
+    "reference_voltage": [
+      {"min": 1.18, "typ": 1.23, "max": 1.28, "unit": "V", "condition": null, "notes": null, "evidence": {"page": 5, "section": "Electrical Characteristics", "confidence": "high", "method": "table"}}
+    ],
+    "feedback_pin": "4",
+    "compensation_pin": null,
+    "enable_pin": "5",
+    "power_good_pin": null,
+    "cin_min": [
+      {"min": 4.7e-4, "typ": null, "max": null, "unit": "F", "condition": "bulk, low-ESR electrolytic", "notes": "470 µF low-ESR recommended (stored as 4.7e-4 F per canonical SI)", "evidence": {"page": 14, "section": "External Components", "confidence": "medium", "method": "prose"}}
+    ],
+    "cout_min": [
+      {"min": 2.2e-4, "typ": null, "max": null, "unit": "F", "condition": "low-ESR electrolytic or tantalum", "notes": "220 µF", "evidence": {"page": 15, "section": "External Components", "confidence": "medium", "method": "prose"}}
+    ],
+    "inductor_range": [
+      {"min": 3.3e-5, "typ": null, "max": 6.8e-4, "unit": "H", "condition": "application-dependent; 68 µH typical", "notes": "33 µH – 680 µH", "evidence": {"page": 15, "section": "Inductor Selection", "confidence": "medium", "method": "prose"}}
+    ],
+    "switching_freq": [
+      {"min": null, "typ": 150000, "max": null, "unit": "Hz", "condition": "fixed, internal oscillator", "notes": "150 kHz", "evidence": {"page": 5, "section": "Electrical Characteristics", "confidence": "high", "method": "table"}}
+    ],
+    "psrr": null,
+    "line_regulation": null,
+    "load_regulation": null,
+    "stability_conditions": {
+      "cap_types_allowed": ["tantalum", "electrolytic", "polymer"],
+      "esr_range": [
+        {"min": 0.05, "typ": null, "max": 0.5, "unit": "Ω", "condition": null, "notes": null, "evidence": {"page": 15, "section": "Output Capacitor Selection", "confidence": "medium", "method": "prose"}}
+      ],
+      "notes": "Pure ceramic output caps may cause instability; mix with polymer/tantalum.",
+      "evidence": {"page": 15, "section": "Output Capacitor Selection", "confidence": "medium", "method": "prose"}
+    },
+    "sequencing": null
+  }
+}
