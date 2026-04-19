@@ -8,6 +8,31 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 1.5 — Contract tiers documentation
+
+**Theme: Explicit tiering of envelope keys.**
+
+`skills/kicad/references/output-schema.md` now opens with a "Contract Tiers" section categorizing every top-level envelope key into Tier 1 (standardized, stable across v1.4), Tier 2 (analyzer-specific body), or Tier 3 (compatibility residue). Tier 3 is empty for v1.4 — the clean break during Tracks 1.1-1.3 removed the prior residue.
+
+Text lives in `gen_output_schema_md.py`'s HEADER template so regeneration preserves it.
+
+### Track 1.4 — Schema compatibility metadata
+
+**Theme: Structured deprecation + experimental-field tracking.**
+
+New shared primitive `CompatBlock` in `analyzer_envelope.py` with three fields: `minimum_consumer_version: str`, `deprecated_fields: list[str]`, `experimental_fields: list[str]`. Every envelope has a new required `compat: CompatBlock` field sibling to `inputs`.
+
+For v1.4, every envelope emits `minimum_consumer_version: "1.4.0"` with both lists empty — the clean break left nothing deprecated and nothing experimental. v1.5 will start populating the lists as fields are scheduled for removal or introduced as best-effort experiments.
+
+New helper: `inputs_builder.build_compat(minimum_consumer_version, deprecated_fields, experimental_fields)` centralizes construction with v1.4-sensible defaults.
+
+#### Breaking changes
+- Every envelope gains a required `compat` field. External consumers validating `--schema` output must accept the new top-level key.
+
+#### Unblocks
+- Track 2 per-category datasheet schemas can now reference `minimum_consumer_version` when declaring their own shapes.
+- v1.5 consumer API can refuse reads of `deprecated_fields` and warn on `experimental_fields` use.
+
 ### Track 1.3 — Formal inputs / provenance block
 
 **Theme: Consistent SHA-256 provenance across every analyzer.**
