@@ -27,7 +27,13 @@ def _load_json(path: Path) -> dict:
 
 
 def _build_registry() -> Registry:
-    """Build a referencing Registry so $ref between schemas resolves."""
+    """Build a referencing Registry so $ref between schemas resolves.
+
+    Scaffolding for Tasks 2–6: consumed by the fixture-validation tests
+    added in Task 5 once the extraction envelope + fixtures land. Kept
+    here so each schema-add task only appends to the registry's input
+    glob rather than refactoring test helpers.
+    """
     registry = Registry()
     for schema_path in SCHEMA_DIR.glob("*.schema.json"):
         schema = _load_json(schema_path)
