@@ -759,3 +759,53 @@ def test_public_api_exports() -> None:
         assert hasattr(ds_types, name), f"public API missing export: {name}"
     # __all__ agrees with what's importable.
     assert set(ds_types.__all__) == expected_names
+
+
+# ---------------------------------------------------------------------------
+# DatasheetFacts computed properties (quality, stale, cache_path)
+# ---------------------------------------------------------------------------
+
+def test_datasheet_facts_quality_property_passthrough() -> None:
+    """quality returns extraction.quality_score without cache context."""
+    from datasheet_types.extraction import DatasheetFacts
+    from datasheet_types.codec import from_dict
+
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    facts = from_dict(DatasheetFacts, fixture)
+    # LM2596-ADJ fixture has extraction.quality_score = 87
+    assert facts.quality == 87
+
+
+def test_datasheet_facts_quality_none_when_not_scored() -> None:
+    """quality returns None when extraction.quality_score is None."""
+    from datasheet_types.extraction import DatasheetFacts
+    from datasheet_types.codec import from_dict
+
+    fixture = _load_json(FIXTURE_DIR / "minimal.example.json")
+    facts = from_dict(DatasheetFacts, fixture)
+    # Minimal fixture has no quality_score populated.
+    assert facts.quality is None
+
+
+def test_datasheet_facts_stale_defaults_false_without_cache_context() -> None:
+    """stale returns False when constructed outside lookup() (no context).
+
+    Regression guard: Track 2.2 tests construct DatasheetFacts via from_dict
+    directly; they should continue to see stale=False.
+    """
+    from datasheet_types.extraction import DatasheetFacts
+    from datasheet_types.codec import from_dict
+
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    facts = from_dict(DatasheetFacts, fixture)
+    assert facts.stale is False
+
+
+def test_datasheet_facts_cache_path_defaults_none_without_cache_context() -> None:
+    """cache_path returns None when constructed outside lookup()."""
+    from datasheet_types.extraction import DatasheetFacts
+    from datasheet_types.codec import from_dict
+
+    fixture = _load_json(FIXTURE_DIR / "lm2596-adj.example.json")
+    facts = from_dict(DatasheetFacts, fixture)
+    assert facts.cache_path is None

@@ -122,3 +122,50 @@ class DatasheetFacts:
         "description": "Regulator category extension. None when 'regulator' not in categories.",
         "omit_if_none": True,
     })
+
+    # ---- Computed attributes (NOT dataclass fields) ----
+    # These properties read an optional _cache_context instance attribute
+    # that lookup() attaches to DatasheetFacts instances it returns.
+    # For instances constructed outside lookup() (e.g. Track 2.2 round-trip
+    # tests), _cache_context is absent and properties fall back to defaults.
+
+    @property
+    def quality(self) -> Optional[int]:
+        """Overall extraction quality score (0–100). Passthrough to
+        extraction.quality_score. None when the extraction wasn't scored
+        or lookup context isn't populated.
+
+        Spec §11 usage: `if ds.quality < 60: ...`
+        """
+        return self.extraction.quality_score
+
+    @property
+    def stale(self) -> bool:
+        """True when the PDF on disk has changed since this cache entry
+        was extracted (sha256 mismatch) OR when the PDF is missing. False
+        when PDF hash matches the cached source.sha256.
+
+        Returns False when DatasheetFacts is constructed outside lookup()
+        (no cache context available) — consumers that want staleness
+        checking must go through lookup().
+
+        Spec §11 usage: `if ds.stale: ...`
+        """
+        ctx = getattr(self, "_cache_context", None)
+        if ctx is None:
+            return False
+        return ctx.is_stale
+
+    @property
+    def cache_path(self):
+        """Path to the cache JSON this DatasheetFacts was loaded from,
+        or None if constructed outside lookup(). Useful for debugging
+        and cache-management tooling.
+
+        Return type is Optional[pathlib.Path]; typed as any to avoid
+        importing pathlib at module level (CacheContext owns the type).
+        """
+        ctx = getattr(self, "_cache_context", None)
+        if ctx is None:
+            return None
+        return ctx.cache_path
