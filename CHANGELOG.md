@@ -8,6 +8,35 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 2.1 — Datasheet v2 JSON Schemas (2026-04-19)
+
+**Theme: Canonical schema infrastructure for datasheet extraction v2.**
+
+Six Draft 2020-12 schemas land under `skills/datasheets/schemas/` — the foundation every downstream Phase 2 sub-track (typed access layer, `lookup()` facade, trust gating, compat wrappers, cache layout) consumes:
+
+- `spec_value.schema.json` 1.0 — atomic primitive for every electrical/physical fact (`{min, typ, max, unit, condition, notes, evidence: {page, section, confidence, method}}`). Always serialized as a one-element list. Canonical SI units only (including `°C/W` and `K/W` for thermal resistance).
+- `pinout.schema.json` 1.0 (still-calibrating) — Pin shape with KiCad ERC type vocabulary, optional `alt_functions[]`, per-pin SpecValue arrays. BGA-safe via `numbers: string[]`.
+- `base.schema.json` 1.0 — universal per-IC facts: `family`, `package`, `thermal`, `absolute_max`, `recommended_operating`, `esd`, `compliance[]`, `pinout` (ref), `pin_relationships[]`. `absolute_max`/`recommended_operating`/`esd`/`thermal` are objects keyed by parameter name → `SpecValue[]` for consumer-side indexability (spec §4).
+- `regulator.schema.json` 0.3 — first category extension. Flat topology enum (spec §7). All electrical params optional `SpecValue[]`. Nested `stability_conditions` + `sequencing` blocks feed SV-001 and ST-001.
+- `extraction.schema.json` 1.0 — top-level per-MPN file envelope composing base + categories.
+- `manifest.schema.json` 1.0 — `datasheets/manifest.json` shape. New `pdfs` section keys by `sha256:` → `{path, mpns[]}` for Tier 1 dedup. Legacy `extractions` section retained for v1.3 compat.
+
+Alongside the schemas:
+- `fixtures/lm2596-adj.example.json`, `fixtures/minimal.example.json`, `fixtures/manifest.example.json` — round-trip fixtures covering realistic and minimal-valid shapes. LM2596-ADJ exercises the full `$ref` chain (extraction → base → pinout + spec_value, extraction → regulator → spec_value).
+- `tests/contract/test_datasheet_schemas.py` — validates Draft 2020-12 conformance + fixture → schema round-trip via `referencing.Registry`. 35 tests total.
+- `schemas/CHANGELOG.md` — per-schema semver-lite rules (additive within minor, breaking = major, stale-one-section-only).
+
+No runtime code changes. Consumer API (`lookup()`), typed access layer (`DatasheetFacts`, `SpecValue`, `Pin` dataclasses), trust gating helpers (`best()`, `trusted()`), and v1.3 compat wrappers land in sub-tracks 2.2–2.6.
+
+#### Breaking changes
+- `requirements-dev.txt` gains explicit `referencing>=0.28` declaration (was implicit via `jsonschema`).
+- `datasheets/manifest.json` gains a new `pdfs` section — **additive only**. Legacy `extractions` section stays intact; v1.3 consumers that ignore unknown keys continue to work.
+
+#### Unblocks
+- Track 2.2 — typed Python access layer (`skills/datasheets/types/`) can now import from these schemas.
+- Track 2.6 — cache layout with SHA dedup: manifest schema landed.
+- Harness A3 (trust-gating tests) still blocked on Track 2.3 (lookup + DatasheetFacts).
+
 ### Track 1.5 — Contract tiers documentation
 
 **Theme: Explicit tiering of envelope keys.**
