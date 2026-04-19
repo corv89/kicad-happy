@@ -460,18 +460,28 @@ def test_pin_relationship_roundtrip() -> None:
 def test_base_block_from_fixture() -> None:
     """Full round-trip of the LM2596-ADJ fixture's base section.
 
-    This test's `to_dict(obj) == base_raw` byte-equality assertion
-    requires the fixture to include every optional field — absent
-    keys must appear as explicit nulls/empty-lists — because the
-    codec's to_dict emits all declared fields. Track 2.1's original
-    fixture was completed in Task 3 (package.pitch_mm, body_mm;
+    This test's `to_dict(obj) == base_raw` is Python dict equality
+    (value/key equal, order-independent) — NOT JSON byte-equality.
+    The assertion requires the fixture to include every optional
+    field as explicit nulls/empty-lists because the codec's to_dict
+    emits all declared fields; absent optional keys would compare
+    unequal to an emitted `"key": null`. Track 2.1's original fixture
+    was completed in Task 3 (package.pitch_mm, body_mm;
     base.moisture_sensitivity, compliance) to satisfy this invariant.
 
+    Note for Track 2.3: json.dumps(to_dict(facts)) key ordering
+    differs from lm2596-adj.example.json's ordering because Python
+    dataclasses force required fields before optional fields (see
+    module docstrings in base_block.py and extraction.py). Cache
+    file rewrites via to_dict() are semantically idempotent but NOT
+    JSON-text-idempotent — downstream staleness checks must hash
+    the parsed dict, not the raw bytes.
+
     Alternative considered: loosen the assertion to subset-equality
-    on keys present in base_raw. Rejected because byte-equality is
-    a stronger contract and the fixture additions are schema-valid +
-    semantically neutral (null for optional scalars, [] for optional
-    arrays, both accepted by base.schema.json).
+    on keys present in base_raw. Rejected because value-level
+    equality is a stronger contract and the fixture additions are
+    schema-valid + semantically neutral (null for optional scalars,
+    [] for optional arrays, both accepted by base.schema.json).
     """
     from datasheet_types.base_block import BaseBlock
     from datasheet_types.codec import from_dict, to_dict
@@ -497,7 +507,7 @@ def test_base_block_from_fixture() -> None:
     assert fb.numbers == ["4"]
     # pin_relationships empty list on this fixture.
     assert obj.pin_relationships == []
-    # Round-trip matches the original shape byte-for-byte.
+    # Round-trip matches the original shape (Python dict equality, order-independent).
     emitted = to_dict(obj)
     assert emitted == base_raw
 
@@ -677,7 +687,7 @@ def test_datasheet_facts_from_lm2596_fixture() -> None:
     assert en is not None
     assert en.numbers == ["5"]
 
-    # Round-trip byte-for-byte.
+    # Round-trip (Python dict equality, order-independent).
     emitted = to_dict(facts)
     assert emitted == fixture
 
