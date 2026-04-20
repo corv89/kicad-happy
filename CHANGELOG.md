@@ -8,6 +8,48 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 2.5 — v1.3 Compat Wrappers (2026-04-19)
+
+**Theme: Preserve v1.3 detector API during the v1.3 → v1.4 cache-format transition.**
+
+`skills/datasheets/scripts/datasheet_features.py` — public functions `get_regulator_features`, `get_mcu_features`, `get_pin_function`, `is_extraction_available` keep their exact v1.3 signatures but gain a dual-cache-read path:
+
+1. **v1.4 path first** — try `lookup(mpn, cache_dir=...)` (Track 2.3). If it returns a `DatasheetFacts`, pass through a new `_derive_*_v14` helper to translate v1.4 typed facts into the v1.3-shaped dict.
+2. **v1.3 fallback** — if the v1.4 path returns `None` (no v1.4 cache) or returns a non-applicable result (e.g. no regulator category, or mcu category not in v1.4 MVP), fall through to the existing `_load()` + `extraction_version=2` read path.
+
+When both caches exist for the same MPN (mid-migration corpus state), v1.4 wins.
+
+Derivation mapping (v1.4 facts → v1.3 regulator dict):
+
+| v1.3 field | v1.4 source | Notes |
+|---|---|---|
+| `topology` | `facts.regulator.topology` | Passes through verbatim; v1.4 topology enum is a superset of v1.3 (`ldo` / `buck` / `boost` match). v1.3 detector check `topology in ('boost','buck','ldo')` still gates correctly. |
+| `has_pg` | `facts.regulator.power_good_pin is not None` | |
+| `en_pin` | `facts.regulator.enable_pin` | |
+| `pg_pin` | `facts.regulator.power_good_pin` | |
+| `vin_pin` | `facts.base.pinout.find(name="VIN" or "VIN+")?.numbers[0]` | |
+| `vout_pin` | `facts.base.pinout.find(name="OUT" or "VOUT" or "VOUT+")?.numbers[0]` | |
+| `has_soft_start`, `iss_time_us`, `en_v_ih_max`, `en_v_il_min` | — | Always `None` on v1.4 path (no schema v1.0 equivalent). v1.3 contract explicitly allows `None` for "datasheet didn't specify." |
+
+`get_mcu_features` on a v1.4 cache **always returns None** because v1.4 MVP has no `mcu` category extension (v1.5 adds MCU + opamp + diode + transistor + crystal). Wrapper falls through to v1.3 cache so legacy MCU data keeps working. `_derive_mcu_features_v14` will gain real logic in the v1.5 track that adds the mcu schema.
+
+`get_pin_function` maps pin identifiers → v1.3 function strings by checking regulator pin refs (enable_pin → `"EN"`, power_good_pin → `"PG"`, feedback_pin → `"FB"`) first, then falls back to a name-based map on `base.pinout` (Pin.name `"VIN"` / `"VIN+"` → `"VIN"`; `"OUT"` / `"VOUT"` / `"VOUT+"` → `"VOUT"`; `"GND"` / `"VSS"` / `"AGND"` / `"DGND"` → `"GND"`).
+
+Consumer call-sites in `skills/kicad/scripts/validation_detectors.py` and `skills/emc/scripts/emc_rules.py` use `.get('vin_pin')`, `.get('en_pin')`, `.get('has_pg')`, `.get('has_native_usb_phy')`, `.get('usb_series_r_required')`, `.get('usb_speed')`. All six fields continue to work — derived from v1.4 facts when available, or read from the v1.3 cache when not.
+
+Tests: `tests/contract/test_datasheet_features.py` — 17 contract tests (8 for the `_derive_*_v14` helpers, 9 for the public-wrapper integration with both cache formats). Self-contained via `pytest.tmp_path`.
+
+#### Breaking changes
+None. The v1.3 public API is preserved byte-for-byte at the call-site level — same function names, same signatures, same dict shapes, same `None` semantics. Only the internal read path changed.
+
+#### Unblocks
+- **Harness A3** — trust-gating tests can now exercise the compat-wrapper path (`get_regulator_features` → derived dict → detector check) alongside the raw `lookup()` + `trusted()` path.
+- **Harness A4** — detector integration tests can verify that v1.3 detectors on v1.4 caches still produce the same findings as v1.3 detectors on v1.3 caches, modulo the v1.4-never-populated fields (`has_soft_start`, `iss_time_us`, `en_v_ih_max`, `en_v_il_min`).
+- **Phase 3 extraction** — new extractions land as v1.4 cache files and are read via the v1.4 path automatically. No detector migration required for Phase 3 to ship.
+- **Phase 4 detector upgrades** — detector rewrites can migrate from `get_regulator_features(mpn).get('en_pin')` to direct `lookup(mpn).regulator.enable_pin` at a pace that matches Phase 4 scope, not blocked on all-or-nothing migration.
+
+**Phase 2 main-repo scope is now complete.** Remaining Phase 2 deliverable (cache layout `datasheets/extracted/`, `datasheets/_families/`) is a small directory-convention follow-up that can ship standalone.
+
 ### Track 2.4 — Trust-Gating Helpers (2026-04-19)
 
 **Theme: Per-field tri-state filtering of SpecValue lists by evidence confidence (spec §12).**
