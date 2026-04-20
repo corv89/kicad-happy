@@ -288,6 +288,43 @@ def test_lookup_stale_true_when_source_local_path_is_none(tmp_path: Path) -> Non
     assert ctx.stale_reason == "pdf_missing"
 
 
+def test_lookup_ignores_families_subdirectory_coexisting_with_cache_files(tmp_path: Path) -> None:
+    """lookup() must NOT be confused by a `_families/` subdirectory.
+
+    Track 2.6: `_families/` is reserved for v1.5 Tier 2 family-extraction
+    dedup (spec §14). v1.4 code does not read from it, but a real corpus
+    cache_dir may contain it. This test locks the invariant that adding
+    `_families/` alongside a normal cache file does not alter lookup()
+    behavior — neither to spurious False-negative (lookup thinking the
+    MPN doesn't exist) nor spurious False-positive (lookup returning
+    the directory as a cache file).
+    """
+    from datasheet_lookup import lookup
+
+    cache_dir, _ = _write_cache_with_pdf(tmp_path)
+
+    # Create the reserved v1.5 subdirectory inside the same cache_dir.
+    # Simulates a mid-v1.5 corpus state where families have been written
+    # alongside per-MPN caches.
+    families_dir = cache_dir / "_families"
+    families_dir.mkdir()
+
+    # Also drop a family file inside to confirm the directory's contents
+    # are invisible to lookup() (which only checks for <MPN>.json at the
+    # cache_dir top level).
+    (families_dir / "yageo-rc0603.family.json").write_text("{}")
+
+    # Normal MPN lookup still succeeds.
+    facts = lookup("LM2596-ADJ", cache_dir=cache_dir)
+    assert facts is not None
+    assert facts.source.mpn == "LM2596-ADJ"
+
+    # Lookup for a name that WOULD be a valid sanitized MPN matching the
+    # directory name returns None (directory is not a file).
+    missing = lookup("_families", cache_dir=cache_dir)
+    assert missing is None
+
+
 def test_lookup_full_happy_path_fresh_cache_with_matching_pdf(tmp_path: Path) -> None:
     """End-to-end happy path: fresh PDF + cache hash match + typed access.
 
