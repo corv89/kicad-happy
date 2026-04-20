@@ -17,10 +17,10 @@ check.
       LM2596-ADJ.json                   # Per-MPN fact envelope (Track 2.1).
       LM2596-ADJ.plan.json              # Orchestration plan audit (Phase 3).
       LM2596-ADJ.scout.json             # Scout subagent output (Phase 3).
+      RC0603FR-071KL.variant.json       # Per-MPN variant overrides (v1.5).
+      RC0603FR-0750KL.variant.json
       _families/                        # Reserved for v1.5 Tier 2 dedup (spec §14).
-        yageo-rc0603.family.json        # Family extraction (v1.5).
-        RC0603FR-071KL.variant.json     # Per-MPN variant overrides (v1.5).
-        RC0603FR-0750KL.variant.json
+        yageo-rc0603.family.json        # Canonical family extraction (v1.5).
 ```
 
 ## File Naming
