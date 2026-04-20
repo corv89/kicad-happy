@@ -8,6 +8,33 @@ This project follows [Semantic Versioning](https://semver.org/). Each release is
 
 ## v1.4-dev (in progress)
 
+### Track 2.6 — Cache Layout Documentation (2026-04-19)
+
+**Theme: Consolidate cache convention knowledge and reserve `_families/` for v1.5.**
+
+New reference doc `skills/datasheets/references/cache-layout.md` describes the v1.4 datasheet cache directory structure in one place:
+
+- Per-MPN cache file naming via `sanitize_mpn` (Track 2.3)
+- `datasheets/manifest.json` Tier 1 SHA dedup layout (Track 2.1 schema)
+- `_families/` subdirectory reserved for v1.5 Tier 2 family extraction (spec §14)
+- Phase 3 orchestration audit files (`<MPN>.plan.json`, `<MPN>.scout.json`) — documented but not yet written by v1.4 code
+- Cache invalidation rules (PDF sha256 mismatch, schema major bump, quality threshold, manual `--force`) and which of them `lookup()` v1.4 enforces at read time
+
+No runtime code changes. One new defensive regression test (`test_lookup_ignores_families_subdirectory_coexisting_with_cache_files`) locks the invariant that `lookup()` handles a `_families/` subdirectory co-existing with per-MPN cache files — `lookup()`'s existing `is_file()` check already treats the directory as invisible, and the test ensures a future refactor (e.g. a directory-iteration-based lookup) cannot silently regress the behavior.
+
+Tests: `tests/contract/test_datasheet_lookup.py` — 20 tests total (19 prior + 1 new). Full contract suite: **222 passing**.
+
+#### Breaking changes
+None. Pure documentation + one additive test.
+
+#### Unblocks
+- **Phase 3 extraction pipeline** — the `datasheets sync` command has a single-source reference for the cache directory convention it must write to.
+- **v1.5 Tier 2 planning** — the `_families/` reservation is documented + locked by test, so v1.5 implementers can safely begin writing into that subdirectory without coordinating with existing v1.4 consumers.
+
+---
+
+**Phase 2 — Consumer API — is now fully closed.** All six sub-tracks (2.1 JSON schemas, 2.2 typed Python layer, 2.3 `lookup()` facade, 2.4 trust-gating helpers, 2.5 v1.3 compat wrappers, 2.6 cache-layout docs) shipped. Harness A3 + A4 fully unblocked. Next main-repo milestone: Phase 3 extraction pipeline (scout subagent prompts, `plan_extraction.py` orchestration, 6 category extractor prompts + schemas).
+
 ### Track 2.5 — v1.3 Compat Wrappers (2026-04-19)
 
 **Theme: Preserve v1.3 detector API during the v1.3 → v1.4 cache-format transition.**
