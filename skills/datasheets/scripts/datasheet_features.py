@@ -194,28 +194,59 @@ def _derive_pin_function_v14(facts: DatasheetFacts, pin_id: str) -> Optional[str
     return _PIN_NAME_TO_FUNCTION.get(pin.name)
 
 
+def _try_v14_facts(mpn, *, extract_dir=None, analysis_json=None, project_dir=None):
+    """Common v1.4 probe. Returns DatasheetFacts or None.
+
+    Resolves extract_dir the same way _load does (via resolve_extract_dir)
+    so callers that passed analysis_json / project_dir get the same behavior.
+    """
+    from datasheet_lookup import lookup  # Lazy import — scripts-dir sibling.
+
+    if extract_dir is None:
+        extract_dir = resolve_extract_dir(
+            analysis_json=analysis_json, project_dir=project_dir
+        )
+    return lookup(mpn, cache_dir=Path(extract_dir))
+
+
 def get_regulator_features(mpn, *, extract_dir=None,
                             analysis_json=None, project_dir=None) -> Optional[dict]:
     """Return regulator-specific features for mpn, or None if not available.
 
+    Dual-cache-read: tries the v1.4 cache first via Track 2.3's lookup();
+    falls back to the v1.3 (extraction_version=2) cache if no v1.4 cache
+    exists. When both exist for the same MPN (mid-migration), v1.4 wins.
+
     Returns None when:
-      - No extraction is cached for the MPN
-      - Extraction is stale (below EXTRACTION_VERSION)
-      - Extraction score is below MIN_SCORE
-      - Extraction topology is not one of: 'boost', 'buck', 'ldo'
+      - No v1.4 cache AND no v1.3 cache for the MPN
+      - v1.4 cache parses but has no regulator category (v1.5 MCU/opamp/etc.
+        extensions are not regulator)
+      - v1.3 cache exists but topology not in ('boost', 'buck', 'ldo')
+      - v1.3 cache exists but extraction_version < current or score < MIN_SCORE
 
     Returned dict fields (any may be None individually):
-      topology:          'boost' | 'buck' | 'ldo'
+      topology:          'boost' | 'buck' | 'ldo' (v1.3 enum preserved)
       has_pg:            bool | None
-      has_soft_start:    bool | None
-      iss_time_us:       float | None
-      en_v_ih_max:       float (V) | None  — from EN pin's threshold_high_v
-      en_v_il_min:       float (V) | None  — from EN pin's threshold_low_v
-      vin_pin:           str | None        — pin number of the VIN pin
+      has_soft_start:    bool | None — always None on v1.4 path (no schema equiv)
+      iss_time_us:       float | None — always None on v1.4 path
+      en_v_ih_max:       float (V) | None — always None on v1.4 path
+      en_v_il_min:       float (V) | None — always None on v1.4 path
+      vin_pin:           str | None — pin number of the VIN pin
       vout_pin:          str | None
       en_pin:            str | None
       pg_pin:            str | None
     """
+    # ---- v1.4 path ----
+    facts = _try_v14_facts(mpn, extract_dir=extract_dir,
+                           analysis_json=analysis_json, project_dir=project_dir)
+    if facts is not None:
+        derived = _derive_regulator_features_v14(facts)
+        if derived is not None and derived.get('topology') in _REGULATOR_TOPOLOGIES:
+            return derived
+        # v1.4 facts present but not a regulator (or topology outside the
+        # v1.3 enum). Fall through to v1.3 below.
+
+    # ---- v1.3 fallback ----
     ext = _load(mpn, extract_dir=extract_dir,
                 analysis_json=analysis_json, project_dir=project_dir)
     if not ext:
@@ -254,16 +285,30 @@ def get_mcu_features(mpn, *, extract_dir=None,
                      analysis_json=None, project_dir=None) -> Optional[dict]:
     """Return MCU-specific features for mpn, or None if not available.
 
-    Returns None when:
-      - No extraction is cached for the MPN
-      - Extraction is stale or below MIN_SCORE
-      - Extraction topology is not 'mcu'
+    Dual-cache-read: tries v1.4 first (but v1.4 MVP has no mcu category
+    extension yet — this path always returns None), then falls back to
+    v1.3 (extraction_version=2) cache. Once v1.5 ships the mcu category
+    schema, _derive_mcu_features_v14 gains real logic and the v1.4 path
+    starts returning values.
+
+    Returns None when neither cache has data for mpn.
 
     Returned dict fields (any may be None individually):
       usb_speed:              'FS' | 'HS' | 'SS' | None
       has_native_usb_phy:     bool | None
       usb_series_r_required:  bool | None
     """
+    # ---- v1.4 path ----
+    facts = _try_v14_facts(mpn, extract_dir=extract_dir,
+                           analysis_json=analysis_json, project_dir=project_dir)
+    if facts is not None:
+        derived = _derive_mcu_features_v14(facts)
+        if derived is not None:
+            return derived
+        # v1.4 facts present but no mcu category (v1.4 MVP scope).
+        # Fall through to v1.3 for legacy MCU caches.
+
+    # ---- v1.3 fallback ----
     ext = _load(mpn, extract_dir=extract_dir,
                 analysis_json=analysis_json, project_dir=project_dir)
     if not ext:
@@ -285,7 +330,20 @@ def get_pin_function(mpn, pin_identifier, *, extract_dir=None,
 
     `pin_identifier` matches against pins[].number (exact) OR pins[].name
     (case-insensitive).
+
+    Dual-cache-read: v1.4 cache preferred, v1.3 fallback.
     """
+    # ---- v1.4 path ----
+    facts = _try_v14_facts(mpn, extract_dir=extract_dir,
+                           analysis_json=analysis_json, project_dir=project_dir)
+    if facts is not None:
+        fn = _derive_pin_function_v14(facts, pin_identifier)
+        if fn is not None:
+            return fn
+        # v1.4 facts present but pin not resolved — fall through to v1.3
+        # (may have richer pin data with explicit function labels).
+
+    # ---- v1.3 fallback ----
     ext = _load(mpn, extract_dir=extract_dir,
                 analysis_json=analysis_json, project_dir=project_dir)
     if not ext:
@@ -302,6 +360,11 @@ def get_pin_function(mpn, pin_identifier, *, extract_dir=None,
 
 def is_extraction_available(mpn, *, extract_dir=None,
                              analysis_json=None, project_dir=None) -> bool:
-    """True iff a v2+, sufficiently-scored extraction exists for mpn."""
+    """True iff a usable extraction exists for mpn (v1.4 OR v1.3 cache)."""
+    # v1.4 path: any non-None DatasheetFacts counts as available.
+    if _try_v14_facts(mpn, extract_dir=extract_dir,
+                      analysis_json=analysis_json, project_dir=project_dir) is not None:
+        return True
+    # v1.3 fallback: existing _load behavior.
     return _load(mpn, extract_dir=extract_dir,
                  analysis_json=analysis_json, project_dir=project_dir) is not None
