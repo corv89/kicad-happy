@@ -271,28 +271,47 @@ Or `git pull` for symlink installs.
 
 ## Google Gemini CLI
 
-### Install
+kicad-happy is a monorepo with 12 skills under `skills/<name>/SKILL.md`. `gemini skills install <url>` does not recurse, so it fails at the repo root with "No valid skills found". Use one of the approaches below.
 
-Install the skills globally to `~/.gemini/skills/`:
+### Install (recommended: clone + `gemini skills link`)
+
+`gemini skills link` discovers `SKILL.md` or `*/SKILL.md` one level deep, so point it at the cloned `skills/` directory (not the repo root) to pick up all 12 at once:
 
 ```bash
-gemini skills install https://github.com/aklofas/kicad-happy.git
+git clone https://github.com/aklofas/kicad-happy.git
+gemini skills link ./kicad-happy/skills
 ```
 
-For repo-local (workspace) installation:
+Add `--scope workspace` to link into the repo-local `.gemini/skills` instead of the user-scope `~/.gemini/skills`.
+
+### Install (per-skill, from git URL)
+
+Use `--path` to install individual skills directly from the repo URL. Requires Gemini CLI from Jan 13 2026 or later (before that, `--path` was rejected with `Unknown arguments: path` — see [#16482](https://github.com/google-gemini/gemini-cli/issues/16482), fixed by [#16537](https://github.com/google-gemini/gemini-cli/pull/16537)).
 
 ```bash
-gemini skills install https://github.com/aklofas/kicad-happy.git --scope workspace
+# Install all 12 skills:
+for skill in kicad spice emc datasheets bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
+  gemini skills install https://github.com/aklofas/kicad-happy.git --path skills/$skill
+done
+```
+
+For repo-local (workspace scope):
+
+```bash
+gemini skills install https://github.com/aklofas/kicad-happy.git --path skills/kicad --scope workspace
 ```
 
 ### Install (manual symlinks)
 
-Gemini CLI discovers skills from `~/.gemini/skills/` or `~/.agents/skills/`. The `gemini skills link` command is the standard way to set up a development environment:
+If `gemini skills link` is unavailable, symlink directly:
 
 ```bash
 git clone https://github.com/aklofas/kicad-happy.git
 cd kicad-happy
-gemini skills link .
+mkdir -p ~/.gemini/skills
+for skill in kicad spice emc datasheets bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
+  ln -sf "$(pwd)/skills/$skill" ~/.gemini/skills/$skill
+done
 ```
 
 ### Management & Interactive Mode
@@ -313,17 +332,26 @@ Gemini CLI discovers skills in three tiers with the following precedence:
 
 ### Upgrade
 
-```bash
-gemini skills uninstall kicad-happy
-gemini skills install https://github.com/aklofas/kicad-happy.git
-```
+For `gemini skills link` installs, `git pull` in the cloned repo and run `/skills reload` — symlinks follow the live checkout.
 
-For linked installs, simply `git pull` in the cloned repository and run `/skills reload`.
+For `--path` installs, reinstall each skill:
+
+```bash
+for skill in kicad spice emc datasheets bom digikey mouser lcsc element14 jlcpcb pcbway kidoc; do
+  gemini skills uninstall $skill
+  gemini skills install https://github.com/aklofas/kicad-happy.git --path skills/$skill
+done
+```
 
 ### Known issues
 
 - Skill discovery is most stable in v0.25.0+. Ensure your CLI is up to date by running:
   `npm install -g @google/gemini-cli@latest`
+- The `--path` flag was broken before Jan 13 2026
+  ([#16482](https://github.com/google-gemini/gemini-cli/issues/16482), fixed by
+  [#16537](https://github.com/google-gemini/gemini-cli/pull/16537)). Older CLI
+  versions reject it with `Unknown arguments: path` — upgrade, or fall back to
+  `gemini skills link` / manual symlinks.
 - Large skill directories may take a moment to index during initial startup.
 
 ### Gemini-specific notes
