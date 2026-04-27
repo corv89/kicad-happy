@@ -499,7 +499,7 @@ def post_pr_comment(report, token=None):
         subprocess.run(
             ["gh", "issue", "comment", str(number),
              "--body-file", tmp_path,
-             "--edit-last"],
+             "--edit-last", "--create-if-none"],
             check=True,
             env={**os.environ, "GH_TOKEN": token},
         )
