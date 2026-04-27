@@ -458,14 +458,36 @@ def combine_report(task_results, analysis_paths):
     return "\n".join(lines)
 
 
+def _get_issue_number():
+    """Extract issue/PR number from GitHub Actions event JSON."""
+    import re
+    event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+    if event_path and Path(event_path).exists():
+        with open(event_path) as f:
+            event = json.load(f)
+        if "issue" in event:
+            return event["issue"].get("number")
+        if "pull_request" in event:
+            return event["pull_request"].get("number")
+    ref = os.environ.get("GITHUB_REF", "")
+    match = re.match(r"refs/(?:pull|issues)/(\d+)", ref)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def post_pr_comment(report, token=None):
     if not token:
         token = os.environ.get("GITHUB_TOKEN", "")
-    pr_number = os.environ.get("GITHUB_REF", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
 
     if not all([token, repo]):
-        print("Skipping PR comment: missing GITHUB_TOKEN or GITHUB_REPOSITORY")
+        print("Skipping comment: missing GITHUB_TOKEN or GITHUB_REPOSITORY")
+        return
+
+    number = _get_issue_number()
+    if not number:
+        print("Skipping comment: could not determine issue/PR number")
         return
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
@@ -475,14 +497,15 @@ def post_pr_comment(report, token=None):
 
     try:
         subprocess.run(
-            ["gh", "pr", "comment", "--body-file", tmp_path, "--edit-last",
-             "--comment-tag", "kicad-happy-ai-review"],
+            ["gh", "issue", "comment", str(number),
+             "--body-file", tmp_path,
+             "--edit-last"],
             check=True,
             env={**os.environ, "GH_TOKEN": token},
         )
-        print("Posted PR comment.")
+        print(f"Posted comment on #{number}.")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Failed to post PR comment: {e}", file=sys.stderr)
+        print(f"Failed to post comment: {e}", file=sys.stderr)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
