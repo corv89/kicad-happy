@@ -43,7 +43,7 @@ jobs:
       - run: sudo apt-get install -y ngspice poppler-utils
 
       # --- Tier 1: Deterministic analysis ---
-      - uses: aklofas/kicad-happy@v1
+      - uses: corv89/kicad-happy@main
         id: analysis
 
       # --- Tier 2: AI-powered review via opencode ---
