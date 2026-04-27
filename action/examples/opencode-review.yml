@@ -1,0 +1,94 @@
+# opencode Automated Design Review
+# Posts an AI-powered KiCad design review on every PR that changes schematic or PCB files.
+#
+# Two-tier review:
+#   1. Deterministic analysis (always runs, free, no API key needed)
+#   2. AI-powered review via opencode (requires ZHIPU_API_KEY)
+#
+# Add this file to your KiCad project repo at:
+#   .github/workflows/opencode-review.yml
+#
+# Required secrets:
+#   ZHIPU_API_KEY — Zhipu AI API key for opencode LLM access
+#
+# Optional secrets (for datasheet download):
+#   DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET
+#   MOUSER_SEARCH_API_KEY
+#   ELEMENT14_API_KEY
+
+name: opencode-design-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '**/*.kicad_sch'
+      - '**/*.kicad_pcb'
+      - '**/*.kicad_pro'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event.pull_request.user.login != 'opencode-agent[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get install -y ngspice poppler-utils
+
+      # --- Tier 1: Deterministic analysis (free, no LLM) ---
+      - uses: aklofas/kicad-happy@v1
+        id: analysis
+        with:
+          digikey-client-id: ${{ secrets.DIGIKEY_CLIENT_ID }}
+          digikey-client-secret: ${{ secrets.DIGIKEY_CLIENT_SECRET }}
+          # mouser-api-key: ${{ secrets.MOUSER_SEARCH_API_KEY }}
+          # element14-api-key: ${{ secrets.ELEMENT14_API_KEY }}
+
+      # Post deterministic results as PR comment
+      - uses: thollander/actions-comment-pull-request@v3
+        if: always()
+        with:
+          file-path: ${{ steps.analysis.outputs.report-path }}
+          comment-tag: kicad-happy-review
+          mode: upsert
+
+      # --- Tier 2: AI-powered review via opencode ---
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - uses: anomalyco/opencode/github@latest
+        env:
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: zai-coding-plan/glm-5.1
+          agent: plan
+          use_github_token: true
+          prompt: |
+            Review this pull request for KiCad design quality.
+
+            Read README.md in the repo root for board context and design intent.
+
+            The kicad-happy deterministic analysis has already been run. Read the
+            JSON reports at ${{ steps.analysis.outputs.schematic-json }} and
+            ${{ steps.analysis.outputs.pcb-json }}, and the markdown report at
+            ${{ steps.analysis.outputs.report-path }}.
+
+            Do NOT re-run the analysis scripts. Instead, review the findings and:
+            1. Triage critical and high-severity findings — are they real issues or
+               expected design decisions?
+            2. Cross-reference findings across schematic, PCB, EMC, and thermal domains
+            3. Identify issues the deterministic analysis may have missed
+            4. Verify IC pinouts and power connections against known good practices
+            5. Check for design intent violations (e.g., signal path correctness,
+               power tree issues, missing protection)
+
+            Post your review as a GitHub PR review comment. Organize findings by
+            severity: critical issues first, then warnings, then suggestions.
+            Keep the review under 3000 characters.
